@@ -1,0 +1,22 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import ProfileViewSet, UserViewSet, RegisterView, UserMeView, GoogleLogin, FacebookLogin, VerifyOTPView, ResendOTPView
+
+router = DefaultRouter()
+router.register(r'profiles', ProfileViewSet)
+router.register(r'users', UserViewSet)
+
+urlpatterns = [
+    path('', include(router.urls)),
+    path('register/', RegisterView.as_view(), name='register'),
+    path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
+    path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),
+    path('me/', UserMeView.as_view(), name='user-me'),
+    
+    # Auth endpoints
+    path('auth/', include('dj_rest_auth.urls')),
+    path('auth/registration/', include('dj_rest_auth.registration.urls')),
+    path('auth/social/google/', GoogleLogin.as_view(), name='google_login'),
+    path('auth/social/facebook/', FacebookLogin.as_view(), name='facebook_login'),
+    path('auth/social/', include('allauth.socialaccount.urls')),
+]
