@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils.text import slugify
 
 class Board(models.Model):
     name = models.CharField(max_length=255)
@@ -17,6 +18,7 @@ class Board(models.Model):
 
 class Pin(models.Model):
     title = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=300, unique=True, blank=True)
     description = models.TextField(blank=True)
     image = models.ImageField(upload_to='pins/')
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pins')
@@ -26,6 +28,17 @@ class Pin(models.Model):
 
     def __str__(self):
         return self.title
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.title)
+            # Ensure unique slug
+            original_slug = self.slug
+            count = 1
+            while Pin.objects.filter(slug=self.slug).exists():
+                self.slug = f"{original_slug}-{count}"
+                count += 1
+        super().save(*args, **kwargs)
 
     @property
     def likes_count(self):

@@ -28,7 +28,7 @@ class PinSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Pin
-        fields = ['id', 'title', 'description', 'image', 'author', 'author_profile', 'topic', 'created_at', 'likes_count', 'comments_count', 'saves_count', 'is_liked', 'is_saved']
+        fields = ['id', 'slug', 'title', 'description', 'image', 'author', 'author_profile', 'topic', 'created_at', 'likes_count', 'comments_count', 'saves_count', 'is_liked', 'is_saved']
 
     def get_is_liked(self, obj):
         request = self.context.get('request')

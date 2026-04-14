@@ -18,6 +18,7 @@ from notifications.models import Notification
 class PinViewSet(viewsets.ModelViewSet):
     queryset = Pin.objects.all()
     serializer_class = PinSerializer
+    lookup_field = 'slug'
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def save(self, request, pk=None):
