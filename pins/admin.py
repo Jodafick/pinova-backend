@@ -1,11 +1,5 @@
 from django.contrib import admin
-from .models import Pin, Save, Like, Comment, Board
-
-@admin.register(Board)
-class BoardAdmin(admin.ModelAdmin):
-    list_display = ('name', 'user', 'is_private', 'pin_count', 'created_at')
-    list_filter = ('user', 'is_private', 'created_at')
-    search_fields = ('name', 'description')
+from .models import Pin, Save, Like, Comment
 
 @admin.register(Pin)
 class PinAdmin(admin.ModelAdmin):
