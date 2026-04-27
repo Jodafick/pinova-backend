@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.db.models import Count
 from .models import Pin, Comment, Like, Save
 from .serializers import PinSerializer, CommentSerializer
 from notifications.models import Notification
@@ -9,6 +10,13 @@ class PinViewSet(viewsets.ModelViewSet):
     queryset = Pin.objects.all()
     serializer_class = PinSerializer
     lookup_field = 'slug'
+
+    def get_queryset(self):
+        queryset = Pin.objects.select_related('author', 'author__profile').all().order_by('-created_at')
+        topic = self.request.query_params.get('topic')
+        if topic:
+            queryset = queryset.filter(topic=topic)
+        return queryset
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def save(self, request, slug=None):
@@ -134,3 +142,17 @@ class PinViewSet(viewsets.ModelViewSet):
         pins = Pin.objects.filter(author__in=following_users).order_by('-created_at')
         serializer = self.get_serializer(pins, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
+    def topics(self, request):
+        topics = (
+            Pin.objects.exclude(topic__isnull=True)
+            .exclude(topic__exact='')
+            .values('topic')
+            .annotate(pin_count=Count('id'))
+            .order_by('-pin_count', 'topic')
+        )
+        return Response([
+            {'name': item['topic'], 'pinCount': item['pin_count']}
+            for item in topics
+        ])
