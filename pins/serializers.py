@@ -1,12 +1,6 @@
 from rest_framework import serializers
-from .models import Pin, Comment, Like, Save, Board
+from .models import Pin, Comment, Like, Save
 
-class BoardSerializer(serializers.ModelSerializer):
-    pin_count = serializers.IntegerField(read_only=True)
-    class Meta:
-        model = Board
-        fields = ['id', 'name', 'description', 'user', 'is_private', 'pin_count', 'created_at']
-        read_only_fields = ['user']
 from accounts.serializers import ProfileSerializer
 
 class CommentSerializer(serializers.ModelSerializer):

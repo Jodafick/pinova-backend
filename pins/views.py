@@ -1,18 +1,8 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Pin, Comment, Like, Save, Board
-from .serializers import PinSerializer, CommentSerializer, BoardSerializer
-
-class BoardViewSet(viewsets.ModelViewSet):
-    serializer_class = BoardSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-    def get_queryset(self):
-        return Board.objects.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+from .models import Pin, Comment, Like, Save
+from .serializers import PinSerializer, CommentSerializer
 from notifications.models import Notification
 
 class PinViewSet(viewsets.ModelViewSet):
@@ -21,7 +11,7 @@ class PinViewSet(viewsets.ModelViewSet):
     lookup_field = 'slug'
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
-    def save(self, request, pk=None):
+    def save(self, request, slug=None):
         pin = self.get_object()
         save, created = Save.objects.get_or_create(user=request.user, pin=pin)
         
@@ -42,7 +32,7 @@ class PinViewSet(viewsets.ModelViewSet):
         return Response({'status': 'saved', 'saves_count': pin.saves_count})
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
-    def like(self, request, pk=None):
+    def like(self, request, slug=None):
         pin = self.get_object()
         like, created = Like.objects.get_or_create(user=request.user, pin=pin)
         
@@ -63,7 +53,7 @@ class PinViewSet(viewsets.ModelViewSet):
         return Response({'status': 'liked', 'likes_count': pin.likes_count})
 
     @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
-    def comments(self, request, pk=None):
+    def comments(self, request, slug=None):
         pin = self.get_object()
         
         if request.method == 'POST':

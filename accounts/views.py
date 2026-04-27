@@ -101,7 +101,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
     lookup_field = 'user__username'
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
-    def follow(self, request, pk=None):
+    def follow(self, request, user__username=None):
         profile_to_follow = self.get_object()
         current_user_profile = request.user.profile
         

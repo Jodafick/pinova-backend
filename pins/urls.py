@@ -1,10 +1,9 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import PinViewSet, BoardViewSet
+from .views import PinViewSet
 
 router = DefaultRouter()
 router.register(r'pins', PinViewSet)
-router.register(r'boards', BoardViewSet, basename='board')
 
 urlpatterns = [
     path('', include(router.urls)),

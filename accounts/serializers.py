@@ -36,16 +36,11 @@ from pins.models import Save
 
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
-    boards = serializers.SerializerMethodField()
     saved_pins = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'profile', 'boards', 'saved_pins']
-
-    def get_boards(self, obj):
-        from pins.serializers import BoardSerializer
-        return BoardSerializer(obj.boards.all(), many=True).data
+        fields = ['id', 'username', 'email', 'profile', 'saved_pins']
 
     def get_saved_pins(self, obj):
         return list(Save.objects.filter(user=obj).values_list('pin_id', flat=True))
