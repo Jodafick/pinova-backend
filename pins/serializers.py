@@ -165,6 +165,8 @@ class PinSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return []
+        if request.user != obj.author:
+            return []
         return list(
             PrivatePinTag.objects.filter(pin=obj, user=request.user)
             .values_list('tag', flat=True)

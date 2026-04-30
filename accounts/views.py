@@ -1,23 +1,26 @@
 from rest_framework import viewsets, status, permissions
+from rest_framework import filters
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
+from django.conf import settings
 
 class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
-    callback_url = "http://localhost:5173/login"
+    callback_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5174') + "/login"
     client_class = OAuth2Client
 
 class FacebookLogin(SocialLoginView):
     adapter_class = FacebookOAuth2Adapter
-    callback_url = "http://localhost:5173/login"
+    callback_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5174') + "/login"
     client_class = OAuth2Client
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from django.contrib.auth.models import User
+from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 from .models import Profile, EmailOTP
@@ -133,6 +136,27 @@ class ProfileViewSet(viewsets.ModelViewSet):
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['username', 'profile__display_name']
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
+    def mentions(self, request):
+        query = (request.query_params.get('q') or '').strip()
+        users = User.objects.select_related('profile').filter(profile__discoverable_profile=True)
+        if query:
+            users = users.filter(
+                models.Q(username__icontains=query) |
+                models.Q(profile__display_name__icontains=query)
+            )
+        users = users.order_by('username')[:10]
+        return Response([
+            {
+                'username': user.username,
+                'display_name': user.profile.display_name or user.username,
+                'avatar_color': user.profile.avatar_color,
+            }
+            for user in users
+        ])
 
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]

@@ -251,6 +251,8 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get', 'post', 'delete'], permission_classes=[permissions.IsAuthenticated], url_path='private-tags')
     def private_tags(self, request, slug=None):
         pin = self.get_object()
+        if pin.author != request.user:
+            return Response({'error': 'Only pin owner can manage private tags'}, status=status.HTTP_403_FORBIDDEN)
         if request.method == 'GET':
             tags = list(
                 PrivatePinTag.objects.filter(user=request.user, pin=pin)

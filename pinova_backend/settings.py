@@ -133,8 +133,9 @@ SOCIALACCOUNT_ADAPTER = 'accounts.adapter.MySocialAccountAdapter'
 SOCIALACCOUNT_AUTO_SIGNUP = True
 
 # Frontend URLs for Emails
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5174')
 # URL_FRONTEND_VERIFY_EMAIL = os.environ.get('FRONTEND_URL', 'http://localhost:5174') + '/verify-email'
-URL_FRONTEND_PASSWORD_RESET = os.environ.get('FRONTEND_URL', 'http://localhost:5174') + '/password-reset-confirm'
+URL_FRONTEND_PASSWORD_RESET = FRONTEND_URL + '/password-reset-confirm'
 
 # Email Settings (SMTP)
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
