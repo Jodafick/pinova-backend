@@ -305,7 +305,7 @@ class PinViewSet(viewsets.ModelViewSet):
             ],
         })
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly], url_path='translate-description')
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='translate-description')
     def translate_description(self, request, slug=None):
         pin = self.get_object()
         target_lang = self._resolve_target_lang(request)
@@ -323,7 +323,7 @@ class PinViewSet(viewsets.ModelViewSet):
             'translation_source': 'auto',
         })
 
-    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly], url_path='comments/(?P<comment_id>[^/.]+)/translate')
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='comments/(?P<comment_id>[^/.]+)/translate')
     def translate_comment(self, request, comment_id=None):
         target_lang = self._resolve_target_lang(request)
         try:
@@ -339,8 +339,6 @@ class PinViewSet(viewsets.ModelViewSet):
             translated = async_to_sync(translate_text_to)(translator, comment.text, target_lang)
         except RuntimeError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        comment.translated_text = translated
-        comment.save(update_fields=['translated_text'])
         return Response({
             'id': comment.id,
             'original': comment.text,

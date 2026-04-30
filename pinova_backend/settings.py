@@ -30,7 +30,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-$-!eo)@fp592g#e)kc(bqer5isvw8uke+5#oq7&l8%il+8=k_f'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = ['*']
 
@@ -260,12 +260,13 @@ REST_AUTH = {
     'JWT_AUTH_COOKIE': 'pinova-auth',
     'JWT_AUTH_REFRESH_COOKIE': 'pinova-refresh-token',
     'JWT_AUTH_COOKIE_USE_CSRF': False,
-    'JWT_AUTH_SAMESITE': 'Lax',
+    'JWT_AUTH_SAMESITE': 'Lax' if DEBUG else 'None',
+    'JWT_AUTH_SECURE': not DEBUG,
     'REGISTER_SERIALIZER': 'accounts.serializers.RegisterSerializer',
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=30),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=365),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=365),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
@@ -274,6 +275,10 @@ SIMPLE_JWT = {
 
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 365  # 1 an
 SESSION_SAVE_EVERY_REQUEST = True
+SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+CSRF_COOKIE_SECURE = not DEBUG
 
 # Media files
 MEDIA_URL = '/media/'
