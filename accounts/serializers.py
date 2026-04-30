@@ -16,7 +16,25 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Profile
-        fields = ['id', 'username', 'email', 'display_name', 'bio', 'avatar', 'avatar_color', 'followers_count', 'following_count', 'is_following']
+        fields = [
+            'id',
+            'username',
+            'email',
+            'display_name',
+            'bio',
+            'avatar',
+            'avatar_color',
+            'followers_count',
+            'following_count',
+            'is_following',
+            'subscription_plan',
+            'subscription_renewal_at',
+            'translation_quota_monthly',
+            'translation_used_monthly',
+            'discoverable_profile',
+            'allow_ai_translation',
+            'preferred_language',
+        ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following']
 
     def get_followers_count(self, obj):
@@ -33,17 +51,45 @@ class ProfileSerializer(serializers.ModelSerializer):
         return False
 
 from pins.models import Save
+from pins.models import Board
 
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
     saved_pins = serializers.SerializerMethodField()
+    boards = serializers.SerializerMethodField()
+    subscription = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'profile', 'saved_pins']
+        fields = ['id', 'username', 'email', 'profile', 'saved_pins', 'boards', 'subscription']
 
     def get_saved_pins(self, obj):
         return list(Save.objects.filter(user=obj).values_list('pin_id', flat=True))
+
+    def get_boards(self, obj):
+        request = self.context.get('request')
+        boards = Board.objects.filter(user=obj)
+        if not (request and request.user.is_authenticated and request.user == obj):
+            boards = boards.filter(is_private=False)
+        boards = boards.order_by('-created_at')
+        return [
+            {
+                'id': board.id,
+                'name': board.name,
+                'pinCount': board.pin_count,
+                'isPrivate': board.is_private,
+            }
+            for board in boards
+        ]
+
+    def get_subscription(self, obj):
+        profile = obj.profile
+        return {
+            'plan': profile.subscription_plan,
+            'renewal_at': profile.subscription_renewal_at,
+            'translation_quota_monthly': profile.translation_quota_monthly,
+            'translation_used_monthly': profile.translation_used_monthly,
+        }
 
 class RegisterSerializer(BaseRegisterSerializer):
     username = serializers.CharField(required=False, allow_blank=True)

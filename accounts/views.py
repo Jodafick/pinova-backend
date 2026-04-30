@@ -18,6 +18,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from django.contrib.auth.models import User
+from django.utils import timezone
+from datetime import timedelta
 from .models import Profile, EmailOTP
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
@@ -100,6 +102,11 @@ class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
     lookup_field = 'user__username'
 
+    def retrieve(self, request, *args, **kwargs):
+        profile = self.get_object()
+        serializer = UserSerializer(profile.user, context={'request': request})
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def follow(self, request, user__username=None):
         profile_to_follow = self.get_object()
@@ -145,7 +152,7 @@ class UserMeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        serializer = UserSerializer(request.user)
+        serializer = UserSerializer(request.user, context={'request': request})
         return Response(serializer.data)
 
     def patch(self, request):
@@ -161,5 +168,5 @@ class UserMeView(APIView):
         profile_serializer = ProfileSerializer(profile, data=request.data, partial=True)
         if profile_serializer.is_valid():
             profile_serializer.save()
-            return Response(UserSerializer(user).data)
+            return Response(UserSerializer(user, context={'request': request}).data)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)

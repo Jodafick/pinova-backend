@@ -8,12 +8,28 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 class Profile(models.Model):
+    PLAN_FREE = 'free'
+    PLAN_PLUS = 'plus'
+    PLAN_PRO = 'pro'
+    PLAN_CHOICES = [
+        (PLAN_FREE, 'Free'),
+        (PLAN_PLUS, 'Plus'),
+        (PLAN_PRO, 'Pro'),
+    ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     display_name = models.CharField(max_length=255, blank=True)
     bio = models.TextField(max_length=500, blank=True)
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
     avatar_color = models.CharField(max_length=50, default='bg-blue-500')
     following = models.ManyToManyField('self', symmetrical=False, related_name='followers', blank=True)
+    subscription_plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default=PLAN_FREE)
+    subscription_renewal_at = models.DateTimeField(null=True, blank=True)
+    translation_quota_monthly = models.PositiveIntegerField(default=5)
+    translation_used_monthly = models.PositiveIntegerField(default=0)
+    discoverable_profile = models.BooleanField(default=True)
+    allow_ai_translation = models.BooleanField(default=True)
+    preferred_language = models.CharField(max_length=10, default='fr')
 
     def __str__(self):
         return f"{self.user.username}'s profile"
