@@ -2,7 +2,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Case, When, Value, IntegerField
 from django.contrib.auth.models import User
 from asgiref.sync import async_to_sync
 from googletrans import Translator
@@ -205,12 +205,32 @@ class PinViewSet(viewsets.ModelViewSet):
             serializer = CommentSerializer(comment, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        sort = (request.query_params.get('sort') or 'recent').lower()
+        highlight_raw = (request.query_params.get('highlight_comment_id') or '').strip()
+        highlighted_comment_id = int(highlight_raw) if highlight_raw.isdigit() else None
+        highlighted_parent_id = None
+        if highlighted_comment_id:
+            highlighted_comment = Comment.objects.filter(id=highlighted_comment_id, pin=pin).select_related('parent').first()
+            if highlighted_comment:
+                highlighted_parent_id = highlighted_comment.parent_id or highlighted_comment.id
+
         comments = (
             pin.comments.filter(parent__isnull=True)
             .select_related('user', 'user__profile')
             .prefetch_related('replies', 'replies__user', 'replies__user__profile', 'hashtags')
-            .order_by('-created_at')
         )
+        if sort == 'relevant':
+            comments = comments.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
+        else:
+            comments = comments.order_by('-created_at')
+        if highlighted_parent_id:
+            comments = comments.annotate(
+                highlight_priority=Case(
+                    When(id=highlighted_parent_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by('highlight_priority', *comments.query.order_by)
         paginator = CommentPagination()
         page = paginator.paginate_queryset(comments, request)
         serializer = CommentSerializer(
@@ -220,6 +240,8 @@ class PinViewSet(viewsets.ModelViewSet):
                 'request': request,
                 'include_replies': True,
                 'replies_page_size': int(request.query_params.get('replies_page_size', 3) or 3),
+                'replies_sort': sort,
+                'highlighted_comment_id': highlighted_comment_id,
             },
         )
         return paginator.get_paginated_response(serializer.data)
@@ -245,8 +267,23 @@ class PinViewSet(viewsets.ModelViewSet):
             parent_comment.replies.all()
             .select_related('user', 'user__profile')
             .prefetch_related('hashtags')
-            .order_by('created_at')
         )
+        sort = (request.query_params.get('sort') or 'recent').lower()
+        if sort == 'relevant':
+            replies = replies.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
+        else:
+            replies = replies.order_by('-created_at')
+
+        highlight_raw = (request.query_params.get('highlight_comment_id') or '').strip()
+        highlighted_comment_id = int(highlight_raw) if highlight_raw.isdigit() else None
+        if highlighted_comment_id:
+            replies = replies.annotate(
+                highlight_priority=Case(
+                    When(id=highlighted_comment_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by('highlight_priority', *replies.query.order_by)
         paginator = ReplyPagination()
         page = paginator.paginate_queryset(replies, request)
         serializer = CommentSerializer(

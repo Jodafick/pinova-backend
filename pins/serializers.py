@@ -1,5 +1,6 @@
 from rest_framework import serializers
 import re
+from django.db.models import Count, Case, When, Value, IntegerField
 from .models import (
     Pin,
     Comment,
@@ -93,7 +94,21 @@ class CommentSerializer(serializers.ModelSerializer):
         if not self.context.get('include_replies', True):
             return []
         replies_page_size = int(self.context.get('replies_page_size', 3))
-        replies = obj.replies.all().select_related('user', 'user__profile').order_by('created_at')
+        replies_sort = (self.context.get('replies_sort') or 'recent').lower()
+        highlighted_comment_id = self.context.get('highlighted_comment_id')
+        replies = obj.replies.all().select_related('user', 'user__profile')
+        if replies_sort == 'relevant':
+            replies = replies.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
+        else:
+            replies = replies.order_by('-created_at')
+        if highlighted_comment_id:
+            replies = replies.annotate(
+                highlight_priority=Case(
+                    When(id=highlighted_comment_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by('highlight_priority', *replies.query.order_by)
         chunk = replies[:replies_page_size]
         nested_context = {**self.context, 'include_replies': False}
         return CommentSerializer(chunk, many=True, context=nested_context).data
