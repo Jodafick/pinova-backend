@@ -1,6 +1,17 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ProfileViewSet, UserViewSet, RegisterView, UserMeView, GoogleLogin, FacebookLogin, VerifyOTPView, ResendOTPView
+from .views import (
+    ProfileViewSet,
+    UserViewSet,
+    RegisterView,
+    UserMeView,
+    GoogleLogin,
+    FacebookLogin,
+    VerifyOTPView,
+    ResendOTPView,
+    SubscriptionCheckoutView,
+    SubscriptionConfirmView,
+)
 
 router = DefaultRouter()
 router.register(r'profiles', ProfileViewSet)
@@ -12,6 +23,8 @@ urlpatterns = [
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),
     path('me/', UserMeView.as_view(), name='user-me'),
+    path('subscription/checkout/', SubscriptionCheckoutView.as_view(), name='subscription-checkout'),
+    path('subscription/confirm/', SubscriptionConfirmView.as_view(), name='subscription-confirm'),
     
     # Auth endpoints
     path('auth/', include('dj_rest_auth.urls')),

@@ -137,6 +137,12 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5174')
 # URL_FRONTEND_VERIFY_EMAIL = os.environ.get('FRONTEND_URL', 'http://localhost:5174') + '/verify-email'
 URL_FRONTEND_PASSWORD_RESET = FRONTEND_URL + '/password-reset-confirm'
 
+# FedaPay
+FEDAPAY_ENV = os.environ.get('FEDAPAY_ENV', 'sandbox')
+FEDAPAY_SECRET_KEY = os.environ.get('FEDAPAY_SECRET_KEY', '')
+FEDAPAY_CURRENCY_ISO = os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
+FEDAPAY_CALLBACK_URL = os.environ.get('FEDAPAY_CALLBACK_URL', FRONTEND_URL + '/premium')
+
 # Email Settings (SMTP)
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')

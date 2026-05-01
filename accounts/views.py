@@ -6,6 +6,9 @@ from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
 from django.conf import settings
+import os
+import requests
+from django.db import transaction
 
 class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
@@ -24,7 +27,7 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
-from .models import Profile, EmailOTP
+from .models import Profile, EmailOTP, SubscriptionPayment
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
 
@@ -226,3 +229,182 @@ class UserMeView(APIView):
             profile_serializer.save()
             return Response(UserSerializer(user, context={'request': request}).data)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SubscriptionCheckoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    PRICE_MAP_XOF = {
+        'plus': {'monthly': 499, 'yearly': 4900},
+        'pro': {'monthly': 1299, 'yearly': 12900},
+    }
+
+    def _fedapay_base_url(self):
+        env = os.environ.get('FEDAPAY_ENV', 'sandbox').strip().lower()
+        if env == 'live':
+            return 'https://api.fedapay.com/v1'
+        return 'https://sandbox-api.fedapay.com/v1'
+
+    def _fedapay_headers(self):
+        secret_key = os.environ.get('FEDAPAY_SECRET_KEY', '').strip()
+        if not secret_key:
+            return None
+        return {
+            'Authorization': f'Bearer {secret_key}',
+            'Content-Type': 'application/json',
+        }
+
+    def _get_amount(self, plan, billing_cycle):
+        return self.PRICE_MAP_XOF.get(plan, {}).get(billing_cycle)
+
+    def post(self, request):
+        plan = (request.data.get('plan') or '').strip().lower()
+        billing_cycle = (request.data.get('billing_cycle') or 'monthly').strip().lower()
+        if plan not in {Profile.PLAN_PLUS, Profile.PLAN_PRO}:
+            return Response({'error': 'Invalid plan'}, status=status.HTTP_400_BAD_REQUEST)
+        if billing_cycle not in {'monthly', 'yearly'}:
+            return Response({'error': 'Invalid billing cycle'}, status=status.HTTP_400_BAD_REQUEST)
+
+        headers = self._fedapay_headers()
+        if not headers:
+            return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        amount = self._get_amount(plan, billing_cycle)
+        if not amount:
+            return Response({'error': 'Unsupported pricing configuration'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        callback_url = os.environ.get('FEDAPAY_CALLBACK_URL') or f"{settings.FRONTEND_URL}/premium"
+        first_name = request.user.first_name or request.user.profile.display_name or request.user.username
+        last_name = request.user.last_name or 'Pinova'
+
+        payload = {
+            'description': f"Pinova {plan.title()} ({billing_cycle})",
+            'amount': amount,
+            'currency': {'iso': os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')},
+            'callback_url': callback_url,
+            'custom_metadata': {
+                'user_id': request.user.id,
+                'plan': plan,
+                'billing_cycle': billing_cycle,
+            },
+            'customer': {
+                'email': request.user.email,
+                'firstname': first_name[:100],
+                'lastname': last_name[:100],
+            },
+        }
+
+        base = self._fedapay_base_url()
+        try:
+            create_resp = requests.post(f'{base}/transactions', json=payload, headers=headers, timeout=20)
+            create_resp.raise_for_status()
+            transaction_data = create_resp.json() or {}
+            transaction_id = transaction_data.get('id')
+            if not transaction_id:
+                return Response({'error': 'Invalid FedaPay transaction response'}, status=status.HTTP_502_BAD_GATEWAY)
+
+            token_resp = requests.post(f'{base}/transactions/{transaction_id}/token', headers=headers, timeout=20)
+            token_resp.raise_for_status()
+            token_data = token_resp.json() or {}
+            checkout_url = token_data.get('url') or token_data.get('payment_url')
+            if not checkout_url:
+                return Response({'error': 'Unable to generate checkout URL'}, status=status.HTTP_502_BAD_GATEWAY)
+
+            SubscriptionPayment.objects.update_or_create(
+                fedapay_transaction_id=str(transaction_id),
+                defaults={
+                    'user': request.user,
+                    'plan': plan,
+                    'billing_cycle': billing_cycle,
+                    'amount': amount,
+                    'currency_iso': os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF'),
+                    'fedapay_reference': str(transaction_data.get('reference') or ''),
+                    'status': SubscriptionPayment.STATUS_PENDING,
+                    'checkout_url': checkout_url,
+                    'fedapay_payload': {
+                        'transaction': transaction_data,
+                        'token': token_data,
+                    },
+                },
+            )
+
+            return Response({
+                'checkout_url': checkout_url,
+                'transaction_id': str(transaction_id),
+            }, status=status.HTTP_201_CREATED)
+        except requests.RequestException as exc:
+            return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class SubscriptionConfirmView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _fedapay_base_url(self):
+        env = os.environ.get('FEDAPAY_ENV', 'sandbox').strip().lower()
+        if env == 'live':
+            return 'https://api.fedapay.com/v1'
+        return 'https://sandbox-api.fedapay.com/v1'
+
+    def _fedapay_headers(self):
+        secret_key = os.environ.get('FEDAPAY_SECRET_KEY', '').strip()
+        if not secret_key:
+            return None
+        return {
+            'Authorization': f'Bearer {secret_key}',
+            'Content-Type': 'application/json',
+        }
+
+    def _apply_subscription(self, profile, payment):
+        profile.subscription_plan = payment.plan
+        now = timezone.now()
+        duration_days = 365 if payment.billing_cycle == SubscriptionPayment.BILLING_YEARLY else 30
+        profile.subscription_renewal_at = now + timedelta(days=duration_days)
+        if payment.plan == Profile.PLAN_FREE:
+            profile.translation_quota_monthly = 5
+        else:
+            profile.translation_quota_monthly = 100000
+        profile.translation_used_monthly = 0
+        profile.save()
+
+    def post(self, request):
+        transaction_id = str(request.data.get('transaction_id') or '').strip()
+        if not transaction_id:
+            return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payment = SubscriptionPayment.objects.get(
+                fedapay_transaction_id=transaction_id,
+                user=request.user,
+            )
+        except SubscriptionPayment.DoesNotExist:
+            return Response({'error': 'Payment session not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        headers = self._fedapay_headers()
+        if not headers:
+            return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        base = self._fedapay_base_url()
+        try:
+            resp = requests.get(f'{base}/transactions/{transaction_id}', headers=headers, timeout=20)
+            resp.raise_for_status()
+            tx = resp.json() or {}
+            status_value = (tx.get('status') or '').strip().lower()
+            raw_status = status_value
+            if status_value in {'approved', 'success', 'successful', 'completed'}:
+                payment.status = SubscriptionPayment.STATUS_APPROVED
+                with transaction.atomic():
+                    payment.fedapay_payload = {'transaction': tx}
+                    payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+                    self._apply_subscription(request.user.profile, payment)
+                return Response({'status': 'approved', 'plan': payment.plan})
+            if status_value in {'canceled', 'cancelled'}:
+                payment.status = SubscriptionPayment.STATUS_CANCELED
+            elif status_value in {'failed', 'declined', 'rejected'}:
+                payment.status = SubscriptionPayment.STATUS_FAILED
+            else:
+                payment.status = SubscriptionPayment.STATUS_PENDING
+            payment.fedapay_payload = {'transaction': tx}
+            payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+            return Response({'status': payment.status, 'gateway_status': raw_status})
+        except requests.RequestException as exc:
+            return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)

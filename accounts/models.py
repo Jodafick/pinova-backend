@@ -79,6 +79,45 @@ class EmailOTP(models.Model):
     def __str__(self):
         return f"OTP for {self.user.email}: {self.otp_code}"
 
+
+class SubscriptionPayment(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_FAILED = 'failed'
+    STATUS_CANCELED = 'canceled'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_CANCELED, 'Canceled'),
+    ]
+
+    BILLING_MONTHLY = 'monthly'
+    BILLING_YEARLY = 'yearly'
+    BILLING_CHOICES = [
+        (BILLING_MONTHLY, 'Monthly'),
+        (BILLING_YEARLY, 'Yearly'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='subscription_payments')
+    plan = models.CharField(max_length=20, choices=Profile.PLAN_CHOICES)
+    billing_cycle = models.CharField(max_length=20, choices=BILLING_CHOICES, default=BILLING_MONTHLY)
+    amount = models.PositiveIntegerField()
+    currency_iso = models.CharField(max_length=10, default='XOF')
+    fedapay_transaction_id = models.CharField(max_length=64, unique=True)
+    fedapay_reference = models.CharField(max_length=128, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    checkout_url = models.URLField(blank=True)
+    fedapay_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username}:{self.plan}:{self.status}"
+
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
