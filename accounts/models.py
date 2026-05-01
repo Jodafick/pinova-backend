@@ -30,6 +30,34 @@ class Profile(models.Model):
     discoverable_profile = models.BooleanField(default=True)
     allow_ai_translation = models.BooleanField(default=True)
     preferred_language = models.CharField(max_length=10, default='fr')
+    ad_ads_enabled = models.BooleanField(default=True)
+    partner_ads_enabled = models.BooleanField(default=True)
+    tips_enabled = models.BooleanField(default=False)
+    tips_url = models.URLField(blank=True, null=True)
+
+    @property
+    def can_use_private_tags(self):
+        return self.subscription_plan in {self.PLAN_PLUS, self.PLAN_PRO}
+
+    @property
+    def can_use_comment_gifs(self):
+        return self.subscription_plan in {self.PLAN_PLUS, self.PLAN_PRO}
+
+    @property
+    def can_download(self):
+        return self.subscription_plan in {self.PLAN_PLUS, self.PLAN_PRO}
+
+    @property
+    def can_download_4k(self):
+        return self.subscription_plan == self.PLAN_PRO
+
+    @property
+    def board_limits(self):
+        if self.subscription_plan == self.PLAN_PRO:
+            return {'private_max': None, 'public_max': None}
+        if self.subscription_plan == self.PLAN_PLUS:
+            return {'private_max': 10, 'public_max': None}
+        return {'private_max': 3, 'public_max': 10}
 
     def __str__(self):
         return f"{self.user.username}'s profile"

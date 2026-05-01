@@ -198,8 +198,30 @@ class UserMeView(APIView):
             user.email = request.data['email']
             user.save()
             
+        # Plan-based constraints for advertising preferences.
+        mutable_data = request.data.copy()
+        requested_ad_ads = mutable_data.get('ad_ads_enabled')
+        requested_partner_ads = mutable_data.get('partner_ads_enabled')
+        if profile.subscription_plan == Profile.PLAN_FREE:
+            mutable_data['ad_ads_enabled'] = True
+            mutable_data['partner_ads_enabled'] = True
+        elif profile.subscription_plan == Profile.PLAN_PLUS:
+            if requested_ad_ads is not None:
+                mutable_data['ad_ads_enabled'] = requested_ad_ads
+            mutable_data['partner_ads_enabled'] = True
+        elif profile.subscription_plan == Profile.PLAN_PRO:
+            if requested_ad_ads is not None:
+                mutable_data['ad_ads_enabled'] = requested_ad_ads
+            if requested_partner_ads is not None:
+                mutable_data['partner_ads_enabled'] = requested_partner_ads
+
+        # Tips & monetization are reserved for Pro.
+        if profile.subscription_plan != Profile.PLAN_PRO:
+            mutable_data['tips_enabled'] = False
+            mutable_data['tips_url'] = ''
+
         # Update profile fields
-        profile_serializer = ProfileSerializer(profile, data=request.data, partial=True)
+        profile_serializer = ProfileSerializer(profile, data=mutable_data, partial=True)
         if profile_serializer.is_valid():
             profile_serializer.save()
             return Response(UserSerializer(user, context={'request': request}).data)

@@ -9,7 +9,20 @@ from googletrans import Translator
 import hashlib
 import json
 import re
-from .models import Pin, Comment, Like, Save, Hashtag, PrivatePinTag, PinProvenanceEvent, Board, CommentLike, TopicTranslation
+from .models import (
+    Pin,
+    Comment,
+    Like,
+    Save,
+    Hashtag,
+    PrivatePinTag,
+    PinProvenanceEvent,
+    Board,
+    CommentLike,
+    TopicTranslation,
+    PinViewEvent,
+    SearchInteraction,
+)
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, extract_hashtags
 from .translation import translate_text_to, detect_original_language
 from notifications.models import Notification
@@ -40,6 +53,59 @@ class PinViewSet(viewsets.ModelViewSet):
         if request.user.is_authenticated:
             return (request.user.profile.preferred_language or 'fr').lower()
         return 'fr'
+
+    def _ordered_by_topic_score(self, queryset, topic_scores):
+        if not topic_scores:
+            return list(queryset.order_by('-created_at'))
+        items = list(queryset)
+        items.sort(
+            key=lambda pin: (
+                topic_scores.get(pin.topic, 0),
+                pin.created_at.timestamp(),
+            ),
+            reverse=True,
+        )
+        return items
+
+    def _build_topic_scores(self, user):
+        scores = {}
+        if not user or not user.is_authenticated:
+            return scores
+        recent_likes = (
+            Like.objects.filter(user=user)
+            .select_related('pin')
+            .order_by('-created_at')[:200]
+        )
+        recent_saves = (
+            Save.objects.filter(user=user)
+            .select_related('pin')
+            .order_by('-created_at')[:200]
+        )
+        recent_views = (
+            PinViewEvent.objects.filter(user=user)
+            .select_related('pin')
+            .order_by('-created_at')[:300]
+        )
+        for item in recent_likes:
+            topic = item.pin.topic
+            if topic:
+                scores[topic] = scores.get(topic, 0) + 4
+        for item in recent_saves:
+            topic = item.pin.topic
+            if topic:
+                scores[topic] = scores.get(topic, 0) + 4
+        for item in recent_views:
+            topic = item.pin.topic
+            if topic:
+                scores[topic] = scores.get(topic, 0) + 1
+        recent_queries = SearchInteraction.objects.filter(user=user).order_by('-created_at')[:100]
+        for query in recent_queries:
+            q = (query.query or '').strip()
+            if not q:
+                continue
+            for topic in Pin.objects.filter(topic__icontains=q).values_list('topic', flat=True).distinct()[:20]:
+                scores[topic] = scores.get(topic, 0) + 2
+        return scores
 
     def get_queryset(self):
         queryset = (
@@ -132,16 +198,42 @@ class PinViewSet(viewsets.ModelViewSet):
 
         return Response({'status': 'liked', 'likes_count': pin.likes_count})
 
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='view')
+    def view_event(self, request, slug=None):
+        pin = self.get_object()
+        PinViewEvent.objects.create(user=request.user, pin=pin)
+        return Response({'status': 'recorded'})
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='search-interactions')
+    def search_interactions(self, request):
+        query = (request.data.get('query') or '').strip()
+        if len(query) < 2:
+            return Response({'status': 'ignored'})
+        SearchInteraction.objects.create(user=request.user, query=query[:120])
+        return Response({'status': 'recorded'})
+
     @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
     def comments(self, request, slug=None):
         pin = self.get_object()
 
         if request.method == 'POST':
-            text = request.data.get('text', '')
+            text = (request.data.get('text', '') or '').strip()
             gif_url = request.data.get('gif')
+            media_file = request.FILES.get('media')
             parent_id = request.data.get('parentId') or request.data.get('parent')
-            if not text and not gif_url:
-                return Response({'error': 'Comment text is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if not text and not gif_url and not media_file:
+                return Response({'error': 'Comment text, gif or media is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if media_file:
+                if not str(getattr(media_file, 'content_type', '')).startswith('image/'):
+                    return Response({'error': 'Only image files are allowed'}, status=status.HTTP_400_BAD_REQUEST)
+                if media_file.size > 5 * 1024 * 1024:
+                    return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
+            is_gif_media = str(getattr(media_file, 'content_type', '')).lower() == 'image/gif' if media_file else False
+            if (gif_url or is_gif_media) and not request.user.profile.can_use_comment_gifs:
+                return Response(
+                    {'error': 'GIF comments require Plus or Pro plan'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             parent = None
             if parent_id:
                 try:
@@ -153,8 +245,9 @@ class PinViewSet(viewsets.ModelViewSet):
                 pin=pin,
                 text=text,
                 gif_url=gif_url,
+                media=media_file,
                 parent=parent,
-                original_language=detect_original_language(text),
+                original_language=detect_original_language(text) if text else 'auto',
             )
             tags = extract_hashtags(text)
             if tags:
@@ -329,28 +422,9 @@ class PinViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):
-        base_queryset = self.get_queryset()
-        liked_pins = base_queryset.filter(likes__user=request.user)
-        saved_pins = base_queryset.filter(saves__user=request.user)
-        interacted_pins = (liked_pins | saved_pins).distinct()
-        topics = interacted_pins.values_list('topic', flat=True).distinct()
-        exclude_ids = list(interacted_pins.values_list('id', flat=True))
-        recommendations = base_queryset.exclude(id__in=exclude_ids).exclude(author=request.user)
-
-        if topics.exists():
-            recommendations = recommendations.filter(topic__in=topics)
-
-        recommendations = recommendations.order_by('?')
-
-        if recommendations.count() < 20:
-            others = (
-                base_queryset.exclude(id__in=exclude_ids)
-                .exclude(author=request.user)
-                .exclude(id__in=[p.id for p in recommendations])
-                .order_by('?')[:20]
-            )
-            recommendations = list(recommendations) + list(others)
-
+        base_queryset = self.get_queryset().exclude(author=request.user)
+        topic_scores = self._build_topic_scores(request.user)
+        recommendations = self._ordered_by_topic_score(base_queryset, topic_scores)
         page = self.paginate_queryset(recommendations)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -363,8 +437,74 @@ class PinViewSet(viewsets.ModelViewSet):
     def following(self, request):
         following_profiles = request.user.profile.following.all()
         following_users = [p.user for p in following_profiles]
-        pins = self.get_queryset().filter(author__in=following_users).exclude(visibility=Pin.VISIBILITY_PRIVATE).order_by('-created_at')
-        serializer = self.get_serializer(pins, many=True)
+        queryset = (
+            self.get_queryset()
+            .filter(author__in=following_users)
+            .exclude(author=request.user)
+            .order_by('-created_at')
+        )
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='discover')
+    def discover(self, request):
+        queryset = self.get_queryset()
+        if request.user.is_authenticated:
+            following_profiles = request.user.profile.following.all()
+            queryset = queryset.exclude(author__profile__in=following_profiles).exclude(author=request.user)
+        topic = (request.query_params.get('topic') or '').strip()
+        if topic:
+            queryset = queryset.filter(topic=topic)
+        page = self.paginate_queryset(queryset.order_by('-created_at'))
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='home-feed')
+    def home_feed(self, request):
+        topic = (request.query_params.get('topic') or '').strip()
+        following_profiles = request.user.profile.following.all()
+        following_queryset = (
+            self.get_queryset()
+            .filter(author__profile__in=following_profiles)
+            .exclude(author=request.user)
+        )
+        discover_queryset = (
+            self.get_queryset()
+            .exclude(author__profile__in=following_profiles)
+            .exclude(author=request.user)
+        )
+        if topic:
+            following_queryset = following_queryset.filter(topic=topic)
+            discover_queryset = discover_queryset.filter(topic=topic)
+
+        topic_scores = self._build_topic_scores(request.user)
+        following_items = list(following_queryset.order_by('-created_at'))
+        discover_items = self._ordered_by_topic_score(discover_queryset, topic_scores)
+
+        mixed = []
+        follow_idx = 0
+        discover_idx = 0
+        while follow_idx < len(following_items) or discover_idx < len(discover_items):
+            if follow_idx < len(following_items):
+                mixed.append(following_items[follow_idx])
+                follow_idx += 1
+            if discover_idx < len(discover_items):
+                mixed.append(discover_items[discover_idx])
+                discover_idx += 1
+        if not following_items:
+            mixed = discover_items
+        page = self.paginate_queryset(mixed)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(mixed, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
@@ -463,6 +603,11 @@ class PinViewSet(viewsets.ModelViewSet):
         pin = self.get_object()
         if pin.author != request.user:
             return Response({'error': 'Only pin owner can manage private tags'}, status=status.HTTP_403_FORBIDDEN)
+        if request.method in ['POST', 'DELETE'] and not request.user.profile.can_use_private_tags:
+            return Response(
+                {'error': 'Private tags require Plus or Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if request.method == 'GET':
             tags = list(
                 PrivatePinTag.objects.filter(user=request.user, pin=pin)
@@ -494,6 +639,68 @@ class PinViewSet(viewsets.ModelViewSet):
             .order_by('tag')
         )
         return Response({'tags': tags})
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='download')
+    def download(self, request, slug=None):
+        pin = self.get_object()
+        profile = request.user.profile
+        if not profile.can_download:
+            return Response(
+                {'error': 'Download requires Plus or Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        requested_quality = (request.query_params.get('quality') or 'standard').strip().lower()
+        allowed_qualities = {'standard'}
+        if profile.subscription_plan == profile.PLAN_PRO:
+            allowed_qualities.update({'hd', '4k'})
+        if requested_quality not in allowed_qualities:
+            return Response(
+                {'error': f'Quality "{requested_quality}" not allowed for your plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return Response({
+            'download_url': request.build_absolute_uri(pin.image.url),
+            'quality': requested_quality,
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-stats')
+    def creator_stats(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Advanced stats require Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        my_pins = Pin.objects.filter(author=request.user)
+        totals = my_pins.aggregate(
+            pins=Count('id'),
+            likes=Count('likes', distinct=True),
+            saves=Count('saves', distinct=True),
+            comments=Count('comments', distinct=True),
+            views=Count('view_events', distinct=True),
+        )
+        top_pins = (
+            my_pins.annotate(
+                likes_total=Count('likes', distinct=True),
+                saves_total=Count('saves', distinct=True),
+                views_total=Count('view_events', distinct=True),
+            )
+            .order_by('-views_total', '-saves_total', '-likes_total', '-created_at')[:5]
+        )
+        return Response({
+            'totals': totals,
+            'top_pins': [
+                {
+                    'id': pin.id,
+                    'slug': pin.slug,
+                    'title': pin.title,
+                    'likes': pin.likes_total,
+                    'saves': pin.saves_total,
+                    'views': pin.views_total,
+                }
+                for pin in top_pins
+            ],
+        })
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
     def provenance(self, request, slug=None):
@@ -565,17 +772,35 @@ class BoardViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            Board.objects.filter(user=self.request.user)
+            Board.objects.filter(Q(user=self.request.user) | Q(collaborators=self.request.user))
             .annotate(pin_count=Count('pins'))
+            .distinct()
             .order_by('-created_at')
         )
 
+    def _can_manage_board_content(self, user, board):
+        return board.user == user or board.collaborators.filter(id=user.id).exists()
+
     def perform_create(self, serializer):
+        profile = self.request.user.profile
+        limits = profile.board_limits
+        is_private = bool(serializer.validated_data.get('is_private', False))
+        boards = Board.objects.filter(user=self.request.user)
+        private_count = boards.filter(is_private=True).count()
+        public_count = boards.filter(is_private=False).count()
+        if is_private and limits['private_max'] is not None and private_count >= limits['private_max']:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'is_private': f'Private boards limit reached ({limits["private_max"]}).'})
+        if not is_private and limits['public_max'] is not None and public_count >= limits['public_max']:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'is_private': f'Public boards limit reached ({limits["public_max"]}).'})
         serializer.save(user=self.request.user)
 
     @action(detail=True, methods=['post'], url_path='add-pin')
     def add_pin(self, request, pk=None):
         board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to edit this board'}, status=status.HTTP_403_FORBIDDEN)
         pin_slug = request.data.get('pin_slug')
         if not pin_slug:
             return Response({'error': 'pin_slug is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -589,6 +814,8 @@ class BoardViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='remove-pin')
     def remove_pin(self, request, pk=None):
         board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to edit this board'}, status=status.HTTP_403_FORBIDDEN)
         pin_slug = request.data.get('pin_slug')
         if not pin_slug:
             return Response({'error': 'pin_slug is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -598,6 +825,55 @@ class BoardViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
         board.pins.remove(pin)
         return Response({'status': 'removed', 'pinCount': board.pins.count()})
+
+    @action(detail=True, methods=['get', 'post', 'delete'], url_path='collaborators')
+    def collaborators(self, request, pk=None):
+        board = self.get_object()
+        owner_profile = board.user.profile
+        if request.method in ['POST', 'DELETE'] and board.user != request.user:
+            return Response({'error': 'Only board owner can manage collaborators'}, status=status.HTTP_403_FORBIDDEN)
+        if request.method == 'GET':
+            return Response({
+                'collaborators': [
+                    {
+                        'id': user.id,
+                        'username': user.username,
+                    }
+                    for user in board.collaborators.order_by('username')
+                ],
+            })
+
+        if owner_profile.subscription_plan == owner_profile.PLAN_FREE:
+            return Response(
+                {'error': 'Collaborative boards require Plus or Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if request.method == 'POST':
+            username = (request.data.get('username') or '').strip()
+            if not username:
+                return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                target_user = User.objects.get(username=username)
+            except User.DoesNotExist:
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            if target_user == board.user:
+                return Response({'error': 'Board owner cannot be collaborator'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if owner_profile.subscription_plan == owner_profile.PLAN_PLUS and board.collaborators.count() >= 10:
+                return Response(
+                    {'error': 'Collaborators limit reached (10) for Plus plan'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            board.collaborators.add(target_user)
+            return Response({'status': 'added', 'collaborator_count': board.collaborators.count()})
+
+        username = (request.data.get('username') or '').strip()
+        if not username:
+            return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
+        board.collaborators.filter(username=username).delete()
+        return Response({'status': 'removed', 'collaborator_count': board.collaborators.count()})
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='platform-policy')
     def platform_policy(self, request):

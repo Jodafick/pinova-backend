@@ -34,6 +34,10 @@ class ProfileSerializer(serializers.ModelSerializer):
             'discoverable_profile',
             'allow_ai_translation',
             'preferred_language',
+            'ad_ads_enabled',
+            'partner_ads_enabled',
+            'tips_enabled',
+            'tips_url',
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following']
 
@@ -89,6 +93,10 @@ class UserSerializer(serializers.ModelSerializer):
             'renewal_at': profile.subscription_renewal_at,
             'translation_quota_monthly': profile.translation_quota_monthly,
             'translation_used_monthly': profile.translation_used_monthly,
+            'ad_ads_enabled': profile.ad_ads_enabled,
+            'partner_ads_enabled': profile.partner_ads_enabled,
+            'tips_enabled': profile.tips_enabled,
+            'tips_url': profile.tips_url,
         }
 
 class RegisterSerializer(BaseRegisterSerializer):

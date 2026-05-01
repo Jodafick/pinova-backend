@@ -19,6 +19,7 @@ class Board(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     is_private = models.BooleanField(default=False)
+    collaborators = models.ManyToManyField(User, blank=True, related_name='collaborative_boards')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -103,6 +104,7 @@ class Comment(models.Model):
     pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='comments')
     text = models.TextField()
     gif_url = models.URLField(blank=True, null=True)
+    media = models.ImageField(upload_to='comments/', blank=True, null=True)
     parent = models.ForeignKey('self', on_delete=models.CASCADE, related_name='replies', blank=True, null=True)
     mentions = models.JSONField(default=list, blank=True)
     original_language = models.CharField(max_length=8, default='auto')
@@ -178,3 +180,21 @@ class TopicTranslation(models.Model):
 
     def __str__(self):
         return self.topic
+
+
+class PinViewEvent(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_view_events')
+    pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='view_events')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class SearchInteraction(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='search_interactions')
+    query = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']

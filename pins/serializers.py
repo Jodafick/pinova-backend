@@ -33,10 +33,14 @@ def extract_mentions(text: str) -> list[str]:
 
 class BoardSerializer(serializers.ModelSerializer):
     pin_count = serializers.IntegerField(read_only=True)
+    collaborator_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Board
-        fields = ['id', 'name', 'description', 'is_private', 'created_at', 'pin_count']
+        fields = ['id', 'name', 'description', 'is_private', 'created_at', 'pin_count', 'collaborator_count']
+
+    def get_collaborator_count(self, obj):
+        return obj.collaborators.count()
 
 
 class PinProvenanceEventSerializer(serializers.ModelSerializer):
@@ -76,6 +80,7 @@ class CommentSerializer(serializers.ModelSerializer):
             'avatar_color',
             'text',
             'gif_url',
+            'media',
             'parent',
             'mentions',
             'hashtags',
@@ -289,6 +294,11 @@ class PinSerializer(serializers.ModelSerializer):
         public_tags = self._normalize_string_list(validated_data.pop('public_tags_input', []))
         board_ids = self._normalize_int_list(validated_data.pop('board_ids_input', []))
         request = self.context.get('request')
+        if request and request.user.is_authenticated and private_tags:
+            if not request.user.profile.can_use_private_tags:
+                raise serializers.ValidationError({
+                    'private_tags_input': 'Private tags require Plus or Pro plan.'
+                })
         if request and request.user.is_authenticated:
             validated_data['author'] = request.user
         pin = super().create(validated_data)
