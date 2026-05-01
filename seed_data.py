@@ -2,6 +2,7 @@ import os
 import django
 import requests
 import random
+from pathlib import Path
 from django.core.files import File
 from django.core.files.temp import NamedTemporaryFile
 
@@ -12,6 +13,7 @@ django.setup()
 from django.contrib.auth.models import User
 from pins.models import Pin
 from accounts.models import Profile
+from django.conf import settings
 
 def download_image(url):
     response = requests.get(url)
@@ -22,10 +24,30 @@ def download_image(url):
         return img_temp
     return None
 
+
+def cleanup_existing_images():
+    print("Suppression des images existantes...")
+
+    # 1) Supprimer les fichiers liés aux pins existants
+    for pin in Pin.objects.exclude(image='').iterator():
+        if pin.image:
+            pin.image.delete(save=False)
+
+    # 2) Supprimer les enregistrements de pins (après suppression des fichiers)
+    Pin.objects.all().delete()
+
+    # 3) Nettoyer le dossier media/pins pour enlever tout fichier orphelin
+    pins_dir = Path(settings.MEDIA_ROOT) / 'pins'
+    if pins_dir.exists():
+        for file_path in pins_dir.glob('*'):
+            if file_path.is_file():
+                file_path.unlink(missing_ok=True)
+
+    print("Images existantes supprimées.")
+
 def seed_data():
     print("Mise à jour de la base de données...")
-    # Ne pas supprimer les anciens pins, juste en ajouter
-    # Pin.objects.all().delete()
+    cleanup_existing_images()
     User.objects.exclude(is_superuser=True).delete()
 
     usernames = ['Clara', 'Leo', 'Aya', 'Max', 'Zoe', 'Nina', 'Emma', 'Karim', 'Sofia', 'Lucas']

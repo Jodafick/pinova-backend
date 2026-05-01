@@ -151,6 +151,7 @@ class CommentSerializer(serializers.ModelSerializer):
 
 class PinSerializer(serializers.ModelSerializer):
     author_profile = ProfileSerializer(source='author.profile', read_only=True)
+    boards = BoardSerializer(many=True, read_only=True)
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
     saves_count = serializers.IntegerField(read_only=True)
@@ -160,6 +161,16 @@ class PinSerializer(serializers.ModelSerializer):
     private_tags = serializers.SerializerMethodField()
     private_tags_input = serializers.ListField(
         child=serializers.CharField(max_length=100),
+        write_only=True,
+        required=False,
+    )
+    public_tags_input = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        write_only=True,
+        required=False,
+    )
+    board_ids_input = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
         write_only=True,
         required=False,
     )
@@ -174,6 +185,7 @@ class PinSerializer(serializers.ModelSerializer):
             'image',
             'author',
             'author_profile',
+            'boards',
             'topic',
             'visibility',
             'certified_credit',
@@ -181,6 +193,8 @@ class PinSerializer(serializers.ModelSerializer):
             'hashtags',
             'private_tags',
             'private_tags_input',
+            'public_tags_input',
+            'board_ids_input',
             'created_at',
             'likes_count',
             'comments_count',
@@ -220,22 +234,63 @@ class PinSerializer(serializers.ModelSerializer):
             .order_by('tag')
         )
 
-    def create(self, validated_data):
-        private_tags = validated_data.pop('private_tags_input', [])
-        request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            validated_data['author'] = request.user
-        pin = super().create(validated_data)
-        hashtags = extract_hashtags(f"{pin.title} {pin.description}")
-        if hashtags:
+    def _normalize_string_list(self, raw):
+        if raw in (None, ''):
+            return []
+        if isinstance(raw, str):
+            cleaned = raw.strip()
+            if cleaned.startswith('[') and cleaned.endswith(']'):
+                import json
+                try:
+                    decoded = json.loads(cleaned)
+                    if isinstance(decoded, list):
+                        return [str(item).strip() for item in decoded if str(item).strip()]
+                except json.JSONDecodeError:
+                    pass
+            return [part.strip() for part in cleaned.split(',') if part.strip()]
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return []
+
+    def _normalize_int_list(self, raw):
+        values = self._normalize_string_list(raw)
+        normalized = []
+        for value in values:
+            try:
+                normalized.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    def _apply_pin_tags_and_boards(self, pin, request, private_tags, public_tags, board_ids):
+        extracted_hashtags = extract_hashtags(f"{pin.title} {pin.description}")
+        explicit_public_tags = [tag.lstrip('#').lower() for tag in public_tags if tag]
+        merged_tags = sorted(set(extracted_hashtags + explicit_public_tags))
+        if merged_tags:
             hashtag_objs = []
-            for tag in hashtags:
+            for tag in merged_tags:
                 hashtag, _ = Hashtag.objects.get_or_create(name=tag)
                 hashtag_objs.append(hashtag)
             pin.hashtags.set(hashtag_objs)
+
         if request and request.user.is_authenticated and private_tags:
             for tag in private_tags:
                 cleaned = tag.strip()
                 if cleaned:
                     PrivatePinTag.objects.get_or_create(user=request.user, pin=pin, tag=cleaned)
+
+        if request and request.user.is_authenticated and board_ids:
+            user_boards = Board.objects.filter(user=request.user, id__in=board_ids)
+            if user_boards.exists():
+                pin.boards.add(*user_boards)
+
+    def create(self, validated_data):
+        private_tags = self._normalize_string_list(validated_data.pop('private_tags_input', []))
+        public_tags = self._normalize_string_list(validated_data.pop('public_tags_input', []))
+        board_ids = self._normalize_int_list(validated_data.pop('board_ids_input', []))
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['author'] = request.user
+        pin = super().create(validated_data)
+        self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, board_ids)
         return pin
