@@ -14,6 +14,8 @@ class Notification(models.Model):
     notification_type = models.CharField(max_length=20, choices=TYPES)
     message = models.CharField(max_length=255)
     pin_id = models.IntegerField(null=True, blank=True)
+    pin_slug = models.SlugField(max_length=255, null=True, blank=True)
+    comment_id = models.IntegerField(null=True, blank=True)
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 

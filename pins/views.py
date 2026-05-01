@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count, Q
 from django.contrib.auth.models import User
 from asgiref.sync import async_to_sync
@@ -12,6 +13,18 @@ from .models import Pin, Comment, Like, Save, Hashtag, PrivatePinTag, PinProvena
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, extract_hashtags
 from .translation import translate_text_to, detect_original_language
 from notifications.models import Notification
+
+
+class CommentPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+
+class ReplyPagination(PageNumberPagination):
+    page_size = 5
+    page_size_query_param = 'page_size'
+    max_page_size = 30
 
 
 class PinViewSet(viewsets.ModelViewSet):
@@ -93,6 +106,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 notification_type='save',
                 message=f"{request.user.username} a enregistré votre pin: {pin.title}",
                 pin_id=pin.id,
+                pin_slug=pin.slug,
             )
 
         return Response({'status': 'saved', 'saves_count': pin.saves_count})
@@ -113,6 +127,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 notification_type='like',
                 message=f"{request.user.username} a aimé votre pin: {pin.title}",
                 pin_id=pin.id,
+                pin_slug=pin.slug,
             )
 
         return Response({'status': 'liked', 'likes_count': pin.likes_count})
@@ -161,15 +176,30 @@ class PinViewSet(viewsets.ModelViewSet):
                             notification_type='comment',
                             message=f"{request.user.username} vous a mentionné dans un commentaire.",
                             pin_id=pin.id,
+                            pin_slug=pin.slug,
+                            comment_id=comment.id,
                         )
 
-            if pin.author != request.user:
+            if parent and parent.user != request.user:
+                Notification.objects.create(
+                    recipient=parent.user,
+                    sender=request.user,
+                    notification_type='comment',
+                    message=f"{request.user.username} a répondu à votre commentaire sur {pin.title}.",
+                    pin_id=pin.id,
+                    pin_slug=pin.slug,
+                    comment_id=comment.id,
+                )
+
+            if pin.author != request.user and not (parent and parent.user == pin.author):
                 Notification.objects.create(
                     recipient=pin.author,
                     sender=request.user,
                     notification_type='comment',
                     message=f"{request.user.username} a commenté votre pin: {pin.title}",
                     pin_id=pin.id,
+                    pin_slug=pin.slug,
+                    comment_id=comment.id,
                 )
 
             serializer = CommentSerializer(comment, context={'request': request})
@@ -178,10 +208,53 @@ class PinViewSet(viewsets.ModelViewSet):
         comments = (
             pin.comments.filter(parent__isnull=True)
             .select_related('user', 'user__profile')
-            .prefetch_related('replies', 'hashtags')
+            .prefetch_related('replies', 'replies__user', 'replies__user__profile', 'hashtags')
+            .order_by('-created_at')
         )
-        serializer = CommentSerializer(comments, many=True, context={'request': request})
-        return Response(serializer.data)
+        paginator = CommentPagination()
+        page = paginator.paginate_queryset(comments, request)
+        serializer = CommentSerializer(
+            page,
+            many=True,
+            context={
+                'request': request,
+                'include_replies': True,
+                'replies_page_size': int(request.query_params.get('replies_page_size', 3) or 3),
+            },
+        )
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[permissions.IsAuthenticatedOrReadOnly],
+        url_path='comments/(?P<comment_id>[^/.]+)/replies',
+    )
+    def comment_replies(self, request, comment_id=None):
+        try:
+            parent_comment = Comment.objects.select_related('pin').get(id=comment_id)
+        except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Respect pin visibility when loading replies.
+        pin = parent_comment.pin
+        if not self.get_queryset().filter(id=pin.id).exists():
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        replies = (
+            parent_comment.replies.all()
+            .select_related('user', 'user__profile')
+            .prefetch_related('hashtags')
+            .order_by('created_at')
+        )
+        paginator = ReplyPagination()
+        page = paginator.paginate_queryset(replies, request)
+        serializer = CommentSerializer(
+            page,
+            many=True,
+            context={'request': request, 'include_replies': False},
+        )
+        return paginator.get_paginated_response(serializer.data)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):

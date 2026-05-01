@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework import filters
+from rest_framework.pagination import PageNumberPagination
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
@@ -148,15 +149,24 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 models.Q(username__icontains=query) |
                 models.Q(profile__display_name__icontains=query)
             )
-        users = users.order_by('username')[:10]
-        return Response([
+        users = users.order_by('username')
+
+        class MentionPagination(PageNumberPagination):
+            page_size = 10
+            page_size_query_param = 'page_size'
+            max_page_size = 30
+
+        paginator = MentionPagination()
+        page = paginator.paginate_queryset(users, request)
+        data = [
             {
                 'username': user.username,
                 'display_name': user.profile.display_name or user.username,
                 'avatar_color': user.profile.avatar_color,
             }
-            for user in users
-        ])
+            for user in page
+        ]
+        return paginator.get_paginated_response(data)
 
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]

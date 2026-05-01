@@ -59,6 +59,8 @@ class CommentSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(source='user.profile.display_name', read_only=True)
     avatar_color = serializers.CharField(source='user.profile.avatar_color', read_only=True)
     replies = serializers.SerializerMethodField()
+    replies_next_page = serializers.SerializerMethodField()
+    replies_count = serializers.SerializerMethodField()
     hashtags = serializers.SerializerMethodField()
 
     class Meta:
@@ -78,12 +80,29 @@ class CommentSerializer(serializers.ModelSerializer):
             'translated_text',
             'created_at',
             'replies',
+            'replies_next_page',
+            'replies_count',
         ]
         read_only_fields = ['mentions', 'hashtags', 'translated_text', 'replies']
 
     def get_replies(self, obj):
-        replies = obj.replies.all().select_related('user', 'user__profile')
-        return CommentSerializer(replies, many=True, context=self.context).data
+        if not self.context.get('include_replies', True):
+            return []
+        replies_page_size = int(self.context.get('replies_page_size', 3))
+        replies = obj.replies.all().select_related('user', 'user__profile').order_by('created_at')
+        chunk = replies[:replies_page_size]
+        nested_context = {**self.context, 'include_replies': False}
+        return CommentSerializer(chunk, many=True, context=nested_context).data
+
+    def get_replies_next_page(self, obj):
+        if not self.context.get('include_replies', True):
+            return None
+        replies_page_size = int(self.context.get('replies_page_size', 3))
+        total = obj.replies.count()
+        return 2 if total > replies_page_size else None
+
+    def get_replies_count(self, obj):
+        return obj.replies.count()
 
     def get_hashtags(self, obj):
         return [f"#{h.name}" for h in obj.hashtags.all()]
