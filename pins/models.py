@@ -113,6 +113,19 @@ class Comment(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+    @property
+    def likes_count(self):
+        return self.comment_likes.count()
+
+
+class CommentLike(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='comment_likes')
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name='comment_likes')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'comment')
+
 
 class PrivatePinTag(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='private_pin_tags')

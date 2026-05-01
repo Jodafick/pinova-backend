@@ -62,6 +62,8 @@ class CommentSerializer(serializers.ModelSerializer):
     replies_next_page = serializers.SerializerMethodField()
     replies_count = serializers.SerializerMethodField()
     hashtags = serializers.SerializerMethodField()
+    likes_count = serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
@@ -79,6 +81,8 @@ class CommentSerializer(serializers.ModelSerializer):
             'original_language',
             'translated_text',
             'created_at',
+            'likes_count',
+            'is_liked',
             'replies',
             'replies_next_page',
             'replies_count',
@@ -106,6 +110,15 @@ class CommentSerializer(serializers.ModelSerializer):
 
     def get_hashtags(self, obj):
         return [f"#{h.name}" for h in obj.hashtags.all()]
+
+    def get_likes_count(self, obj):
+        return obj.comment_likes.count()
+
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.comment_likes.filter(user=request.user).exists()
+        return False
 
     def create(self, validated_data):
         comment = super().create(validated_data)

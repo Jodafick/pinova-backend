@@ -9,7 +9,7 @@ from googletrans import Translator
 import hashlib
 import json
 import re
-from .models import Pin, Comment, Like, Save, Hashtag, PrivatePinTag, PinProvenanceEvent, Board
+from .models import Pin, Comment, Like, Save, Hashtag, PrivatePinTag, PinProvenanceEvent, Board, CommentLike
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, extract_hashtags
 from .translation import translate_text_to, detect_original_language
 from notifications.models import Notification
@@ -255,6 +255,40 @@ class PinViewSet(viewsets.ModelViewSet):
             context={'request': request, 'include_replies': False},
         )
         return paginator.get_paginated_response(serializer.data)
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='comments/(?P<comment_id>[^/.]+)/like',
+    )
+    def like_comment(self, request, comment_id=None):
+        try:
+            comment = Comment.objects.select_related('pin', 'user').get(id=comment_id)
+        except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Respect pin visibility permissions.
+        if not self.get_queryset().filter(id=comment.pin_id).exists():
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        like, created = CommentLike.objects.get_or_create(user=request.user, comment=comment)
+        if not created:
+            like.delete()
+            return Response({'status': 'unliked', 'likes_count': comment.comment_likes.count()})
+
+        if comment.user != request.user:
+            Notification.objects.create(
+                recipient=comment.user,
+                sender=request.user,
+                notification_type='like',
+                message=f"{request.user.username} a aimé votre commentaire.",
+                pin_id=comment.pin_id,
+                pin_slug=comment.pin.slug,
+                comment_id=comment.id,
+            )
+
+        return Response({'status': 'liked', 'likes_count': comment.comment_likes.count()})
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):
