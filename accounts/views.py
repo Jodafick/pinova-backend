@@ -9,6 +9,7 @@ from django.conf import settings
 import os
 import requests
 from django.db import transaction
+import logging
 
 class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
@@ -30,6 +31,8 @@ from datetime import timedelta
 from .models import Profile, EmailOTP, SubscriptionPayment
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
+
+logger = logging.getLogger(__name__)
 
 class VerifyOTPView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -257,6 +260,41 @@ class SubscriptionCheckoutView(APIView):
     def _get_amount(self, plan, billing_cycle):
         return self.PRICE_MAP_XOF.get(plan, {}).get(billing_cycle)
 
+    def _should_expose_debug(self):
+        return settings.DEBUG or os.environ.get('FEDAPAY_VERBOSE_ERRORS', 'False').lower() == 'true'
+
+    def _safe_json(self, response):
+        try:
+            return response.json()
+        except ValueError:
+            return None
+
+    def _extract_transaction_id(self, payload):
+        if not isinstance(payload, dict):
+            return None
+        direct = payload.get('id')
+        if direct:
+            return direct
+        for key in ('transaction', 'data', 'v1/transaction'):
+            nested = payload.get(key)
+            if isinstance(nested, dict) and nested.get('id'):
+                return nested.get('id')
+        return None
+
+    def _extract_checkout_url(self, payload):
+        if not isinstance(payload, dict):
+            return None
+        for key in ('url', 'payment_url', 'redirect_url'):
+            if payload.get(key):
+                return payload.get(key)
+        for key in ('token', 'data'):
+            nested = payload.get(key)
+            if isinstance(nested, dict):
+                for nested_key in ('url', 'payment_url', 'redirect_url'):
+                    if nested.get(nested_key):
+                        return nested.get(nested_key)
+        return None
+
     def post(self, request):
         plan = (request.data.get('plan') or '').strip().lower()
         billing_cycle = (request.data.get('billing_cycle') or 'monthly').strip().lower()
@@ -297,18 +335,60 @@ class SubscriptionCheckoutView(APIView):
         base = self._fedapay_base_url()
         try:
             create_resp = requests.post(f'{base}/transactions', json=payload, headers=headers, timeout=20)
-            create_resp.raise_for_status()
-            transaction_data = create_resp.json() or {}
-            transaction_id = transaction_data.get('id')
+            create_body = self._safe_json(create_resp)
+            if create_resp.status_code >= 400:
+                logger.error('FedaPay transaction create failed status=%s body=%s', create_resp.status_code, create_resp.text)
+                error_payload = {'error': 'FedaPay transaction create failed'}
+                if self._should_expose_debug():
+                    error_payload['fedapay_debug'] = {
+                        'step': 'create_transaction',
+                        'status_code': create_resp.status_code,
+                        'response_body': create_body if create_body is not None else create_resp.text,
+                    }
+                return Response(error_payload, status=status.HTTP_502_BAD_GATEWAY)
+
+            transaction_data = create_body or {}
+            transaction_id = self._extract_transaction_id(transaction_data)
             if not transaction_id:
-                return Response({'error': 'Invalid FedaPay transaction response'}, status=status.HTTP_502_BAD_GATEWAY)
+                logger.error('FedaPay transaction response missing id body=%s', create_resp.text)
+                error_payload = {'error': 'Invalid FedaPay transaction response'}
+                if self._should_expose_debug():
+                    error_payload['fedapay_debug'] = {
+                        'step': 'create_transaction',
+                        'status_code': create_resp.status_code,
+                        'response_body': transaction_data if transaction_data else create_resp.text,
+                        'hint': 'Missing transaction id in response payload',
+                    }
+                return Response(error_payload, status=status.HTTP_502_BAD_GATEWAY)
 
             token_resp = requests.post(f'{base}/transactions/{transaction_id}/token', headers=headers, timeout=20)
-            token_resp.raise_for_status()
-            token_data = token_resp.json() or {}
-            checkout_url = token_data.get('url') or token_data.get('payment_url')
+            token_body = self._safe_json(token_resp)
+            if token_resp.status_code >= 400:
+                logger.error('FedaPay token create failed tx=%s status=%s body=%s', transaction_id, token_resp.status_code, token_resp.text)
+                error_payload = {'error': 'Unable to generate checkout URL'}
+                if self._should_expose_debug():
+                    error_payload['fedapay_debug'] = {
+                        'step': 'create_transaction_token',
+                        'status_code': token_resp.status_code,
+                        'response_body': token_body if token_body is not None else token_resp.text,
+                        'transaction_id': str(transaction_id),
+                    }
+                return Response(error_payload, status=status.HTTP_502_BAD_GATEWAY)
+
+            token_data = token_body or {}
+            checkout_url = self._extract_checkout_url(token_data)
             if not checkout_url:
-                return Response({'error': 'Unable to generate checkout URL'}, status=status.HTTP_502_BAD_GATEWAY)
+                logger.error('FedaPay token response missing checkout url tx=%s body=%s', transaction_id, token_resp.text)
+                error_payload = {'error': 'Unable to generate checkout URL'}
+                if self._should_expose_debug():
+                    error_payload['fedapay_debug'] = {
+                        'step': 'create_transaction_token',
+                        'status_code': token_resp.status_code,
+                        'response_body': token_data if token_data else token_resp.text,
+                        'transaction_id': str(transaction_id),
+                        'hint': 'Missing checkout url in token response payload',
+                    }
+                return Response(error_payload, status=status.HTTP_502_BAD_GATEWAY)
 
             SubscriptionPayment.objects.update_or_create(
                 fedapay_transaction_id=str(transaction_id),
@@ -333,7 +413,16 @@ class SubscriptionCheckoutView(APIView):
                 'transaction_id': str(transaction_id),
             }, status=status.HTTP_201_CREATED)
         except requests.RequestException as exc:
-            return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
+            logger.exception('FedaPay checkout request exception')
+            error_payload = {'error': f'FedaPay error: {str(exc)}'}
+            if self._should_expose_debug():
+                response_obj = getattr(exc, 'response', None)
+                error_payload['fedapay_debug'] = {
+                    'step': 'network_or_http_exception',
+                    'status_code': getattr(response_obj, 'status_code', None),
+                    'response_body': self._safe_json(response_obj) if response_obj is not None else None,
+                }
+            return Response(error_payload, status=status.HTTP_502_BAD_GATEWAY)
 
 
 class SubscriptionConfirmView(APIView):
