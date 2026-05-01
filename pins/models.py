@@ -166,3 +166,15 @@ class PinProvenanceEvent(models.Model):
 
     def __str__(self):
         return f"{self.pin_id}:{self.action}:{self.current_hash[:12]}"
+
+
+class TopicTranslation(models.Model):
+    topic = models.CharField(max_length=120, unique=True)
+    translations = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['topic']
+
+    def __str__(self):
+        return self.topic

@@ -9,7 +9,7 @@ from googletrans import Translator
 import hashlib
 import json
 import re
-from .models import Pin, Comment, Like, Save, Hashtag, PrivatePinTag, PinProvenanceEvent, Board, CommentLike
+from .models import Pin, Comment, Like, Save, Hashtag, PrivatePinTag, PinProvenanceEvent, Board, CommentLike, TopicTranslation
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, extract_hashtags
 from .translation import translate_text_to, detect_original_language
 from notifications.models import Notification
@@ -369,27 +369,93 @@ class PinViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def topics(self, request):
-        topics_qs = (
+        limit_raw = (request.query_params.get('limit') or '10').strip()
+        limit = int(limit_raw) if limit_raw.isdigit() else 10
+        limit = max(1, min(limit, 30))
+        search_query = (request.query_params.get('q') or '').strip()
+        search_query_lower = search_query.lower()
+
+        base_qs = (
             Pin.objects.exclude(topic__isnull=True)
             .exclude(topic__exact='')
-            .values('topic')
+            .exclude(visibility=Pin.VISIBILITY_PRIVATE)
+        )
+        topics_qs = (
+            base_qs.values('topic')
             .annotate(pin_count=Count('id'))
             .order_by('-pin_count', 'topic')
         )
+
+        # Suggestions personnalisées pour l'utilisateur connecté.
+        if request.user.is_authenticated:
+            suggested_topics = (
+                base_qs.filter(
+                    Q(likes__user=request.user)
+                    | Q(saves__user=request.user)
+                    | Q(comments__user=request.user)
+                )
+                .values('topic')
+                .annotate(interactions=Count('id'))
+                .order_by('-interactions', 'topic')
+            )
+            suggested_names = [row['topic'] for row in suggested_topics[: (200 if search_query else limit)]]
+            if suggested_names:
+                # Garder les suggestions d'abord, puis compléter par les plus populaires.
+                popular_rows = list(topics_qs)
+                topic_map = {row['topic']: row['pin_count'] for row in popular_rows}
+                merged = [{'topic': name, 'pin_count': topic_map.get(name, 0)} for name in suggested_names]
+                for row in popular_rows:
+                    if len(merged) >= (200 if search_query else limit):
+                        break
+                    if row['topic'] not in suggested_names:
+                        merged.append(row)
+                topics_qs = merged[: (200 if search_query else limit)]
+            else:
+                topics_qs = list(topics_qs[: (200 if search_query else limit)])
+        else:
+            topics_qs = list(topics_qs[: (200 if search_query else limit)])
+
         target_lang = (request.query_params.get('lang') or '').lower()
         if not target_lang and request.user.is_authenticated:
             target_lang = (request.user.profile.preferred_language or '').lower()
-        items = [{'name': item['topic'], 'pinCount': item['pin_count']} for item in topics_qs]
-        if target_lang and target_lang not in ('fr', 'auto'):
-            translator = Translator()
-            translated = []
-            for item in items:
+        items = []
+        translator = Translator() if target_lang and target_lang not in ('fr', 'auto') else None
+        supported_langs = ['fr', 'en', 'es', 'de', 'it', 'pt', 'ar', 'ja', 'zh', 'fon']
+        for item in topics_qs:
+            topic_name = item['topic']
+            record, _ = TopicTranslation.objects.get_or_create(
+                topic=topic_name,
+                defaults={'translations': {'fr': topic_name}},
+            )
+            translations = dict(record.translations or {})
+            if 'fr' not in translations:
+                translations['fr'] = topic_name
+            if translator and target_lang in supported_langs and target_lang not in translations:
                 try:
-                    translated_name = async_to_sync(translate_text_to)(translator, item['name'], target_lang)
-                    translated.append({**item, 'name': translated_name})
+                    translated_name = async_to_sync(translate_text_to)(translator, topic_name, target_lang)
+                    translations[target_lang] = translated_name
+                    record.translations = translations
+                    record.save(update_fields=['translations', 'updated_at'])
                 except RuntimeError:
-                    translated.append(item)
-            return Response(translated)
+                    pass
+            display_name = topic_name
+            if target_lang and target_lang not in ('auto', 'fr'):
+                display_name = translations.get(target_lang, topic_name)
+            if search_query_lower:
+                if not (
+                    search_query_lower in topic_name.lower()
+                    or search_query_lower in display_name.lower()
+                    or any(search_query_lower in str(value).lower() for value in translations.values())
+                ):
+                    continue
+            items.append({
+                'name': display_name,
+                'originalName': topic_name,
+                'pinCount': item['pin_count'],
+                'translations': translations,
+            })
+        if search_query_lower:
+            items = items[:limit]
         return Response(items)
 
     @action(detail=True, methods=['get', 'post', 'delete'], permission_classes=[permissions.IsAuthenticated], url_path='private-tags')

@@ -72,7 +72,18 @@ def seed_data():
             profile.save()
         users.append(user)
 
-    topics = ['Maison et déco', 'Recettes faciles', 'Voyages', 'Inspiration design', 'Art & illustration', 'Plantes', 'Mode', 'Bien-être', 'Photographie', 'DIY & Crafts']
+    topics = [
+        'Maison et déco', 'Recettes faciles', 'Voyages', 'Inspiration design', 'Art & illustration',
+        'Plantes', 'Mode', 'Bien-être', 'Photographie', 'DIY & Crafts',
+        'Technologie', 'Gaming setup', 'Business', 'Finance perso', 'Éducation',
+        'Productivité', 'Architecture moderne', 'Street art', 'Cuisine africaine', 'Cuisine asiatique',
+        'Desserts', 'Pâtisserie', 'Fitness', 'Yoga', 'Méditation',
+        'Santé', 'Beauté', 'Coiffure', 'Mariage', 'Bébé & famille',
+        'Animaux', 'Nature', 'Sports', 'Football', 'Basketball',
+        'Musique', 'Cinéma', 'Séries', 'Lecture', 'Poésie',
+        'Science', 'Astronomie', 'Automobile', 'Moto', 'Cyclisme',
+        'Immobilier', 'Minimalisme', 'Rénovation', 'Jardinage', 'Écologie'
+    ]
     
     image_queries = ['architecture', 'food', 'japan', 'workspace', 'tattoo', 'plants', 'baking', 'streetwear', 'yoga', 'colors', 'paris', 'macrame', 'nature', 'design', 'art', 'decor', 'kitchen', 'beach', 'mountain', 'city']
     
