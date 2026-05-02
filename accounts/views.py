@@ -175,7 +175,10 @@ class VerifyOTPView(APIView):
             Notification.objects.create(
                 recipient=user,
                 notification_type='welcome',
-                message=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé."
+                title='Compte valide',
+                message=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé.",
+                action_url='/',
+                metadata={'stage': 'account_verified'},
             )
 
             # Supprimer l'OTP après validation
@@ -249,6 +252,36 @@ class ProfileViewSet(viewsets.ModelViewSet):
             )
             return Response({'status': 'followed'})
 
+    @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='followers')
+    def followers(self, request, user__username=None):
+        profile = self.get_object()
+        data = [
+            {
+                'username': follower.user.username,
+                'display_name': follower.display_name or follower.user.username,
+                'avatar_color': follower.avatar_color,
+                'avatar': request.build_absolute_uri(follower.avatar.url) if follower.avatar else None,
+                'is_pro': follower.subscription_plan == Profile.PLAN_PRO,
+            }
+            for follower in profile.followers.select_related('user').order_by('user__username')[:200]
+        ]
+        return Response({'results': data})
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='following')
+    def following(self, request, user__username=None):
+        profile = self.get_object()
+        data = [
+            {
+                'username': followed.user.username,
+                'display_name': followed.display_name or followed.user.username,
+                'avatar_color': followed.avatar_color,
+                'avatar': request.build_absolute_uri(followed.avatar.url) if followed.avatar else None,
+                'is_pro': followed.subscription_plan == Profile.PLAN_PRO,
+            }
+            for followed in profile.following.select_related('user').order_by('user__username')[:200]
+        ]
+        return Response({'results': data})
+
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -282,6 +315,50 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             for user in page
         ]
         return paginator.get_paginated_response(data)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='follow-suggestions')
+    def follow_suggestions(self, request):
+        my_profile = request.user.profile
+        following_ids = list(my_profile.following.values_list('user_id', flat=True))
+        following_ids.append(request.user.id)
+
+        topic_rows = (
+            request.user.likes.select_related('pin')
+            .exclude(pin__topic__isnull=True)
+            .exclude(pin__topic__exact='')
+            .values('pin__topic')
+            .annotate(score=models.Count('id'))
+            .order_by('-score')[:8]
+        )
+        preferred_topics = [row['pin__topic'] for row in topic_rows]
+
+        candidates = (
+            User.objects.select_related('profile')
+            .exclude(id__in=following_ids)
+            .filter(profile__discoverable_profile=True)
+            .annotate(
+                followers_total=models.Count('profile__followers', distinct=True),
+                preferred_topic_pins=models.Count(
+                    'pins',
+                    filter=models.Q(pins__topic__in=preferred_topics),
+                    distinct=True,
+                ),
+            )
+            .order_by('-preferred_topic_pins', '-followers_total', 'username')[:30]
+        )
+
+        data = [
+            {
+                'username': user.username,
+                'display_name': user.profile.display_name or user.username,
+                'avatar_color': user.profile.avatar_color,
+                'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
+                'is_pro': user.profile.subscription_plan == Profile.PLAN_PRO,
+                'reason': 'preferred_topic' if user.preferred_topic_pins > 0 else 'popular',
+            }
+            for user in candidates
+        ]
+        return Response({'results': data})
 
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -613,6 +690,39 @@ class SubscriptionConfirmView(APIView):
         profile.translation_used_monthly = 0
         profile.save()
 
+    def _notify_payment_events(self, user, payment, previous_plan):
+        from notifications.models import Notification
+        Notification.objects.create(
+            recipient=user,
+            sender=None,
+            notification_type='payment',
+            title='Paiement confirme',
+            message=(
+                f"Paiement confirmé ({payment.billing_cycle}) : "
+                f"{payment.amount} {payment.currency_iso} pour le plan {payment.plan.upper()}."
+            ),
+            action_url='/premium',
+            metadata={
+                'transaction_id': payment.fedapay_transaction_id,
+                'plan': payment.plan,
+                'billing_cycle': payment.billing_cycle,
+            },
+        )
+        if previous_plan != payment.plan:
+            Notification.objects.create(
+                recipient=user,
+                sender=None,
+                notification_type='plan_change',
+                title='Changement de plan',
+                message=f"Votre plan est passé de {previous_plan.upper()} à {payment.plan.upper()}.",
+                action_url='/premium',
+                metadata={
+                    'from_plan': previous_plan,
+                    'to_plan': payment.plan,
+                    'transaction_id': payment.fedapay_transaction_id,
+                },
+            )
+
     def post(self, request):
         transaction_id = str(request.data.get('transaction_id') or '').strip()
         callback_status = str(request.data.get('callback_status') or '').strip().lower()
@@ -626,6 +736,15 @@ class SubscriptionConfirmView(APIView):
             )
         except SubscriptionPayment.DoesNotExist:
             return Response({'error': 'Payment session not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == SubscriptionPayment.STATUS_APPROVED:
+            return Response({
+                'status': 'approved',
+                'plan': payment.plan,
+                'billing_cycle': payment.billing_cycle,
+                'renewal_at': request.user.profile.subscription_renewal_at,
+                'already_confirmed': True,
+            })
 
         headers = self._fedapay_headers()
         if not headers:
@@ -662,6 +781,7 @@ class SubscriptionConfirmView(APIView):
                 effective_status = callback_status
 
             if effective_status in approved_statuses:
+                previous_plan = request.user.profile.subscription_plan
                 payment.status = SubscriptionPayment.STATUS_APPROVED
                 with transaction.atomic():
                     payment.fedapay_payload = {
@@ -672,6 +792,7 @@ class SubscriptionConfirmView(APIView):
                     }
                     payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
                     self._apply_subscription(request.user.profile, payment, duration_days)
+                    self._notify_payment_events(request.user, payment, previous_plan)
                 return Response({
                     'status': 'approved',
                     'plan': payment.plan,
@@ -704,6 +825,7 @@ class SubscriptionConfirmView(APIView):
         except requests.RequestException as exc:
             approved_statuses = {'approved', 'success', 'successful', 'completed'}
             if callback_status in approved_statuses:
+                previous_plan = request.user.profile.subscription_plan
                 payment.status = SubscriptionPayment.STATUS_APPROVED
                 with transaction.atomic():
                     payment.fedapay_payload = {
@@ -714,6 +836,7 @@ class SubscriptionConfirmView(APIView):
                     }
                     payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
                     self._apply_subscription(request.user.profile, payment, duration_days)
+                    self._notify_payment_events(request.user, payment, previous_plan)
                 return Response({
                     'status': 'approved',
                     'plan': payment.plan,

@@ -142,7 +142,10 @@ class RegisterSerializer(BaseRegisterSerializer):
         Notification.objects.create(
             recipient=user,
             notification_type='welcome',
-            message="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider."
+            title='Bienvenue sur PINOVA',
+            message="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider.",
+            action_url='/verify-otp',
+            metadata={'stage': 'account_created_pending_verification'},
         )
 
         send_mail(

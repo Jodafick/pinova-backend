@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Notification
+from .models import Notification, PushSubscription
 
 class NotificationSerializer(serializers.ModelSerializer):
     sender_username = serializers.SerializerMethodField()
@@ -9,7 +9,10 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'notification_type',
+            'title',
             'message',
+            'action_url',
+            'metadata',
             'pin_id',
             'pin_slug',
             'comment_id',
@@ -20,3 +23,9 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     def get_sender_username(self, obj):
         return obj.sender.username if obj.sender else "PINOVA"
+
+
+class PushSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushSubscription
+        fields = ['endpoint', 'p256dh', 'auth']
