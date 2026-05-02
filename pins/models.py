@@ -68,6 +68,15 @@ class Pin(models.Model):
         (VISIBILITY_PRIVATE, 'Private'),
     ]
 
+    COMMENTS_OPEN = 'open'
+    COMMENTS_FOLLOWERS_ONLY = 'followers_only'
+    COMMENTS_CLOSED = 'closed'
+    COMMENTS_POLICY_CHOICES = [
+        (COMMENTS_OPEN, 'Open'),
+        (COMMENTS_FOLLOWERS_ONLY, 'Followers only'),
+        (COMMENTS_CLOSED, 'Closed'),
+    ]
+
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=300, unique=True, blank=True)
     description = models.TextField(blank=True, max_length=1000)
@@ -76,6 +85,11 @@ class Pin(models.Model):
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pins')
     topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, null=True, blank=True, related_name='pins')
     visibility = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default=VISIBILITY_PUBLIC)
+    comments_policy = models.CharField(
+        max_length=24,
+        choices=COMMENTS_POLICY_CHOICES,
+        default=COMMENTS_OPEN,
+    )
     certified_credit = models.BooleanField(default=False)
     provenance_root_hash = models.CharField(max_length=128, blank=True)
     boards = models.ManyToManyField(Board, blank=True, related_name='pins', through='PinBoard')
@@ -85,6 +99,9 @@ class Pin(models.Model):
     is_story = models.BooleanField(default=False)
     story_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     story_video = models.FileField(upload_to='story_videos/', null=True, blank=True)
+    needs_review = models.BooleanField(default=False)
+    report_count = models.PositiveIntegerField(default=0)
+    moderation_hidden = models.BooleanField(default=False)
 
     def __str__(self):
         return self.title
@@ -186,6 +203,7 @@ class Like(models.Model):
 class Comment(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='comments')
     pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='comments')
+    hidden_by_owner = models.BooleanField(default=False)
     text = models.TextField()
     gif_url = models.URLField(blank=True, null=True)
     media = models.ImageField(upload_to='comments/', blank=True, null=True)
@@ -195,6 +213,9 @@ class Comment(models.Model):
     translated_text = models.TextField(blank=True)
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='comments')
     created_at = models.DateTimeField(auto_now_add=True)
+    needs_review = models.BooleanField(default=False)
+    report_count = models.PositiveIntegerField(default=0)
+    moderation_hidden = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-created_at']
@@ -202,6 +223,34 @@ class Comment(models.Model):
     @property
     def likes_count(self):
         return self.comment_likes.count()
+
+
+class ContentReport(models.Model):
+    """Signalement utilisateur (pin ou commentaire)."""
+
+    reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name='content_reports')
+    pin = models.ForeignKey(Pin, null=True, blank=True, on_delete=models.CASCADE, related_name='reports')
+    comment = models.ForeignKey(
+        'Comment',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='reports',
+    )
+    reason = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['pin', '-created_at']),
+            models.Index(fields=['comment', '-created_at']),
+        ]
+
+    def __str__(self):
+        if self.pin_id:
+            return f'report pin {self.pin_id} by {self.reporter_id}'
+        return f'report comment {self.comment_id} by {self.reporter_id}'
 
 
 class CommentLike(models.Model):

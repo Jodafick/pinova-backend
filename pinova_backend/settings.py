@@ -287,6 +287,13 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 CSRF_COOKIE_SECURE = not DEBUG
 
-# Media files
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Cache (rate limiting modération — prévoir Redis en prod pour plusieurs workers)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'pinova-default',
+    }
+}
+
+# django-ratelimit utilise le cache « default »
+RATELIMIT_USE_CACHE = 'default'

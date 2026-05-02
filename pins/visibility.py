@@ -8,6 +8,9 @@ from .models import Pin
 def pin_is_visible_for_request(pin: Pin, request) -> bool:
     """Aligné sur PinViewSet.get_queryset pour une instance."""
     user = request.user if request.user.is_authenticated else None
+    if getattr(pin, 'moderation_hidden', False):
+        if not user or user.id != pin.author_id:
+            return False
     now = timezone.now()
     sched_ok = pin.scheduled_publish_at is None or pin.scheduled_publish_at <= now
     if not sched_ok and not (user and user.id == pin.author_id):

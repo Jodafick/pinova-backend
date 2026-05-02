@@ -1,5 +1,6 @@
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery
@@ -26,10 +27,22 @@ from .models import (
     PinViewEvent,
     SearchInteraction,
     PinBoard,
+    ContentReport,
 )
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, BoardDetailSerializer, extract_hashtags
 from .comment_media import compress_comment_media_upload
 from .visibility import pin_is_visible_for_request
+from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
+from .moderation import (
+    validate_comment_text,
+    apply_comment_rate_limit,
+    comment_body_fingerprint,
+    enforce_identical_content_flood,
+    increment_pin_reports,
+    increment_comment_reports,
+    apply_pin_report_thresholds,
+    apply_comment_report_thresholds,
+)
 from .translation import translate_text_to, detect_original_language
 from .topic_i18n import resolve_topic_language, ensure_topic_translation
 from .pagination import PinFeedPagination
@@ -228,6 +241,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 Q(visibility=Pin.VISIBILITY_PUBLIC, author__profile__private_profile=False)
                 & sched
                 & story_q
+                & Q(moderation_hidden=False)
             )
             if apply_story_placement:
                 core &= placement_q
@@ -244,6 +258,7 @@ class PinViewSet(viewsets.ModelViewSet):
         if apply_story_placement:
             core &= placement_q
         queryset = queryset.filter(core).distinct()
+        queryset = queryset.exclude(Q(moderation_hidden=True) & ~Q(author=self.request.user))
         if saved_by_me:
             user = self.request.user
             queryset = queryset.filter(id__in=Save.objects.filter(user=user).values('pin_id'))
@@ -261,9 +276,16 @@ class PinViewSet(viewsets.ModelViewSet):
         pin.save(update_fields=['story_expires_at'])
 
     def perform_update(self, serializer):
+        if serializer.instance.author_id != self.request.user.id:
+            raise PermissionDenied('Only the pin author can edit this pin.')
         pin = serializer.save()
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
+
+    def perform_destroy(self, instance):
+        if instance.author_id != self.request.user.id:
+            raise PermissionDenied('Only the pin author can delete this pin.')
+        instance.delete()
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='save')
     def toggle_save(self, request, slug=None):
@@ -404,10 +426,31 @@ class PinViewSet(viewsets.ModelViewSet):
         pin = self.get_object()
 
         if request.method == 'POST':
+            if not request.user.is_authenticated:
+                return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+            if not user_can_comment_on_pin(pin, request.user):
+                return Response(
+                    {'error': 'Comments are closed or restricted on this pin'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             text = (request.data.get('text', '') or '').strip()
             gif_url = request.data.get('gif')
             media_file = request.FILES.get('media')
             parent_id = request.data.get('parentId') or request.data.get('parent')
+            try:
+                validate_comment_text(text)
+                apply_comment_rate_limit(request.user.id)
+                gif_key = gif_url if isinstance(gif_url, str) else ''
+                enforce_identical_content_flood(
+                    request.user.id,
+                    'comment',
+                    comment_body_fingerprint(text, gif_key),
+                )
+            except serializers.ValidationError as exc:
+                return Response(
+                    {'error': exc.detail},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if not text and not gif_url and not media_file:
                 return Response({'error': 'Comment text, gif or media is required'}, status=status.HTTP_400_BAD_REQUEST)
             if gif_url and not request.user.profile.can_use_comment_gifs:
@@ -503,7 +546,7 @@ class PinViewSet(viewsets.ModelViewSet):
 
         comments = (
             pin.comments.filter(parent__isnull=True)
-            .select_related('user', 'user__profile')
+            .select_related('pin', 'user', 'user__profile')
             .prefetch_related('replies', 'replies__user', 'replies__user__profile', 'hashtags')
         )
         if sort == 'relevant':
@@ -534,6 +577,88 @@ class PinViewSet(viewsets.ModelViewSet):
         return paginator.get_paginated_response(serializer.data)
 
     @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path=r'comments/(?P<comment_id>\d+)/moderate',
+    )
+    def moderate_comment(self, request, slug=None, comment_id=None):
+        pin = self.get_object()
+        if pin.author_id != request.user.id:
+            return Response(
+                {'error': 'Only the pin owner can moderate comments'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        comment = Comment.objects.filter(id=comment_id, pin=pin).first()
+        if not comment:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        hidden = request.data.get('hidden')
+        if hidden is True:
+            comment.hidden_by_owner = True
+        elif hidden is False:
+            comment.hidden_by_owner = False
+        else:
+            return Response(
+                {'error': 'Provide hidden as true or false'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        comment.save(update_fields=['hidden_by_owner'])
+        serializer = CommentSerializer(
+            comment,
+            context={'request': request, 'include_replies': False},
+        )
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='report')
+    def report_pin(self, request, slug=None):
+        pin = self.get_object()
+        if pin.author_id == request.user.id:
+            return Response({'error': 'Cannot report your own content'}, status=status.HTTP_400_BAD_REQUEST)
+        if ContentReport.objects.filter(reporter=request.user, pin=pin).exists():
+            return Response({'status': 'already_reported', 'report_count': pin.report_count})
+        reason = (request.data.get('reason') or '')[:500]
+        ContentReport.objects.create(reporter=request.user, pin=pin, reason=reason)
+        increment_pin_reports(pin.id)
+        pin.refresh_from_db()
+        apply_pin_report_thresholds(pin)
+        pin.refresh_from_db()
+        return Response({
+            'status': 'ok',
+            'report_count': pin.report_count,
+            'needs_review': pin.needs_review,
+            'moderation_hidden': pin.moderation_hidden,
+        })
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path=r'comments/(?P<comment_id>\d+)/report',
+    )
+    def report_comment(self, request, comment_id=None):
+        comment = Comment.objects.select_related('pin').filter(id=comment_id).first()
+        if not comment:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not self.get_queryset().filter(id=comment.pin_id).exists():
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if comment.user_id == request.user.id:
+            return Response({'error': 'Cannot report your own comment'}, status=status.HTTP_400_BAD_REQUEST)
+        if ContentReport.objects.filter(reporter=request.user, comment=comment).exists():
+            return Response({'status': 'already_reported', 'report_count': comment.report_count})
+        reason = (request.data.get('reason') or '')[:500]
+        ContentReport.objects.create(reporter=request.user, comment=comment, reason=reason)
+        increment_comment_reports(comment.id)
+        comment.refresh_from_db()
+        apply_comment_report_thresholds(comment)
+        comment.refresh_from_db()
+        return Response({
+            'status': 'ok',
+            'report_count': comment.report_count,
+            'needs_review': comment.needs_review,
+            'moderation_hidden': comment.moderation_hidden,
+        })
+
+    @action(
         detail=False,
         methods=['get'],
         permission_classes=[permissions.IsAuthenticatedOrReadOnly],
@@ -552,7 +677,7 @@ class PinViewSet(viewsets.ModelViewSet):
 
         replies = (
             parent_comment.replies.all()
-            .select_related('user', 'user__profile')
+            .select_related('pin', 'user', 'user__profile')
             .prefetch_related('hashtags')
         )
         sort = (request.query_params.get('sort') or 'recent').lower()
@@ -944,8 +1069,10 @@ class PinViewSet(viewsets.ModelViewSet):
     def translate_comment(self, request, comment_id=None):
         target_lang = self._resolve_target_lang(request)
         try:
-            comment = Comment.objects.get(id=comment_id)
+            comment = Comment.objects.select_related('pin', 'user').get(id=comment_id)
         except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not viewer_sees_comment_content(comment, comment.pin, request):
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
         original_language = comment.original_language or detect_original_language(comment.text)
         if comment.original_language != original_language:

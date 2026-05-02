@@ -17,6 +17,14 @@ from .models import (
 
 from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
+from .comment_access import viewer_sees_comment_content, user_can_comment_on_pin
+from .moderation import (
+    validate_pin_text,
+    apply_pin_creation_rate_limits,
+    pin_body_fingerprint,
+    enforce_identical_content_flood,
+    pin_is_story_flag,
+)
 from .topic_i18n import resolve_topic_language, ensure_topic_translation
 
 
@@ -126,11 +134,32 @@ class CommentSerializer(serializers.ModelSerializer):
             'created_at',
             'likes_count',
             'is_liked',
+            'hidden_by_owner',
+            'moderation_hidden',
             'replies',
             'replies_next_page',
             'replies_count',
         ]
-        read_only_fields = ['mentions', 'hashtags', 'translated_text', 'replies']
+        read_only_fields = ['mentions', 'hashtags', 'translated_text', 'replies', 'hidden_by_owner', 'moderation_hidden']
+
+    def to_representation(self, instance):
+        request = self.context.get('request')
+        pin = instance.pin
+        full = viewer_sees_comment_content(instance, pin, request)
+        data = super().to_representation(instance)
+        if not full:
+            data['text'] = ''
+            data['gif_url'] = None
+            data['media'] = None
+            data['translated_text'] = ''
+            data['hashtags'] = []
+            data['mentions'] = []
+            data['content_masked'] = True
+        else:
+            data['content_masked'] = False
+        data['hidden_by_owner'] = instance.hidden_by_owner
+        data['moderation_hidden'] = getattr(instance, 'moderation_hidden', False)
+        return data
 
     def get_replies(self, obj):
         if not self.context.get('include_replies', True):
@@ -201,6 +230,7 @@ class PinSerializer(serializers.ModelSerializer):
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
     saves_count = serializers.IntegerField(read_only=True)
+    can_comment = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     is_saved = serializers.SerializerMethodField()
     hashtags = serializers.SerializerMethodField()
@@ -249,11 +279,14 @@ class PinSerializer(serializers.ModelSerializer):
             'created_at',
             'likes_count',
             'comments_count',
+            'comments_policy',
+            'can_comment',
+            'needs_review',
             'saves_count',
             'is_liked',
             'is_saved',
         ]
-        read_only_fields = ['story_expires_at']
+        read_only_fields = ['story_expires_at', 'needs_review']
         extra_kwargs = {
             'author': {'required': False},
             'story_video': {'write_only': True},
@@ -302,6 +335,7 @@ class PinSerializer(serializers.ModelSerializer):
         if not viewer_ok:
             data.pop('scheduled_publish_at', None)
             data.pop('story_expires_at', None)
+            data.pop('needs_review', None)
         # Toujours exposer le nom canonique du topic (filtres API / topic=...)
         if instance.topic_id:
             data['topic'] = instance.topic.name
@@ -327,6 +361,8 @@ class PinSerializer(serializers.ModelSerializer):
         if method == 'POST':
             image = attrs.get('image')
             vid = attrs.get('story_video')
+            pub = self._normalize_string_list(attrs.get('public_tags_input', []))
+            validate_pin_text(attrs.get('title', '') or '', attrs.get('description', '') or '', pub)
             if not image and not vid:
                 raise serializers.ValidationError({
                     'non_field_errors': 'Provide an image or a story video file.',
@@ -335,6 +371,11 @@ class PinSerializer(serializers.ModelSerializer):
             is_story = raw_story is True or str(raw_story).lower() in ('true', '1', 'yes')
             if vid and not is_story:
                 raise serializers.ValidationError({'is_story': 'Story video requires is_story=true.'})
+        if method in ('PUT', 'PATCH') and self.instance:
+            title_v = attrs.get('title', self.instance.title)
+            desc_v = attrs.get('description', self.instance.description)
+            if 'title' in attrs or 'description' in attrs:
+                validate_pin_text(title_v or '', desc_v or '')
         return attrs
 
     def get_is_liked(self, obj):
@@ -342,6 +383,11 @@ class PinSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             return Like.objects.filter(user=request.user, pin=obj).exists()
         return False
+
+    def get_can_comment(self, obj):
+        request = self.context.get('request')
+        user = request.user if request and request.user.is_authenticated else None
+        return user_can_comment_on_pin(obj, user)
 
     def get_is_saved(self, obj):
         request = self.context.get('request')
@@ -455,6 +501,18 @@ class PinSerializer(serializers.ModelSerializer):
         board_ids = self._normalize_int_list(validated_data.pop('board_ids_input', []))
         topic_value = validated_data.pop('topic', '')
         request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            raw_story = request.data.get('is_story')
+            story_flag = pin_is_story_flag(raw_story, validated_data.get('is_story'))
+            apply_pin_creation_rate_limits(request.user.id, story_flag)
+            enforce_identical_content_flood(
+                request.user.id,
+                'pin',
+                pin_body_fingerprint(
+                    validated_data.get('title', '') or '',
+                    validated_data.get('description', '') or '',
+                ),
+            )
         if request and request.user.is_authenticated and private_tags:
             if not request.user.profile.can_use_private_tags:
                 raise serializers.ValidationError({
