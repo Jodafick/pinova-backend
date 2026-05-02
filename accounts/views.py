@@ -33,6 +33,7 @@ from datetime import timedelta
 import uuid
 from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket
 from .subscription_utils import _enforce_subscription_state
+from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
 from .currency_utils import (
@@ -811,6 +812,20 @@ class SubscriptionCheckoutView(APIView):
         if billing_cycle not in {'monthly', 'yearly'}:
             return Response({'error': 'Invalid billing cycle'}, status=status.HTTP_400_BAD_REQUEST)
 
+        payer = request.user.profile
+        _enforce_subscription_state(payer)
+        payer.refresh_from_db()
+        if payer.subscription_sponsor_id:
+            return Response(
+                {
+                    'error': (
+                        'Vous êtes sur un abonnement partagé. Quittez le groupe (Paramètres) '
+                        'avant de souscrire un abonnement personnel.'
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         headers = self._fedapay_headers()
         if not headers:
             return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -1010,6 +1025,9 @@ class SubscriptionConfirmView(APIView):
         return None
 
     def _apply_subscription(self, profile, payment, duration_days):
+        from .subscription_seats import refresh_seat_hub_after_owner_change
+
+        prev_bundle = (profile.subscription_seat_bundle or SUBSCRIPTION_BUNDLE_SOLO).strip().lower()
         profile.subscription_plan = payment.plan
         profile.subscription_cancel_at_period_end = False
         profile.subscription_scheduled_plan = ''
@@ -1019,10 +1037,14 @@ class SubscriptionConfirmView(APIView):
         profile.subscription_renewal_at = base_start + timedelta(days=duration_days)
         if payment.plan == Profile.PLAN_FREE:
             profile.translation_quota_monthly = 5
+            profile.subscription_seat_bundle = SUBSCRIPTION_BUNDLE_SOLO
         else:
             profile.translation_quota_monthly = 100000
+            profile.subscription_seat_bundle = _normalized_seat_bundle(payment.promo_bundle)
         profile.translation_used_monthly = 0
         profile.save()
+        profile.refresh_from_db()
+        refresh_seat_hub_after_owner_change(profile, prev_bundle)
 
     def _notify_payment_events(self, user, payment, previous_plan):
         from notifications.models import Notification
@@ -1476,6 +1498,11 @@ class SubscriptionTrialStartView(APIView):
     def post(self, request):
         profile = request.user.profile
         _enforce_subscription_state(profile)
+        if profile.subscription_sponsor_id:
+            return Response(
+                {'error': 'Compte sur abonnement groupe : impossible de lancer l’essai Plus ici.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if profile.subscription_plan != Profile.PLAN_FREE:
             return Response({'error': 'Trial disponible uniquement depuis le plan Gratuit.'}, status=status.HTTP_400_BAD_REQUEST)
         if profile.subscription_trial_consumed_at is not None:
@@ -1488,6 +1515,7 @@ class SubscriptionTrialStartView(APIView):
         profile.subscription_cancel_at_period_end = True
         profile.subscription_scheduled_plan = Profile.PLAN_FREE
         profile.subscription_trial_consumed_at = now
+        profile.subscription_seat_bundle = SUBSCRIPTION_BUNDLE_SOLO
         profile.translation_quota_monthly = 100000
         profile.translation_used_monthly = 0
         profile.save(update_fields=[
@@ -1496,6 +1524,7 @@ class SubscriptionTrialStartView(APIView):
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
             'subscription_trial_consumed_at',
+            'subscription_seat_bundle',
             'translation_quota_monthly',
             'translation_used_monthly',
         ])
@@ -1572,6 +1601,11 @@ class SubscriptionPricingView(APIView):
                 'solo': 0.0,
                 'family': _bundle_discount_fraction(SUBSCRIPTION_BUNDLE_FAMILY),
                 'team': _bundle_discount_fraction(SUBSCRIPTION_BUNDLE_TEAM),
+            },
+            'seat_invite_limits': {
+                'solo': 0,
+                'family': SUBSCRIPTION_FAMILY_MAX_INVITEES,
+                'team': SUBSCRIPTION_TEAM_MAX_INVITEES,
             },
         })
 

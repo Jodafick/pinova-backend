@@ -204,7 +204,7 @@ class UserSerializer(serializers.ModelSerializer):
         is_owner = viewer and viewer.is_authenticated and viewer.id == obj.id
         if not is_owner:
             return {'plan': profile.subscription_plan}
-        return {
+        sub = {
             'plan': profile.subscription_plan,
             'renewal_at': profile.subscription_renewal_at,
             'translation_quota_monthly': profile.translation_quota_monthly,
@@ -224,7 +224,17 @@ class UserSerializer(serializers.ModelSerializer):
             'account_scheduled_deletion_at': profile.account_scheduled_deletion_at.isoformat()
             if profile.account_scheduled_deletion_at
             else None,
+            'seat_bundle': getattr(profile, 'subscription_seat_bundle', None) or 'solo',
+            'is_seat_member': bool(getattr(profile, 'subscription_sponsor_id', None)),
+            'sponsor_username': profile.subscription_sponsor.username
+            if getattr(profile, 'subscription_sponsor_id', None)
+            else None,
         }
+        from .subscription_seats import max_invitees_for_bundle, owner_eligible_as_seat_hub
+
+        if owner_eligible_as_seat_hub(profile):
+            sub['seat_max_invitees'] = max_invitees_for_bundle(profile.subscription_seat_bundle)
+        return sub
 
 
 class RegisterSerializer(BaseRegisterSerializer):

@@ -22,6 +22,14 @@ from .views import (
     SubscriptionInvoiceListView,
     SupportTicketView,
 )
+from .subscription_seat_views import (
+    SubscriptionSeatAdminRevokeHubView,
+    SubscriptionSeatInviteCreateView,
+    SubscriptionSeatInviteDetailView,
+    SubscriptionSeatLeaveView,
+    SubscriptionSeatMemberRemoveView,
+    SubscriptionSeatsOverviewView,
+)
 
 router = DefaultRouter()
 router.register(r'profiles', ProfileViewSet)
@@ -44,6 +52,24 @@ urlpatterns = [
     path('subscription/confirm/', SubscriptionConfirmView.as_view(), name='subscription-confirm'),
     path('subscription/manage/', SubscriptionManageView.as_view(), name='subscription-manage'),
     path('subscription/webhook/fedapay/', SubscriptionWebhookView.as_view(), name='subscription-webhook-fedapay'),
+    path('subscription/seats/', SubscriptionSeatsOverviewView.as_view(), name='subscription-seats'),
+    path('subscription/seats/invites/', SubscriptionSeatInviteCreateView.as_view(), name='subscription-seat-invites'),
+    path(
+        'subscription/seats/invites/<uuid:invite_id>/',
+        SubscriptionSeatInviteDetailView.as_view(),
+        name='subscription-seat-invite-detail',
+    ),
+    path(
+        'subscription/seats/members/<str:username>/',
+        SubscriptionSeatMemberRemoveView.as_view(),
+        name='subscription-seat-member-remove',
+    ),
+    path('subscription/seats/leave/', SubscriptionSeatLeaveView.as_view(), name='subscription-seat-leave'),
+    path(
+        'subscription/seats/revoke-all/',
+        SubscriptionSeatAdminRevokeHubView.as_view(),
+        name='subscription-seat-revoke-all',
+    ),
     path('support/tickets/', SupportTicketView.as_view(), name='support-tickets'),
     
     # Auth endpoints

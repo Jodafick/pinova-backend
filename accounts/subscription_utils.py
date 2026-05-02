@@ -40,6 +40,10 @@ def _enforce_subscription_state(profile: Profile) -> bool:
         profile.partner_ads_enabled = True
         profile.tips_enabled = False
         profile.tips_url = ''
+        from .subscription_seats import SUBSCRIPTION_BUNDLE_SOLO, revoke_all_seats_for_owner
+
+        revoke_all_seats_for_owner(profile.user)
+        profile.subscription_seat_bundle = SUBSCRIPTION_BUNDLE_SOLO
     profile.save(
         update_fields=[
             'subscription_plan',
@@ -52,6 +56,7 @@ def _enforce_subscription_state(profile: Profile) -> bool:
             'partner_ads_enabled',
             'tips_enabled',
             'tips_url',
+            'subscription_seat_bundle',
         ]
     )
     return True

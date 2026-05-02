@@ -1,5 +1,6 @@
 import random
 import string
+import uuid
 from django.utils import timezone
 from datetime import timedelta
 from django.db import models
@@ -58,6 +59,14 @@ class Profile(models.Model):
     account_scheduled_deletion_at = models.DateTimeField(null=True, blank=True)
     # Une fois défini : l'utilisateur ne peut plus activer l'offre essai Plus 14 j.
     subscription_trial_consumed_at = models.DateTimeField(null=True, blank=True)
+    subscription_seat_bundle = models.CharField(max_length=24, blank=True, default='solo')
+    subscription_sponsor = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='provisioned_subscription_seats',
+    )
 
     @property
     def can_use_private_tags(self):
@@ -226,6 +235,66 @@ class SupportTicket(models.Model):
 
     def __str__(self):
         return f"{self.user.username}:{self.subject[:30]}:{self.status}"
+
+
+class SubscriptionSeatInvitation(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_DECLINED = 'declined'
+    STATUS_EXPIRED = 'expired'
+    STATUS_REVOKED = 'revoked'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'pending'),
+        (STATUS_ACCEPTED, 'accepted'),
+        (STATUS_DECLINED, 'declined'),
+        (STATUS_EXPIRED, 'expired'),
+        (STATUS_REVOKED, 'revoked'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='seat_invitations_sent')
+    invitee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='seat_invitations_received')
+    token_hash = models.CharField(max_length=64, editable=False)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['owner', 'status']),
+            models.Index(fields=['invitee', 'status']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['owner', 'invitee'],
+                condition=models.Q(status='pending'),
+                name='uniq_pending_seat_invite_owner_invitee',
+            ),
+        ]
+
+    def __str__(self):
+        return f'seat-inv {self.owner_id}->{self.invitee_id} ({self.status})'
+
+
+class SubscriptionSeatMember(models.Model):
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='seat_memberships_owned')
+    member = models.ForeignKey(User, on_delete=models.CASCADE, related_name='seat_memberships_received')
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['owner', 'member'], name='uniq_subscription_seat_owner_member'),
+            models.UniqueConstraint(fields=['member'], name='uniq_subscription_seat_member_singleton'),
+        ]
+        indexes = [
+            models.Index(fields=['owner']),
+            models.Index(fields=['member']),
+        ]
+
+    def __str__(self):
+        return f'seat {self.member_id} @ {self.owner_id}'
+
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
