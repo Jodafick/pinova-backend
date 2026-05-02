@@ -31,7 +31,7 @@ from .models import (
 )
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, BoardDetailSerializer, extract_hashtags
 from .comment_media import compress_comment_media_upload
-from .visibility import pin_is_visible_for_request
+from .visibility import pin_is_visible_for_request, sensitive_pins_query_filter, viewer_is_verified_adult
 from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
 from .moderation import (
     validate_comment_text,
@@ -124,11 +124,12 @@ class PinViewSet(viewsets.ModelViewSet):
 
     def _ordered_by_topic_score(self, queryset, topic_scores):
         if not topic_scores:
-            return list(queryset.order_by('-created_at'))
+            return list(queryset.order_by('media_sensitive_blur', '-created_at'))
         items = list(queryset)
         items.sort(
             key=lambda pin: (
                 topic_scores.get(self._pin_topic_name(pin), 0),
+                -(1 if pin.media_sensitive_blur else 0),
                 pin.created_at.timestamp(),
             ),
             reverse=True,
@@ -214,7 +215,7 @@ class PinViewSet(viewsets.ModelViewSet):
             Pin.objects.select_related('author', 'author__profile', 'topic')
             .prefetch_related('hashtags', 'boards')
             .all()
-            .order_by('-created_at')
+            .order_by('media_sensitive_blur', '-created_at')
         )
         profile_author = (self.request.query_params.get('author') or '').strip()
         if saved_by_me:
@@ -245,6 +246,7 @@ class PinViewSet(viewsets.ModelViewSet):
             )
             if apply_story_placement:
                 core &= placement_q
+            core &= sensitive_pins_query_filter(self.request)
             return queryset.filter(core)
 
         my_profile = self.request.user.profile
@@ -258,6 +260,7 @@ class PinViewSet(viewsets.ModelViewSet):
         if apply_story_placement:
             core &= placement_q
         queryset = queryset.filter(core).distinct()
+        queryset = queryset.filter(sensitive_pins_query_filter(self.request))
         queryset = queryset.exclude(Q(moderation_hidden=True) & ~Q(author=self.request.user))
         if saved_by_me:
             user = self.request.user
@@ -396,12 +399,12 @@ class PinViewSet(viewsets.ModelViewSet):
             owner = User.objects.filter(username=username).first()
             if not owner:
                 return Response({'pins': [], 'groups': []})
-            qs = qs.filter(author=owner).order_by('-created_at')[:48]
+            qs = qs.filter(author=owner).order_by('media_sensitive_blur', '-created_at')[:48]
             visible = [pin for pin in qs if pin_is_visible_for_request(pin, request)]
             visible = sorted(visible, key=lambda p: p.created_at)
             serializer = PinSerializer(visible, many=True, context={'request': request})
             return Response({'pins': serializer.data, 'groups': []})
-        pool = list(qs.order_by('-created_at')[:150])
+        pool = list(qs.order_by('media_sensitive_blur', '-created_at')[:150])
         visible = [pin for pin in pool if pin_is_visible_for_request(pin, request)]
         user = request.user
         if (
@@ -764,7 +767,7 @@ class PinViewSet(viewsets.ModelViewSet):
             self.get_queryset()
             .filter(author__in=following_users)
             .exclude(author=request.user)
-            .order_by('-created_at')
+            .order_by('media_sensitive_blur', '-created_at')
         )
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -781,7 +784,7 @@ class PinViewSet(viewsets.ModelViewSet):
             queryset = queryset.exclude(author__profile__in=following_profiles).exclude(author=request.user)
         topic = (request.query_params.get('topic') or '').strip()
         queryset = self._apply_topic_filter(queryset, topic)
-        page = self.paginate_queryset(queryset.order_by('-created_at'))
+        page = self.paginate_queryset(queryset.order_by('media_sensitive_blur', '-created_at'))
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
@@ -807,7 +810,7 @@ class PinViewSet(viewsets.ModelViewSet):
             discover_queryset = self._apply_topic_filter(discover_queryset, topic)
 
         topic_scores = self._build_topic_scores(request.user)
-        following_items = list(following_queryset.order_by('-created_at'))
+        following_items = list(following_queryset.order_by('media_sensitive_blur', '-created_at'))
         discover_items = self._ordered_by_topic_score(discover_queryset, topic_scores)
 
         mixed = []
@@ -847,22 +850,25 @@ class PinViewSet(viewsets.ModelViewSet):
             .filter(schedule_public)
             .filter(story_public)
         )
+        topic_pin_filter = (
+            ~Q(pins__visibility=Pin.VISIBILITY_PRIVATE)
+            & (
+                Q(pins__scheduled_publish_at__isnull=True)
+                | Q(pins__scheduled_publish_at__lte=now)
+            )
+            & (
+                Q(pins__is_story=False)
+                | Q(pins__is_story=True, pins__story_expires_at__gt=now)
+            )
+        )
+        if not viewer_is_verified_adult(request):
+            topic_pin_filter &= Q(pins__media_sensitive_blur=False)
         topics_qs = (
             Topic.objects.filter(is_active=True)
             .annotate(
                 pin_count=Count(
                     'pins',
-                    filter=(
-                        ~Q(pins__visibility=Pin.VISIBILITY_PRIVATE)
-                        & (
-                            Q(pins__scheduled_publish_at__isnull=True)
-                            | Q(pins__scheduled_publish_at__lte=now)
-                        )
-                        & (
-                            Q(pins__is_story=False)
-                            | Q(pins__is_story=True, pins__story_expires_at__gt=now)
-                        )
-                    ),
+                    filter=topic_pin_filter,
                     distinct=True,
                 )
             )

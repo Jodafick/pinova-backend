@@ -2,8 +2,6 @@ from rest_framework import serializers
 import re
 from django.db.models import Count, Case, When, Value, IntegerField
 from django.utils import timezone
-from datetime import date
-
 from .models import (
     Pin,
     Topic,
@@ -20,6 +18,7 @@ from .models import (
 from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
 from .comment_access import viewer_sees_comment_content, user_can_comment_on_pin
+from .visibility import profile_is_verified_adult
 from .moderation import (
     validate_pin_text,
     apply_pin_creation_rate_limits,
@@ -32,16 +31,6 @@ from .topic_i18n import resolve_topic_language, ensure_topic_translation
 
 HASHTAG_RE = re.compile(r'#([A-Za-z0-9_]{2,80})')
 MENTION_RE = re.compile(r'@([A-Za-z0-9_\.]{2,80})')
-
-
-def profile_is_verified_adult(profile) -> bool:
-    """≥18 ans avec date de naissance renseignée."""
-    bd = getattr(profile, 'birth_date', None)
-    if bd is None:
-        return False
-    today = date.today()
-    age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
-    return age >= 18
 
 
 def extract_hashtags(text: str) -> list[str]:
@@ -75,19 +64,26 @@ class BoardSerializer(serializers.ModelSerializer):
         ]
 
     def get_preview_images(self, obj):
+        from .visibility import pin_is_visible_for_request
+
         request = self.context.get('request')
         rows = (
             PinBoard.objects.filter(board=obj)
             .select_related('pin')
-            .order_by('position', 'id')[:6]
+            .order_by('position', 'id')[:24]
         )
         urls = []
         for row in rows:
-            img = getattr(row.pin, 'image', None)
+            pin = getattr(row, 'pin', None)
+            if not pin or not request or not pin_is_visible_for_request(pin, request):
+                continue
+            img = getattr(pin, 'image', None)
             if not img:
                 continue
             url = img.url
-            urls.append(request.build_absolute_uri(url) if request else url)
+            urls.append(request.build_absolute_uri(url))
+            if len(urls) >= 6:
+                break
         return urls
 
     def get_pin_count(self, obj):

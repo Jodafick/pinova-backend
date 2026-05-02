@@ -212,10 +212,13 @@ SOCIALACCOUNT_PROVIDERS = {
             'secret': os.environ.get('GOOGLE_CLIENT_SECRET'),
             'key': ''
         },
+        # Aligné écran consentement Google : openid + userinfo.email/profile + People API (langue, anniversaire).
         'SCOPE': [
             'openid',
-            'profile',
-            'email',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/profile.language.read',
+            'https://www.googleapis.com/auth/user.birthday.read',
         ],
         'AUTH_PARAMS': {
             'access_type': 'online',
