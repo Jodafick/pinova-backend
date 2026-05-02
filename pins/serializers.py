@@ -2,6 +2,8 @@ from rest_framework import serializers
 import re
 from django.db.models import Count, Case, When, Value, IntegerField
 from django.utils import timezone
+from datetime import date
+
 from .models import (
     Pin,
     Topic,
@@ -30,6 +32,16 @@ from .topic_i18n import resolve_topic_language, ensure_topic_translation
 
 HASHTAG_RE = re.compile(r'#([A-Za-z0-9_]{2,80})')
 MENTION_RE = re.compile(r'@([A-Za-z0-9_\.]{2,80})')
+
+
+def profile_is_verified_adult(profile) -> bool:
+    """≥18 ans avec date de naissance renseignée."""
+    bd = getattr(profile, 'birth_date', None)
+    if bd is None:
+        return False
+    today = date.today()
+    age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+    return age >= 18
 
 
 def extract_hashtags(text: str) -> list[str]:
@@ -250,6 +262,7 @@ class PinSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
+    media_sensitive_blur = serializers.BooleanField(required=False, default=False)
 
     class Meta:
         model = Pin
@@ -285,6 +298,7 @@ class PinSerializer(serializers.ModelSerializer):
             'saves_count',
             'is_liked',
             'is_saved',
+            'media_sensitive_blur',
         ]
         read_only_fields = ['story_expires_at', 'needs_review']
         extra_kwargs = {
@@ -362,20 +376,58 @@ class PinSerializer(serializers.ModelSerializer):
             image = attrs.get('image')
             vid = attrs.get('story_video')
             pub = self._normalize_string_list(attrs.get('public_tags_input', []))
-            validate_pin_text(attrs.get('title', '') or '', attrs.get('description', '') or '', pub)
+            priv = self._normalize_string_list(attrs.get('private_tags_input', []))
+            validate_pin_text(
+                attrs.get('title', '') or '',
+                attrs.get('description', '') or '',
+                pub,
+                priv,
+            )
             if not image and not vid:
                 raise serializers.ValidationError({
-                    'non_field_errors': 'Provide an image or a story video file.',
+                    'non_field_errors': ['Ajoutez une image ou une vidéo story.'],
                 })
             raw_story = attrs.get('is_story', False)
             is_story = raw_story is True or str(raw_story).lower() in ('true', '1', 'yes')
             if vid and not is_story:
                 raise serializers.ValidationError({'is_story': 'Story video requires is_story=true.'})
+            profile = req.user.profile if req and req.user.is_authenticated else None
+            if profile and (image or vid):
+                if not getattr(profile, 'birth_date', None):
+                    raise serializers.ValidationError({
+                        'non_field_errors': [
+                            'La date de naissance est obligatoire pour publier une image ou une vidéo.',
+                        ],
+                    })
+            blur_flag = attrs.get('media_sensitive_blur', False)
+            if blur_flag is True or str(blur_flag).lower() in ('true', '1', 'yes'):
+                attrs['media_sensitive_blur'] = True
+                if not profile or not profile_is_verified_adult(profile):
+                    raise serializers.ValidationError({
+                        'media_sensitive_blur': [
+                            'Réservé aux comptes adultes vérifiés (≥18 ans, date de naissance renseignée).',
+                        ],
+                    })
+            else:
+                attrs['media_sensitive_blur'] = False
         if method in ('PUT', 'PATCH') and self.instance:
             title_v = attrs.get('title', self.instance.title)
             desc_v = attrs.get('description', self.instance.description)
             if 'title' in attrs or 'description' in attrs:
                 validate_pin_text(title_v or '', desc_v or '')
+            if 'media_sensitive_blur' in attrs:
+                profile = req.user.profile if req and req.user.is_authenticated else None
+                want_blur = attrs.get('media_sensitive_blur')
+                if want_blur is True or str(want_blur).lower() in ('true', '1', 'yes'):
+                    if not profile or not profile_is_verified_adult(profile):
+                        raise serializers.ValidationError({
+                            'media_sensitive_blur': [
+                                'Réservé aux comptes adultes vérifiés (≥18 ans, date de naissance renseignée).',
+                            ],
+                        })
+                    attrs['media_sensitive_blur'] = True
+                else:
+                    attrs['media_sensitive_blur'] = False
         return attrs
 
     def get_is_liked(self, obj):

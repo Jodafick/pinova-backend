@@ -16,10 +16,30 @@ try:
 except ImportError:
     profanity = None
 
-MSG_PROFANITY = getattr(
+MSG_PROFANITY_TITLE = getattr(
     settings,
-    'MODERATION_MSG_PROFANITY',
-    'Ce contenu semble inapproprié. Merci de modifier votre texte.',
+    'MODERATION_MSG_PROFANITY_TITLE',
+    'Votre titre semble inapproprié. Merci de le modifier.',
+)
+MSG_PROFANITY_DESCRIPTION = getattr(
+    settings,
+    'MODERATION_MSG_PROFANITY_DESCRIPTION',
+    'Votre description semble inappropriée. Merci de la modifier.',
+)
+MSG_PROFANITY_TAGS_PUBLIC = getattr(
+    settings,
+    'MODERATION_MSG_PROFANITY_TAGS_PUBLIC',
+    'Vos tags publics semblent inappropriés. Merci de les modifier.',
+)
+MSG_PROFANITY_TAGS_PRIVATE = getattr(
+    settings,
+    'MODERATION_MSG_PROFANITY_TAGS_PRIVATE',
+    'Vos tags privés semblent inappropriés. Merci de les modifier.',
+)
+MSG_PROFANITY_COMMENT = getattr(
+    settings,
+    'MODERATION_MSG_PROFANITY_COMMENT',
+    'Votre commentaire semble inapproprié. Merci de le modifier.',
 )
 MSG_RATE = getattr(
     settings,
@@ -88,22 +108,39 @@ def enforce_identical_content_flood(user_id: int, kind: str, fingerprint: str) -
     cache.set(key, n + 1, timeout=FLOOD_WINDOW_SEC + 5)
 
 
-def validate_text_profanity(*chunks: str) -> None:
+def _profanity_in(text: str) -> bool:
+    return bool(text and profanity and profanity.contains_profanity(text))
+
+
+def validate_pin_text(
+    title: str,
+    description: str,
+    public_tags: list[str] | None = None,
+    private_tags: list[str] | None = None,
+) -> None:
+    """Lève ValidationError avec une clé par champ (compatibles avec le serializer)."""
     if not profanity:
         return
-    for chunk in chunks:
-        if chunk and profanity.contains_profanity(chunk):
-            raise serializers.ValidationError(MSG_PROFANITY)
-
-
-def validate_pin_text(title: str, description: str, public_tags: list[str] | None = None) -> None:
-    validate_text_profanity(title or '', description or '')
-    if public_tags:
-        validate_text_profanity(' '.join(public_tags))
+    errors: dict[str, list[str]] = {}
+    if _profanity_in(title or ''):
+        errors['title'] = [MSG_PROFANITY_TITLE]
+    if _profanity_in(description or ''):
+        errors['description'] = [MSG_PROFANITY_DESCRIPTION]
+    pub_joined = ' '.join(public_tags) if public_tags else ''
+    if _profanity_in(pub_joined):
+        errors['public_tags_input'] = [MSG_PROFANITY_TAGS_PUBLIC]
+    priv_joined = ' '.join(private_tags) if private_tags else ''
+    if _profanity_in(priv_joined):
+        errors['private_tags_input'] = [MSG_PROFANITY_TAGS_PRIVATE]
+    if errors:
+        raise serializers.ValidationError(errors)
 
 
 def validate_comment_text(text: str) -> None:
-    validate_text_profanity(text or '')
+    if not profanity:
+        return
+    if _profanity_in(text or ''):
+        raise serializers.ValidationError({'text': [MSG_PROFANITY_COMMENT]})
 
 
 def pin_is_story_flag(raw_is_story, validated_is_story) -> bool:

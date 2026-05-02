@@ -7,6 +7,7 @@ from django.contrib.auth.models import User
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+
 class Profile(models.Model):
     PLAN_FREE = 'free'
     PLAN_PLUS = 'plus'
@@ -49,6 +50,8 @@ class Profile(models.Model):
     )
     # Lien de partage pour profil privé (?share=…)
     share_token = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    # Obligatoire pour publier du média ; utilisée pour distinguer mineurs / adultes (≥18 ans).
+    birth_date = models.DateField(null=True, blank=True)
 
     @property
     def can_use_private_tags(self):

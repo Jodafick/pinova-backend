@@ -447,10 +447,14 @@ class PinViewSet(viewsets.ModelViewSet):
                     comment_body_fingerprint(text, gif_key),
                 )
             except serializers.ValidationError as exc:
-                return Response(
-                    {'error': exc.detail},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                detail = exc.detail
+                if isinstance(detail, dict):
+                    body = detail
+                elif isinstance(detail, list):
+                    body = {'non_field_errors': detail}
+                else:
+                    body = {'non_field_errors': [str(detail)]}
+                return Response(body, status=status.HTTP_400_BAD_REQUEST)
             if not text and not gif_url and not media_file:
                 return Response({'error': 'Comment text, gif or media is required'}, status=status.HTTP_400_BAD_REQUEST)
             if gif_url and not request.user.profile.can_use_comment_gifs:

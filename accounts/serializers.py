@@ -48,6 +48,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
             'share_token',
+            'birth_date',
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code']
 
@@ -65,6 +66,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         'notifications_recommendations',
         'share_token',
     })
+
+    _OWNER_ONLY_FIELDS = frozenset({'birth_date'})
 
     def validate_preferred_currency(self, value):
         normalized = normalize_currency(value)
@@ -90,6 +93,9 @@ class ProfileSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         viewer = getattr(request, 'user', None) if request else None
         is_owner = viewer and viewer.is_authenticated and viewer.id == instance.user_id
+        if not is_owner:
+            for key in self._OWNER_ONLY_FIELDS:
+                data.pop(key, None)
         if not is_owner:
             for key in self._PUBLIC_PROFILE_HIDDEN_FIELDS:
                 data.pop(key, None)

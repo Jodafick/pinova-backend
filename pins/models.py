@@ -102,6 +102,8 @@ class Pin(models.Model):
     needs_review = models.BooleanField(default=False)
     report_count = models.PositiveIntegerField(default=0)
     moderation_hidden = models.BooleanField(default=False)
+    # Image/vidéo : affichage flouté par défaut pour les spectateurs adultes (NSFWJS côté client).
+    media_sensitive_blur = models.BooleanField(default=False)
 
     def __str__(self):
         return self.title
