@@ -6,11 +6,13 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery
 from django.contrib.auth.models import User
 from django.utils import timezone
+from datetime import timedelta
 from asgiref.sync import async_to_sync
 from googletrans import Translator
 from pathlib import Path
 from django.conf import settings
 from PIL import Image
+from pinova_backend.throttling import client_ip_from_request
 import re
 import uuid
 from collections import OrderedDict
@@ -47,6 +49,7 @@ from .translation import translate_text_to, detect_original_language
 from .topic_i18n import resolve_topic_language, ensure_topic_translation
 from .pagination import PinFeedPagination
 from notifications.models import Notification
+from .weekly_stats import pro_weekly_views_stats, pin_thumbnail_absolute_url
 
 
 def _pin_download_absolute_url(request, pin, requested_quality, apply_watermark=False):
@@ -442,7 +445,7 @@ class PinViewSet(viewsets.ModelViewSet):
             parent_id = request.data.get('parentId') or request.data.get('parent')
             try:
                 validate_comment_text(text)
-                apply_comment_rate_limit(request.user.id)
+                apply_comment_rate_limit(request.user.id, client_ip_from_request(request))
                 gif_key = gif_url if isinstance(gif_url, str) else ''
                 enforce_identical_content_flood(
                     request.user.id,
@@ -1050,6 +1053,39 @@ class PinViewSet(viewsets.ModelViewSet):
                 }
                 for pin in top_pins
             ],
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-weekly-stats')
+    def creator_weekly_stats(self, request):
+        """Vues des 7 derniers jours (PinViewEvent) pour rétention digest & dashboard Pro."""
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Weekly creator stats require Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            days = int(request.query_params.get('days') or 7)
+        except ValueError:
+            days = 7
+        days = max(1, min(days, 31))
+        queryset, total_view_events = pro_weekly_views_stats(request.user, days=days)
+        since = timezone.now() - timedelta(days=days)
+        rows = []
+        for pin in queryset[:20]:
+            thumb = pin_thumbnail_absolute_url(pin, request)
+            rows.append({
+                'id': pin.id,
+                'slug': pin.slug,
+                'title': pin.title,
+                'views_week': int(getattr(pin, 'views_week', 0)),
+                'thumbnail_url': thumb,
+            })
+        return Response({
+            'period_days': days,
+            'since': since.isoformat(),
+            'total_view_events_period': total_view_events,
+            'top_pins': rows,
         })
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])

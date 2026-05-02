@@ -32,6 +32,7 @@ from django.utils import timezone
 from datetime import timedelta
 import uuid
 from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket
+from .subscription_utils import _enforce_subscription_state
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
 from .currency_utils import (
@@ -122,40 +123,6 @@ def _fedapay_confirm_response_summary(raw_body, normalized):
     return summary
 
 
-def _enforce_subscription_state(profile):
-    now = timezone.now()
-    if not profile.subscription_renewal_at or profile.subscription_renewal_at > now:
-        return
-    if profile.subscription_scheduled_plan:
-        profile.subscription_plan = profile.subscription_scheduled_plan
-    elif profile.subscription_cancel_at_period_end:
-        profile.subscription_plan = Profile.PLAN_FREE
-    else:
-        return
-    profile.subscription_scheduled_plan = ''
-    profile.subscription_cancel_at_period_end = False
-    profile.subscription_renewal_at = None if profile.subscription_plan == Profile.PLAN_FREE else profile.subscription_renewal_at
-    if profile.subscription_plan == Profile.PLAN_FREE:
-        profile.translation_quota_monthly = 5
-        profile.translation_used_monthly = 0
-        profile.ad_ads_enabled = True
-        profile.partner_ads_enabled = True
-        profile.tips_enabled = False
-        profile.tips_url = ''
-    profile.save(update_fields=[
-        'subscription_plan',
-        'subscription_scheduled_plan',
-        'subscription_cancel_at_period_end',
-        'subscription_renewal_at',
-        'translation_quota_monthly',
-        'translation_used_monthly',
-        'ad_ads_enabled',
-        'partner_ads_enabled',
-        'tips_enabled',
-        'tips_url',
-    ])
-
-
 def _normalize_url_path_slashes(url: str):
     value = (url or '').strip()
     if '://' not in value:
@@ -204,8 +171,87 @@ def _resolve_user_currency(request):
     return default_currency_for_country(detected_country), (detected_country or '')
 
 
-def _subscription_catalog(target_currency: str):
+def _display_amount(amount_minor: int, currency_iso: str):
+    decimals = decimals_for_currency(currency_iso)
+    return amount_minor / (10 ** decimals)
+
+
+SUBSCRIPTION_BUNDLE_SOLO = 'solo'
+SUBSCRIPTION_BUNDLE_FAMILY = 'family'
+SUBSCRIPTION_BUNDLE_TEAM = 'team'
+
+
+def _normalized_seat_bundle(raw) -> str:
+    value = str(raw or '').strip().lower()
+    if value == SUBSCRIPTION_BUNDLE_FAMILY:
+        return SUBSCRIPTION_BUNDLE_FAMILY
+    if value == SUBSCRIPTION_BUNDLE_TEAM:
+        return SUBSCRIPTION_BUNDLE_TEAM
+    return SUBSCRIPTION_BUNDLE_SOLO
+
+
+def _bundle_discount_fraction(seat_bundle: str) -> float:
+    """Réduction famille / petite équipe (boards collaboratifs — angle B2B léger)."""
+    kind = _normalized_seat_bundle(seat_bundle)
+    try:
+        if kind == SUBSCRIPTION_BUNDLE_FAMILY:
+            return min(0.95, max(0.0, float(os.environ.get('SUBSCRIPTION_FAMILY_DISCOUNT_FRACTION', '0.15'))))
+        if kind == SUBSCRIPTION_BUNDLE_TEAM:
+            return min(0.95, max(0.0, float(os.environ.get('SUBSCRIPTION_TEAM_DISCOUNT_FRACTION', '0.25'))))
+    except ValueError:
+        pass
+    return 0.0
+
+
+def _apply_bundle_discount_amount(amount_minor: int, seat_bundle: str):
+    frac = _bundle_discount_fraction(seat_bundle)
+    if frac <= 0 or amount_minor <= 0:
+        return amount_minor, frac
+    discounted = int(round(amount_minor * (1.0 - frac)))
+    return max(discounted, 1), frac
+
+
+def _plus_trial_duration_days() -> int:
+    try:
+        return max(1, min(90, int(os.environ.get('SUBSCRIPTION_PLUS_TRIAL_DAYS', '14'))))
+    except ValueError:
+        return 14
+
+
+def _extract_invoice_url_from_fedapay(normalized):
+    """Tente de lire une URL de reçu / facture depuis la réponse FedaPay."""
+    if not isinstance(normalized, dict):
+        return ''
+
+    def from_dict(d):
+        direct_keys = (
+            'invoice_url', 'invoice_pdf_url', 'receipt_url',
+            'receipt_pdf_url', 'pdf_url', 'payment_proof_url',
+        )
+        for key in direct_keys:
+            val = d.get(key)
+            if isinstance(val, str) and val.startswith('http'):
+                return val[:500]
+        receipt = d.get('receipt')
+        if isinstance(receipt, dict):
+            for key in ('url', 'pdf_url', 'download_url', 'invoice_url'):
+                val = receipt.get(key)
+                if isinstance(val, str) and val.startswith('http'):
+                    return val[:500]
+        return ''
+
+    url = from_dict(normalized)
+    if url:
+        return url
+    nested = normalized.get('transaction')
+    if isinstance(nested, dict):
+        return from_dict(nested)
+    return ''
+
+
+def _subscription_catalog(target_currency: str, seat_bundle: str = SUBSCRIPTION_BUNDLE_SOLO):
     target = normalize_currency(target_currency) or 'XOF'
+    bundle_normalized = _normalized_seat_bundle(seat_bundle)
     plans = (Profile.PLAN_FREE, Profile.PLAN_PLUS, Profile.PLAN_PRO)
     cycles = (SubscriptionPayment.BILLING_MONTHLY, SubscriptionPayment.BILLING_YEARLY)
     data = {}
@@ -222,6 +268,8 @@ def _subscription_catalog(target_currency: str):
                     'source': 'system_free',
                     'base_amount_minor': 0,
                     'base_currency_iso': target,
+                    'seat_bundle': bundle_normalized,
+                    'bundle_discount_fraction': 0.0,
                 }
                 continue
             values = _catalog_entry(plan, cycle)
@@ -235,26 +283,26 @@ def _subscription_catalog(target_currency: str):
             effective_amount = converted_amount
             conversion_applied = True
             if converted_amount is None:
-                # If rate lookup fails, keep original amount/currency to avoid fake prices.
                 effective_currency = base_currency
                 effective_amount = amount
                 conversion_applied = False
+            amount_pre_bundle = int(effective_amount)
+            discounted_amount, discount_frac = _apply_bundle_discount_amount(amount_pre_bundle, bundle_normalized)
             data[plan][cycle] = {
-                'amount_minor': effective_amount,
-                'amount_display': _display_amount(effective_amount, effective_currency),
+                'amount_minor': discounted_amount,
+                'amount_display': _display_amount(discounted_amount, effective_currency),
                 'currency_iso': effective_currency,
                 'duration_days': duration_days,
                 'source': values.get('source', 'unknown'),
                 'base_amount_minor': amount,
                 'base_currency_iso': base_currency,
                 'conversion_applied': conversion_applied,
+                'seat_bundle': bundle_normalized,
+                'bundle_discount_fraction': discount_frac,
+                'amount_before_bundle_discount_minor': amount_pre_bundle,
             }
     return data
 
-
-def _display_amount(amount_minor: int, currency_iso: str):
-    decimals = decimals_for_currency(currency_iso)
-    return amount_minor / (10 ** decimals)
 
 class VerifyOTPView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -273,9 +321,8 @@ class VerifyOTPView(APIView):
             if otp.is_expired():
                 return Response({'error': 'Code OTP expiré'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Valider l'email dans allauth
             email_address, created = EmailAddress.objects.get_or_create(
-                user=user, 
+                user=user,
                 email=email,
                 defaults={'verified': True, 'primary': True}
             )
@@ -283,7 +330,6 @@ class VerifyOTPView(APIView):
                 email_address.verified = True
                 email_address.save()
 
-            # Créer une notification de bienvenue après validation
             from notifications.models import Notification
             Notification.objects.create(
                 recipient=user,
@@ -294,7 +340,6 @@ class VerifyOTPView(APIView):
                 metadata={'stage': 'account_verified'},
             )
 
-            # Supprimer l'OTP après validation
             otp.delete()
 
             return Response({'message': 'Email validé avec succès'}, status=status.HTTP_200_OK)
@@ -573,6 +618,12 @@ class UserMeView(APIView):
             mutable_data['notifications_saves'] = str(mutable_data.get('notifications_saves')).lower() == 'true'
         if 'notifications_recommendations' in mutable_data:
             mutable_data['notifications_recommendations'] = str(mutable_data.get('notifications_recommendations')).lower() == 'true'
+        if profile.subscription_plan != Profile.PLAN_PRO:
+            mutable_data.pop('notifications_digest_creator_weekly', None)
+        elif 'notifications_digest_creator_weekly' in mutable_data:
+            mutable_data['notifications_digest_creator_weekly'] = str(
+                mutable_data.get('notifications_digest_creator_weekly'),
+            ).lower() == 'true'
 
         # Search visibility maps to discoverable_profile.
         if 'discoverable_profile' in mutable_data:
@@ -689,6 +740,10 @@ class SubscriptionCheckoutView(APIView):
             currency_iso = target_currency
             conversion_applied = True
 
+        seat_bundle = _normalized_seat_bundle(request.data.get('seat_bundle'))
+        amount_before_bundle = int(amount)
+        amount, bundle_discount_frac = _apply_bundle_discount_amount(amount_before_bundle, seat_bundle)
+
         default_callback_url = f"{str(settings.FRONTEND_URL).rstrip('/')}/premium"
         callback_url = _normalize_url_path_slashes(
             os.environ.get('FEDAPAY_CALLBACK_URL') or default_callback_url
@@ -697,7 +752,7 @@ class SubscriptionCheckoutView(APIView):
         last_name = request.user.last_name or 'Pinova'
 
         payload = {
-            'description': f"Pinova {plan.title()} ({billing_cycle})",
+            'description': f"Pinova {plan.title()} ({billing_cycle}){f' [{seat_bundle}]' if seat_bundle != SUBSCRIPTION_BUNDLE_SOLO else ''}",
             'amount': amount,
             'currency': {'iso': currency_iso},
             'callback_url': callback_url,
@@ -711,6 +766,9 @@ class SubscriptionCheckoutView(APIView):
                 'base_currency_iso': base_currency_iso,
                 'target_currency_iso': currency_iso,
                 'conversion_applied': conversion_applied,
+                'seat_bundle': seat_bundle,
+                'bundle_discount_fraction': bundle_discount_frac,
+                'amount_minor_before_bundle': amount_before_bundle,
             },
             'customer': {
                 'email': request.user.email,
@@ -788,6 +846,7 @@ class SubscriptionCheckoutView(APIView):
                     'fedapay_reference': str(transaction_data.get('reference') or ''),
                     'status': SubscriptionPayment.STATUS_PENDING,
                     'checkout_url': checkout_url,
+                    'promo_bundle': seat_bundle,
                     'fedapay_payload': {
                         'transaction': transaction_data,
                         'token': token_data,
@@ -808,6 +867,9 @@ class SubscriptionCheckoutView(APIView):
                     'base_amount_minor': base_amount,
                     'base_currency_iso': base_currency_iso,
                     'conversion_applied': conversion_applied,
+                    'seat_bundle': seat_bundle,
+                    'bundle_discount_fraction': bundle_discount_frac,
+                    'amount_minor_before_bundle': amount_before_bundle,
                 },
             }, status=status.HTTP_201_CREATED)
         except requests.RequestException as exc:
@@ -1064,6 +1126,11 @@ class SubscriptionConfirmView(APIView):
             if effective_status in approved_statuses:
                 previous_plan = request.user.profile.subscription_plan
                 payment.status = SubscriptionPayment.STATUS_APPROVED
+                invoice_url = _extract_invoice_url_from_fedapay(normalized)
+                uf = ['status', 'fedapay_payload', 'updated_at']
+                if invoice_url:
+                    payment.invoice_url = invoice_url
+                    uf.append('invoice_url')
                 with transaction.atomic():
                     payment.fedapay_payload = {
                         'transaction': tx,
@@ -1072,7 +1139,7 @@ class SubscriptionConfirmView(APIView):
                         'callback_status': callback_status,
                         'effective_status': effective_status,
                     }
-                    payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+                    payment.save(update_fields=uf)
                     self._apply_subscription(request.user.profile, payment, duration_days)
                     self._notify_payment_events(request.user, payment, previous_plan)
                 logger.info(
@@ -1185,11 +1252,37 @@ class SubscriptionManageView(APIView):
             profile.subscription_scheduled_plan = Profile.PLAN_FREE
             profile.save(update_fields=['subscription_cancel_at_period_end', 'subscription_scheduled_plan'])
             return Response({'status': 'scheduled_downgrade', 'scheduled_plan': Profile.PLAN_FREE})
+        if action == 'schedule_plan_change':
+            target = str(request.data.get('target_plan') or '').strip().lower()
+            if profile.subscription_plan == Profile.PLAN_FREE:
+                return Response({'error': 'No active paid subscription'}, status=status.HTTP_400_BAD_REQUEST)
+            if target not in {Profile.PLAN_PLUS, Profile.PLAN_FREE}:
+                return Response({'error': 'Invalid target_plan'}, status=status.HTTP_400_BAD_REQUEST)
+            if target == Profile.PLAN_PLUS and profile.subscription_plan != Profile.PLAN_PRO:
+                return Response({'error': 'Only Pro accounts can schedule a switch to Plus'}, status=status.HTTP_400_BAD_REQUEST)
+            if target == Profile.PLAN_PLUS:
+                profile.subscription_scheduled_plan = Profile.PLAN_PLUS
+                profile.subscription_cancel_at_period_end = False
+            else:
+                profile.subscription_scheduled_plan = Profile.PLAN_FREE
+                profile.subscription_cancel_at_period_end = True
+            profile.save(update_fields=['subscription_cancel_at_period_end', 'subscription_scheduled_plan'])
+            return Response({
+                'status': 'scheduled_plan_change',
+                'scheduled_plan': profile.subscription_scheduled_plan,
+                'cancel_at_period_end': profile.subscription_cancel_at_period_end,
+            })
+        if action == 'cancel_schedule':
+            profile.subscription_scheduled_plan = ''
+            profile.subscription_cancel_at_period_end = False
+            profile.save(update_fields=['subscription_scheduled_plan', 'subscription_cancel_at_period_end'])
+            return Response({'status': 'schedule_cleared'})
         return Response({'error': 'Unsupported action'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SubscriptionWebhookView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         expected_secret = (os.environ.get('FEDAPAY_WEBHOOK_SECRET') or '').strip()
@@ -1218,8 +1311,14 @@ class SubscriptionWebhookView(APIView):
             duration_days = int((catalog or {}).get('duration_days') or 30)
             previous_plan = payment.user.profile.subscription_plan
             payment.status = SubscriptionPayment.STATUS_APPROVED
+            normalized_wh = _fedapay_normalize_transaction_body(dict(request.data))
+            invoice_wh = _extract_invoice_url_from_fedapay(normalized_wh)
+            uf = ['status', 'fedapay_payload', 'updated_at']
+            if invoice_wh:
+                payment.invoice_url = invoice_wh
+                uf.append('invoice_url')
             with transaction.atomic():
-                payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+                payment.save(update_fields=uf)
                 SubscriptionConfirmView()._apply_subscription(payment.user.profile, payment, duration_days)
                 SubscriptionConfirmView()._notify_payment_events(payment.user, payment, previous_plan)
             return Response({'status': 'approved'})
@@ -1279,17 +1378,108 @@ class SupportTicketView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class SubscriptionTrialStartView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        profile = request.user.profile
+        _enforce_subscription_state(profile)
+        if profile.subscription_plan != Profile.PLAN_FREE:
+            return Response({'error': 'Trial disponible uniquement depuis le plan Gratuit.'}, status=status.HTTP_400_BAD_REQUEST)
+        if profile.subscription_trial_consumed_at is not None:
+            return Response({'error': 'Essai déjà utilisé.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        trial_days = _plus_trial_duration_days()
+        now = timezone.now()
+        profile.subscription_plan = Profile.PLAN_PLUS
+        profile.subscription_renewal_at = now + timedelta(days=trial_days)
+        profile.subscription_cancel_at_period_end = True
+        profile.subscription_scheduled_plan = Profile.PLAN_FREE
+        profile.subscription_trial_consumed_at = now
+        profile.translation_quota_monthly = 100000
+        profile.translation_used_monthly = 0
+        profile.save(update_fields=[
+            'subscription_plan',
+            'subscription_renewal_at',
+            'subscription_cancel_at_period_end',
+            'subscription_scheduled_plan',
+            'subscription_trial_consumed_at',
+            'translation_quota_monthly',
+            'translation_used_monthly',
+        ])
+        from notifications.models import Notification
+        Notification.objects.create(
+            recipient=request.user,
+            sender=None,
+            notification_type='plan_change',
+            title='Essai Plus activé',
+            message=(
+                f'Vous disposez de {trial_days} jours d\'essai Plus (boards collaboratifs, téléchargements, etc.). '
+                'Sans paiement avant la fin : retour automatique au plan Gratuit.'
+            ),
+            action_url='/premium',
+            metadata={'trial_plus_days': trial_days},
+        )
+        return Response({
+            'status': 'trial_started',
+            'plan': profile.subscription_plan,
+            'trial_days': trial_days,
+            'renewal_at': profile.subscription_renewal_at,
+        })
+
+
+class SubscriptionInvoiceListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rows = (
+            SubscriptionPayment.objects.filter(user=request.user)
+            .order_by('-created_at')
+            [:50]
+        )
+        items = []
+        for row in rows:
+            existing = ''
+            pd = row.fedapay_payload or {}
+            if isinstance(pd, dict):
+                norm = pd.get('normalized')
+                if isinstance(norm, dict):
+                    existing = _extract_invoice_url_from_fedapay(norm)
+            items.append({
+                'id': row.id,
+                'fedapay_transaction_id': row.fedapay_transaction_id,
+                'created_at': row.created_at.isoformat(),
+                'plan': row.plan,
+                'billing_cycle': row.billing_cycle,
+                'amount_minor': row.amount,
+                'amount_display': _display_amount(row.amount, row.currency_iso),
+                'currency_iso': row.currency_iso,
+                'promo_bundle': row.promo_bundle or SUBSCRIPTION_BUNDLE_SOLO,
+                'status': row.status,
+                'checkout_url': row.checkout_url,
+                'invoice_url': row.invoice_url or existing,
+            })
+        return Response({'results': items})
+
+
 class SubscriptionPricingView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         selected_currency, detected_country = _resolve_user_currency(request)
+        bundle = _normalized_seat_bundle(request.query_params.get('seat_bundle'))
         return Response({
-            'plans': _subscription_catalog(selected_currency),
+            'plans': _subscription_catalog(selected_currency, bundle),
             'currency': {
                 'selected': selected_currency,
                 'country_code': detected_country,
                 'supported': SUPPORTED_CURRENCIES,
+            },
+            'seat_bundle': bundle,
+            'bundle_discounts': {
+                'solo': 0.0,
+                'family': _bundle_discount_fraction(SUBSCRIPTION_BUNDLE_FAMILY),
+                'team': _bundle_discount_fraction(SUBSCRIPTION_BUNDLE_TEAM),
             },
         })
 

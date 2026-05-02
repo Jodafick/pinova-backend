@@ -45,18 +45,21 @@ class ProfileSerializer(serializers.ModelSerializer):
             'notifications_followers',
             'notifications_saves',
             'notifications_recommendations',
+            'notifications_digest_creator_weekly',
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
+            'subscription_trial_consumed_at',
             'share_token',
             'birth_date',
         ]
-        read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code']
+        read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code', 'subscription_trial_consumed_at']
 
     _PUBLIC_PROFILE_HIDDEN_FIELDS = frozenset({
         'email',
         'subscription_renewal_at',
         'subscription_cancel_at_period_end',
         'subscription_scheduled_plan',
+        'subscription_trial_consumed_at',
         'translation_quota_monthly',
         'translation_used_monthly',
         'ad_ads_enabled',
@@ -64,6 +67,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         'notifications_followers',
         'notifications_saves',
         'notifications_recommendations',
+        'notifications_digest_creator_weekly',
         'share_token',
     })
 
@@ -204,6 +208,12 @@ class UserSerializer(serializers.ModelSerializer):
             'tips_url': profile.tips_url,
             'cancel_at_period_end': profile.subscription_cancel_at_period_end,
             'scheduled_plan': profile.subscription_scheduled_plan or None,
+            'trial_consumed_at': profile.subscription_trial_consumed_at.isoformat()
+            if profile.subscription_trial_consumed_at else None,
+            'trial_eligible': (
+                profile.subscription_plan == Profile.PLAN_FREE and profile.subscription_trial_consumed_at is None
+            ),
+            'digest_creator_weekly': profile.notifications_digest_creator_weekly,
         }
 
 

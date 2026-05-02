@@ -56,6 +56,7 @@ RATE_PIN_PER_HOUR = getattr(settings, 'MODERATION_RATE_PIN_PER_HOUR', 15)
 RATE_STORY_WINDOW_SEC = getattr(settings, 'MODERATION_RATE_STORY_WINDOW_SEC', 300)
 RATE_STORY_MAX = getattr(settings, 'MODERATION_RATE_STORY_MAX', 5)
 RATE_COMMENT_PER_MINUTE = getattr(settings, 'MODERATION_RATE_COMMENT_PER_MINUTE', 10)
+RATE_COMMENT_PER_MINUTE_IP = getattr(settings, 'MODERATION_RATE_COMMENT_PER_MINUTE_IP', 45)
 
 FLOOD_WINDOW_SEC = getattr(settings, 'MODERATION_FLOOD_WINDOW_SEC', 60)
 FLOOD_MAX_IDENTICAL = getattr(settings, 'MODERATION_FLOOD_MAX_IDENTICAL', 15)
@@ -73,6 +74,19 @@ def _consume_fixed_window(user_id: int, bucket: str, limit: int, window_seconds:
     cache.set(key, n + 1, timeout=window_seconds + 5)
 
 
+def _consume_fixed_window_ip(ident: str, bucket: str, limit: int, window_seconds: int) -> None:
+    """Limite agrégée par IP (NAT / multi-comptes) pour atténuer le spam commentaires."""
+    safe = ''.join(c for c in str(ident or '') if c.isalnum() or c in '._:-')
+    if not safe:
+        return
+    slot = int(time.time()) // window_seconds
+    key = f'pinova_rl:{bucket}:{safe}:{slot}'
+    n = cache.get(key, 0)
+    if n >= limit:
+        raise serializers.ValidationError(MSG_RATE)
+    cache.set(key, n + 1, timeout=window_seconds + 5)
+
+
 def apply_pin_creation_rate_limits(user_id: int, is_story: bool) -> None:
     """Pins : 15/h ; stories en plus : 5 / 5 minutes (anti-bot / flood publication)."""
     _consume_fixed_window(user_id, 'pin_hour', RATE_PIN_PER_HOUR, 3600)
@@ -80,8 +94,10 @@ def apply_pin_creation_rate_limits(user_id: int, is_story: bool) -> None:
         _consume_fixed_window(user_id, 'story_burst', RATE_STORY_MAX, RATE_STORY_WINDOW_SEC)
 
 
-def apply_comment_rate_limit(user_id: int) -> None:
+def apply_comment_rate_limit(user_id: int, client_ip: str | None = None) -> None:
     _consume_fixed_window(user_id, 'comment_min', RATE_COMMENT_PER_MINUTE, 60)
+    if client_ip and client_ip.strip() != 'unknown':
+        _consume_fixed_window_ip(client_ip.strip(), 'comment_min_ip', RATE_COMMENT_PER_MINUTE_IP, 60)
 
 
 def normalize_snippet(text: str) -> str:

@@ -41,6 +41,8 @@ class Profile(models.Model):
     notifications_followers = models.BooleanField(default=True)
     notifications_saves = models.BooleanField(default=True)
     notifications_recommendations = models.BooleanField(default=False)
+    # Pro : digest hebdomadaire e-mail / push (« pins les plus vus »).
+    notifications_digest_creator_weekly = models.BooleanField(default=True)
     subscription_cancel_at_period_end = models.BooleanField(default=False)
     subscription_scheduled_plan = models.CharField(
         max_length=20,
@@ -52,6 +54,8 @@ class Profile(models.Model):
     share_token = models.UUIDField(null=True, blank=True, unique=True, editable=False)
     # Obligatoire pour publier du média ; utilisée pour distinguer mineurs / adultes (≥18 ans).
     birth_date = models.DateField(null=True, blank=True)
+    # Une fois défini : l'utilisateur ne peut plus activer l'offre essai Plus 14 j.
+    subscription_trial_consumed_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def can_use_private_tags(self):
@@ -78,8 +82,35 @@ class Profile(models.Model):
             return {'private_max': 10, 'public_max': None}
         return {'private_max': 3, 'public_max': 10}
 
+    def save(self, *args, **kwargs):
+        """Supprime le fichier avatar précédent du stockage si l’image est remplacée ou retirée."""
+        old_avatar_name = ''
+        old_avatar_storage = None
+        if self.pk:
+            try:
+                prev = Profile.objects.only('avatar').get(pk=self.pk)
+                if prev.avatar:
+                    old_avatar_name = prev.avatar.name
+                    old_avatar_storage = prev.avatar.storage
+            except Profile.DoesNotExist:
+                pass
+
+        super().save(*args, **kwargs)
+
+        new_name = self.avatar.name if self.avatar else ''
+        if (
+            old_avatar_name
+            and old_avatar_name != new_name
+            and old_avatar_storage is not None
+        ):
+            try:
+                old_avatar_storage.delete(old_avatar_name)
+            except OSError:
+                pass
+
     def __str__(self):
         return f"{self.user.username}'s profile"
+
 
 class EmailOTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='email_otp')
@@ -151,6 +182,8 @@ class SubscriptionPayment(models.Model):
     fedapay_reference = models.CharField(max_length=128, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     checkout_url = models.URLField(blank=True)
+    invoice_url = models.URLField(blank=True, max_length=500)
+    promo_bundle = models.CharField(max_length=24, blank=True, default='')
     fedapay_payload = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

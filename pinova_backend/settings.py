@@ -263,6 +263,20 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'pinova_backend.throttling.AnonIPRateThrottle',
+        'pinova_backend.throttling.AnonIPSustainedThrottle',
+        'pinova_backend.throttling.AuthenticatedUserRateThrottle',
+        'pinova_backend.throttling.AuthenticatedUserSustainedThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Par IP pour visiteurs / tokens absents ; surcharger en prod avec Redis si plusieurs workers
+        'anon_burst': os.environ.get('API_THROTTLE_ANON_BURST', '120/minute'),
+        'anon_sustained': os.environ.get('API_THROTTLE_ANON_SUSTAINED', '8000/day'),
+        # Utilisateur authentifié (scraping/API clients loggés)
+        'user_burst': os.environ.get('API_THROTTLE_USER_BURST', '300/minute'),
+        'user_sustained': os.environ.get('API_THROTTLE_USER_SUSTAINED', '50000/day'),
+    },
 }
 
 REST_AUTH = {

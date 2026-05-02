@@ -11,6 +11,7 @@ class Notification(models.Model):
         ('payment', 'Payment'),
         ('plan_change', 'Plan Change'),
         ('system', 'System'),
+        ('digest', 'Digest'),
     )
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_notifications', null=True, blank=True)
