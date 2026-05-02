@@ -97,7 +97,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 from django.db.models import Count
 
 from pins.models import Save
-from pins.models import Board
+from pins.models import Board, PinBoard
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -128,12 +128,28 @@ class UserSerializer(serializers.ModelSerializer):
         if not (request and request.user.is_authenticated and request.user == obj):
             boards = boards.filter(is_private=False)
         boards = boards.annotate(pins_total=Count('pins')).order_by('-created_at')
+        def preview_for(board_obj):
+            rows = (
+                PinBoard.objects.filter(board=board_obj)
+                .select_related('pin')
+                .order_by('position', 'id')[:6]
+            )
+            urls = []
+            for row in rows:
+                img = getattr(row.pin, 'image', None)
+                if not img:
+                    continue
+                url = img.url
+                urls.append(request.build_absolute_uri(url) if request else url)
+            return urls
+
         return [
             {
                 'id': board.id,
                 'name': board.name,
                 'pinCount': board.pins_total,
                 'isPrivate': board.is_private,
+                'previewImages': preview_for(board),
             }
             for board in boards
         ]

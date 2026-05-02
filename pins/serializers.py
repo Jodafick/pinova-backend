@@ -38,10 +38,36 @@ def extract_mentions(text: str) -> list[str]:
 class BoardSerializer(serializers.ModelSerializer):
     pin_count = serializers.SerializerMethodField()
     collaborator_count = serializers.SerializerMethodField()
+    preview_images = serializers.SerializerMethodField()
 
     class Meta:
         model = Board
-        fields = ['id', 'name', 'description', 'is_private', 'created_at', 'pin_count', 'collaborator_count']
+        fields = [
+            'id',
+            'name',
+            'description',
+            'is_private',
+            'created_at',
+            'pin_count',
+            'collaborator_count',
+            'preview_images',
+        ]
+
+    def get_preview_images(self, obj):
+        request = self.context.get('request')
+        rows = (
+            PinBoard.objects.filter(board=obj)
+            .select_related('pin')
+            .order_by('position', 'id')[:6]
+        )
+        urls = []
+        for row in rows:
+            img = getattr(row.pin, 'image', None)
+            if not img:
+                continue
+            url = img.url
+            urls.append(request.build_absolute_uri(url) if request else url)
+        return urls
 
     def get_pin_count(self, obj):
         total = getattr(obj, 'pins_total', None)
@@ -168,7 +194,6 @@ class PinSerializer(serializers.ModelSerializer):
     author_profile = ProfileSerializer(source='author.profile', read_only=True)
     topic = serializers.CharField(required=False, allow_blank=True)
     topic_meta = serializers.SerializerMethodField()
-    variants = serializers.SerializerMethodField()
     boards = serializers.SerializerMethodField()
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
@@ -208,8 +233,6 @@ class PinSerializer(serializers.ModelSerializer):
             'topic',
             'topic_meta',
             'visibility',
-            'certified_credit',
-            'provenance_root_hash',
             'hashtags',
             'private_tags',
             'private_tags_input',
@@ -218,7 +241,6 @@ class PinSerializer(serializers.ModelSerializer):
             'scheduled_publish_at',
             'is_story',
             'story_expires_at',
-            'variants',
             'created_at',
             'likes_count',
             'comments_count',
@@ -226,7 +248,7 @@ class PinSerializer(serializers.ModelSerializer):
             'is_liked',
             'is_saved',
         ]
-        read_only_fields = ['provenance_root_hash', 'story_expires_at']
+        read_only_fields = ['story_expires_at']
         extra_kwargs = {
             'author': {'required': False},
         }
@@ -257,30 +279,8 @@ class PinSerializer(serializers.ModelSerializer):
             data.pop('story_expires_at', None)
         return data
 
-    def get_variants(self, obj):
-        request = self.context.get('request')
-        out = []
-        for v in obj.variant_assets.all():
-            if not v.image:
-                continue
-            url = v.image.url
-            out.append({
-                'kind': v.kind,
-                'url': request.build_absolute_uri(url) if request else url,
-            })
-        return out
-
     def validate(self, attrs):
         request = self.context.get('request')
-        certified = attrs.get('certified_credit')
-        if certified is True:
-            if not request or not request.user.is_authenticated:
-                raise serializers.ValidationError({'certified_credit': 'Authentication required.'})
-            if request.user.profile.subscription_plan != Profile.PLAN_PRO:
-                raise serializers.ValidationError({
-                    'certified_credit': 'Certified creator credit requires Pro plan.',
-                })
-
         if 'scheduled_publish_at' in attrs:
             scheduled = attrs['scheduled_publish_at']
             if scheduled is not None:
@@ -438,9 +438,17 @@ class PinSerializer(serializers.ModelSerializer):
 class BoardDetailSerializer(BoardSerializer):
     pins = serializers.SerializerMethodField()
     owner_username = serializers.CharField(source='user.username', read_only=True)
+    viewer_can_manage = serializers.SerializerMethodField()
 
     class Meta(BoardSerializer.Meta):
-        fields = list(BoardSerializer.Meta.fields) + ['pins', 'owner_username']
+        fields = list(BoardSerializer.Meta.fields) + ['pins', 'owner_username', 'viewer_can_manage']
+
+    def get_viewer_can_manage(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        u = request.user
+        return obj.user_id == u.id or obj.collaborators.filter(id=u.id).exists()
 
     def get_pins(self, obj):
         from .visibility import pin_is_visible_for_request
@@ -449,7 +457,7 @@ class BoardDetailSerializer(BoardSerializer):
         links = (
             PinBoard.objects.filter(board=obj)
             .select_related('pin', 'pin__author', 'pin__author__profile', 'pin__topic')
-            .prefetch_related('pin__hashtags', 'pin__boards', 'pin__variant_assets')
+            .prefetch_related('pin__hashtags', 'pin__boards')
             .order_by('position', 'id')
         )
         out = []

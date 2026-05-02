@@ -10,8 +10,6 @@ from googletrans import Translator
 from pathlib import Path
 from django.conf import settings
 from PIL import Image
-import hashlib
-import json
 import re
 from .models import (
     Pin,
@@ -21,14 +19,12 @@ from .models import (
     Save,
     Hashtag,
     PrivatePinTag,
-    PinProvenanceEvent,
     Board,
     CommentLike,
     TopicTranslation,
     PinViewEvent,
     SearchInteraction,
     PinBoard,
-    PinVariant,
 )
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, BoardDetailSerializer, extract_hashtags
 from .visibility import pin_is_visible_for_request
@@ -192,7 +188,7 @@ class PinViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = (
             Pin.objects.select_related('author', 'author__profile', 'topic')
-            .prefetch_related('hashtags', 'boards', 'variant_assets')
+            .prefetch_related('hashtags', 'boards')
             .all()
             .order_by('-created_at')
         )
@@ -227,44 +223,14 @@ class PinViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         pin = serializer.save(author=self.request.user)
-        image_hash = hashlib.sha256()
-        for chunk in pin.image.chunks():
-            image_hash.update(chunk)
-        root_hash = image_hash.hexdigest()
-        pin.provenance_root_hash = root_hash
-        pin.save(update_fields=['provenance_root_hash'])
-        PinProvenanceEvent.objects.create(
-            pin=pin,
-            actor=self.request.user,
-            action=PinProvenanceEvent.ACTION_CREATE,
-            previous_hash='',
-            current_hash=root_hash,
-            metadata={'title': pin.title, 'visibility': pin.visibility},
-        )
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
-        self._sync_pin_variants(pin, self.request.FILES)
 
     def perform_update(self, serializer):
         pin = serializer.save()
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
-        self._sync_pin_variants(pin, self.request.FILES)
 
-    def _sync_pin_variants(self, pin, files):
-        mapping = {
-            'variant_story': PinVariant.KIND_STORY,
-            'variant_square': PinVariant.KIND_SQUARE,
-            'variant_landscape': PinVariant.KIND_LANDSCAPE,
-        }
-        for field, kind in mapping.items():
-            f = files.get(field) if files else None
-            if f:
-                PinVariant.objects.update_or_create(
-                    pin=pin,
-                    kind=kind,
-                    defaults={'image': f},
-                )
     def save(self, request, slug=None):
         pin = self.get_object()
         save, created = Save.objects.get_or_create(user=request.user, pin=pin)
@@ -272,19 +238,6 @@ class PinViewSet(viewsets.ModelViewSet):
         if not created:
             save.delete()
             return Response({'status': 'unsaved', 'saves_count': pin.saves_count})
-
-        latest = pin.provenance_events.order_by('-created_at').first()
-        previous_hash = latest.current_hash if latest else pin.provenance_root_hash
-        payload = json.dumps({'pin': pin.id, 'user': request.user.id, 'action': 'save'}, sort_keys=True)
-        current_hash = hashlib.sha256(f"{previous_hash}:{payload}".encode('utf-8')).hexdigest()
-        PinProvenanceEvent.objects.create(
-            pin=pin,
-            actor=request.user,
-            action=PinProvenanceEvent.ACTION_SAVE,
-            previous_hash=previous_hash,
-            current_hash=current_hash,
-            metadata={'saved_by': request.user.username},
-        )
 
         if pin.author != request.user and pin.author.profile.notifications_saves:
             Notification.objects.create(
@@ -336,21 +289,41 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='active-stories')
     def active_stories(self, request):
         username = (request.query_params.get('username') or '').strip()
-        if not username:
-            return Response({'pins': []})
-        owner = User.objects.filter(username=username).first()
-        if not owner:
-            return Response({'pins': []})
-        now = timezone.now()
-        sched_ok = Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
+        sched_ok = self._scheduled_publish_ok_q()
         qs = (
-            Pin.objects.filter(author=owner, is_story=True, story_expires_at__gt=now)
+            Pin.objects.filter(is_story=True)
             .filter(sched_ok)
+            .exclude(story_expires_at__isnull=True)
+            .exclude(story_expires_at__lte=timezone.now())
             .select_related('author', 'author__profile', 'topic')
-            .prefetch_related('hashtags', 'boards', 'variant_assets')
-            .order_by('-created_at')[:48]
+            .prefetch_related('hashtags', 'boards')
         )
-        visible = [pin for pin in qs if pin_is_visible_for_request(pin, request)]
+
+        if username:
+            owner = User.objects.filter(username=username).first()
+            if not owner:
+                return Response({'pins': []})
+            qs = qs.filter(author=owner).order_by('-created_at')[:48]
+            visible = [pin for pin in qs if pin_is_visible_for_request(pin, request)]
+        else:
+            pool = list(qs.order_by('-created_at')[:150])
+            visible = [pin for pin in pool if pin_is_visible_for_request(pin, request)]
+            user = request.user
+            if (
+                user.is_authenticated
+                and getattr(user.profile, 'notifications_recommendations', False)
+                and visible
+            ):
+                topic_scores = self._build_topic_scores(user)
+                if topic_scores:
+                    vis_qs = Pin.objects.filter(id__in=[p.id for p in visible]).select_related(
+                        'author',
+                        'author__profile',
+                        'topic',
+                    )
+                    visible = self._ordered_by_topic_score(vis_qs, topic_scores)
+            visible = visible[:80]
+
         serializer = PinSerializer(visible, many=True, context={'request': request})
         return Response({'pins': serializer.data})
 
@@ -878,23 +851,8 @@ class PinViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
     def provenance(self, request, slug=None):
-        pin = self.get_object()
-        events = pin.provenance_events.select_related('actor').order_by('created_at')
-        return Response({
-            'root_hash': pin.provenance_root_hash,
-            'events': [
-                {
-                    'id': event.id,
-                    'actor': event.actor.username,
-                    'action': event.action,
-                    'previous_hash': event.previous_hash,
-                    'current_hash': event.current_hash,
-                    'metadata': event.metadata,
-                    'created_at': event.created_at,
-                }
-                for event in events
-            ],
-        })
+        self.get_object()
+        return Response({'root_hash': '', 'events': []})
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='translate-description')
     def translate_description(self, request, slug=None):
@@ -1198,5 +1156,5 @@ class BoardViewSet(viewsets.ModelViewSet):
     def platform_policy(self, request):
         return Response({
             'ads': {'third_party_tracking': False, 'model': 'freemium_subscription'},
-            'creator_credit': {'provenance_chain': True, 'tamper_resistant_hash': True},
+            'creator_credit': {'provenance_chain': False, 'tamper_resistant_hash': False},
         })
