@@ -80,12 +80,29 @@ class Pin(models.Model):
     visibility = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default=VISIBILITY_PUBLIC)
     certified_credit = models.BooleanField(default=False)
     provenance_root_hash = models.CharField(max_length=128, blank=True)
-    boards = models.ManyToManyField(Board, blank=True, related_name='pins')
+    boards = models.ManyToManyField(Board, blank=True, related_name='pins', through='PinBoard')
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='pins')
     created_at = models.DateTimeField(auto_now_add=True)
+    scheduled_publish_at = models.DateTimeField(null=True, blank=True)
+    is_story = models.BooleanField(default=False)
+    story_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     def __str__(self):
         return self.title
+
+    def refresh_story_expiry(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        if not self.is_story:
+            self.story_expires_at = None
+            return
+        now = timezone.now()
+        if self.scheduled_publish_at and self.scheduled_publish_at > now:
+            base = self.scheduled_publish_at
+        else:
+            base = now
+        self.story_expires_at = base + timedelta(hours=24)
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -113,6 +130,43 @@ class Pin(models.Model):
     @property
     def topic_name(self):
         return self.topic.name if self.topic else ''
+
+class PinVariant(models.Model):
+    """Crops / ratios alternatifs pour un même pin (story 9:16, carré, paysage). Une ligne métier unique."""
+    KIND_STORY = 'story'
+    KIND_SQUARE = 'square'
+    KIND_LANDSCAPE = 'landscape'
+    KIND_CHOICES = [
+        (KIND_STORY, 'Story'),
+        (KIND_SQUARE, 'Square'),
+        (KIND_LANDSCAPE, 'Landscape'),
+    ]
+
+    pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='variant_assets')
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    image = models.ImageField(upload_to='pins/variants/')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [['pin', 'kind']]
+        ordering = ['kind']
+
+    def __str__(self):
+        return f'{self.pin_id}:{self.kind}'
+
+
+class PinBoard(models.Model):
+    pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='pin_board_memberships')
+    board = models.ForeignKey(Board, on_delete=models.CASCADE, related_name='pin_board_memberships')
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        unique_together = [['pin', 'board']]
+        ordering = ['position', 'id']
+
+    def __str__(self):
+        return f'{self.pin_id}->{self.board_id}@{self.position}'
+
 
 class Save(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saves')

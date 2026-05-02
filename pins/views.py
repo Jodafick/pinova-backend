@@ -2,8 +2,9 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count, Q, Case, When, Value, IntegerField
+from django.db.models import Count, Q, Case, When, Value, IntegerField, Max
 from django.contrib.auth.models import User
+from django.utils import timezone
 from asgiref.sync import async_to_sync
 from googletrans import Translator
 from pathlib import Path
@@ -26,37 +27,52 @@ from .models import (
     TopicTranslation,
     PinViewEvent,
     SearchInteraction,
+    PinBoard,
+    PinVariant,
 )
-from .serializers import PinSerializer, CommentSerializer, BoardSerializer, extract_hashtags
+from .serializers import PinSerializer, CommentSerializer, BoardSerializer, BoardDetailSerializer, extract_hashtags
+from .visibility import pin_is_visible_for_request
 from .translation import translate_text_to, detect_original_language
 from notifications.models import Notification
 
 
-def _pin_download_absolute_url(request, pin, requested_quality):
-    if requested_quality == 'standard':
+def _pin_download_absolute_url(request, pin, requested_quality, apply_watermark=False):
+    """Génère (ou lit le cache) un JPEG export ; filigrane discret pour Plus/Pro."""
+    if requested_quality == 'standard' and not apply_watermark:
         return request.build_absolute_uri(pin.image.url)
+
     variants_dir = Path(settings.MEDIA_ROOT) / 'pin_download_variants'
     variants_dir.mkdir(parents=True, exist_ok=True)
-    max_side = {'hd': 1920, '4k': 3840}[requested_quality]
-    filename = f'{pin.id}_{requested_quality}.jpg'
+    wm_key = 'wm' if apply_watermark else 'plain'
+    filename = f'{pin.id}_{requested_quality}_{wm_key}.jpg'
     out_path = variants_dir / filename
     src_path = Path(pin.image.path)
+    max_side = {'standard': 2048, 'hd': 1920, '4k': 3840}[requested_quality]
+
     needs_write = True
     try:
         if out_path.exists():
             needs_write = out_path.stat().st_mtime < src_path.stat().st_mtime
     except OSError:
         needs_write = True
+
     if needs_write:
+        from .watermark import apply_watermark_rgb
+
+        front = str(getattr(settings, 'FRONTEND_URL', '') or '').rstrip('/') or 'http://localhost:5174'
         with Image.open(src_path) as im:
-            im = im.convert('RGB')
-            w, h = im.size
+            im_rgb = im.convert('RGB')
+            w, h = im_rgb.size
             longest = max(w, h)
             if longest > max_side:
                 scale = max_side / float(longest)
                 nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
-                im = im.resize((nw, nh), Image.Resampling.LANCZOS)
-            im.save(out_path, 'JPEG', quality=92, optimize=True)
+                im_rgb = im_rgb.resize((nw, nh), Image.Resampling.LANCZOS)
+            if apply_watermark:
+                lines = [f'@{pin.author.username}', f'{front}/profile/{pin.author.username}']
+                im_rgb = apply_watermark_rgb(im_rgb, lines)
+            im_rgb.save(out_path, 'JPEG', quality=92, optimize=True)
+
     media = settings.MEDIA_URL or '/media/'
     if not str(media).endswith('/'):
         media = f'{media}/'
@@ -152,27 +168,62 @@ class PinViewSet(viewsets.ModelViewSet):
                 scores[topic] = scores.get(topic, 0) + 2
         return scores
 
+    def _scheduled_publish_ok_q(self):
+        now = timezone.now()
+        return Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
+
+    def _story_feed_q(self):
+        """Stories expirées masquées sauf pour l'auteur (archivage)."""
+        user = self.request.user if self.request.user.is_authenticated else None
+        now = timezone.now()
+        q = Q(is_story=False) | Q(is_story=True, story_expires_at__gt=now)
+        if user:
+            q |= Q(is_story=True, author=user)
+        return q
+
+    def _story_main_feed_placement_q(self):
+        """Les stories des autres n'apparaissent pas dans le fil masonry (uniquement bande Stories)."""
+        user = self.request.user if self.request.user.is_authenticated else None
+        q = Q(is_story=False)
+        if user:
+            q |= Q(author=user)
+        return q
+
     def get_queryset(self):
         queryset = (
             Pin.objects.select_related('author', 'author__profile', 'topic')
-            .prefetch_related('hashtags')
+            .prefetch_related('hashtags', 'boards', 'variant_assets')
             .all()
             .order_by('-created_at')
         )
         topic = self.request.query_params.get('topic')
         queryset = self._apply_topic_filter(queryset, topic)
+        sched = self._scheduled_publish_ok_q()
+        story_q = self._story_feed_q()
+        placement_q = self._story_main_feed_placement_q()
+        detail_route = getattr(self, 'detail', False)
+
         if not self.request.user.is_authenticated:
-            return queryset.filter(
-                visibility=Pin.VISIBILITY_PUBLIC,
-                author__profile__private_profile=False,
+            core = (
+                Q(visibility=Pin.VISIBILITY_PUBLIC, author__profile__private_profile=False)
+                & sched
+                & story_q
             )
+            if not detail_route:
+                core &= placement_q
+            return queryset.filter(core)
+
         my_profile = self.request.user.profile
-        return queryset.filter(
+        visibility_q = (
             Q(visibility=Pin.VISIBILITY_PUBLIC, author__profile__private_profile=False)
             | Q(author=self.request.user)
             | Q(visibility=Pin.VISIBILITY_FOLLOWERS, author__profile__followers=my_profile)
             | Q(author__profile__private_profile=True, author__profile__followers=my_profile)
-        ).distinct()
+        )
+        core = visibility_q & story_q & (sched | Q(author=self.request.user))
+        if not detail_route:
+            core &= placement_q
+        return queryset.filter(core).distinct()
 
     def perform_create(self, serializer):
         pin = serializer.save(author=self.request.user)
@@ -190,8 +241,30 @@ class PinViewSet(viewsets.ModelViewSet):
             current_hash=root_hash,
             metadata={'title': pin.title, 'visibility': pin.visibility},
         )
+        pin.refresh_story_expiry()
+        pin.save(update_fields=['story_expires_at'])
+        self._sync_pin_variants(pin, self.request.FILES)
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def perform_update(self, serializer):
+        pin = serializer.save()
+        pin.refresh_story_expiry()
+        pin.save(update_fields=['story_expires_at'])
+        self._sync_pin_variants(pin, self.request.FILES)
+
+    def _sync_pin_variants(self, pin, files):
+        mapping = {
+            'variant_story': PinVariant.KIND_STORY,
+            'variant_square': PinVariant.KIND_SQUARE,
+            'variant_landscape': PinVariant.KIND_LANDSCAPE,
+        }
+        for field, kind in mapping.items():
+            f = files.get(field) if files else None
+            if f:
+                PinVariant.objects.update_or_create(
+                    pin=pin,
+                    kind=kind,
+                    defaults={'image': f},
+                )
     def save(self, request, slug=None):
         pin = self.get_object()
         save, created = Save.objects.get_or_create(user=request.user, pin=pin)
@@ -259,6 +332,27 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response({'status': 'ignored'})
         SearchInteraction.objects.create(user=request.user, query=query[:120])
         return Response({'status': 'recorded'})
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='active-stories')
+    def active_stories(self, request):
+        username = (request.query_params.get('username') or '').strip()
+        if not username:
+            return Response({'pins': []})
+        owner = User.objects.filter(username=username).first()
+        if not owner:
+            return Response({'pins': []})
+        now = timezone.now()
+        sched_ok = Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
+        qs = (
+            Pin.objects.filter(author=owner, is_story=True, story_expires_at__gt=now)
+            .filter(sched_ok)
+            .select_related('author', 'author__profile', 'topic')
+            .prefetch_related('hashtags', 'boards', 'variant_assets')
+            .order_by('-created_at')[:48]
+        )
+        visible = [pin for pin in qs if pin_is_visible_for_request(pin, request)]
+        serializer = PinSerializer(visible, many=True, context={'request': request})
+        return Response({'pins': serializer.data})
 
     @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
     def comments(self, request, slug=None):
@@ -562,16 +656,32 @@ class PinViewSet(viewsets.ModelViewSet):
         search_query = (request.query_params.get('q') or '').strip()
         search_query_lower = search_query.lower()
 
+        now = timezone.now()
+        schedule_public = Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
+        story_public = Q(is_story=False) | Q(is_story=True, story_expires_at__gt=now)
+
         base_qs = (
             Pin.objects.exclude(topic__isnull=True)
             .exclude(visibility=Pin.VISIBILITY_PRIVATE)
+            .filter(schedule_public)
+            .filter(story_public)
         )
         topics_qs = (
             Topic.objects.filter(is_active=True)
             .annotate(
                 pin_count=Count(
                     'pins',
-                    filter=~Q(pins__visibility=Pin.VISIBILITY_PRIVATE),
+                    filter=(
+                        ~Q(pins__visibility=Pin.VISIBILITY_PRIVATE)
+                        & (
+                            Q(pins__scheduled_publish_at__isnull=True)
+                            | Q(pins__scheduled_publish_at__lte=now)
+                        )
+                        & (
+                            Q(pins__is_story=False)
+                            | Q(pins__is_story=True, pins__story_expires_at__gt=now)
+                        )
+                    ),
                     distinct=True,
                 )
             )
@@ -716,7 +826,10 @@ class PinViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            download_url = _pin_download_absolute_url(request, pin, requested_quality)
+            apply_wm = profile.subscription_plan in {profile.PLAN_PLUS, profile.PLAN_PRO}
+            download_url = _pin_download_absolute_url(
+                request, pin, requested_quality, apply_watermark=apply_wm
+            )
         except Exception:
             download_url = request.build_absolute_uri(pin.image.url)
         return Response({
@@ -831,13 +944,54 @@ class BoardViewSet(viewsets.ModelViewSet):
     serializer_class = BoardSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        if self.action == 'retrieve':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return BoardDetailSerializer
+        return BoardSerializer
+
     def get_queryset(self):
-        return (
-            Board.objects.filter(Q(user=self.request.user) | Q(collaborators=self.request.user))
-            .annotate(pin_count=Count('pins'))
-            .distinct()
+        base = (
+            Board.objects.annotate(pin_count=Count('pins'))
+            .select_related('user', 'user__profile')
             .order_by('-created_at')
         )
+        user = self.request.user
+
+        if self.action == 'list':
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+
+        if self.action in ('update', 'partial_update', 'destroy'):
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+
+        if self.action in ('add_pin', 'remove_pin', 'collaborators', 'ordered_pins', 'reorder_pins'):
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+
+        if self.action == 'suggestions':
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(user=user)
+
+        if self.action == 'retrieve':
+            q_public = Q(is_private=False)
+            if user.is_authenticated:
+                q_mine = Q(user=user) | Q(collaborators=user)
+                return base.filter(q_public | q_mine).distinct()
+            return base.filter(q_public)
+
+        if user.is_authenticated:
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+        return Board.objects.none()
 
     def _can_manage_board_content(self, user, board):
         return board.user == user or board.collaborators.filter(id=user.id).exists()
@@ -869,8 +1023,15 @@ class BoardViewSet(viewsets.ModelViewSet):
             pin = Pin.objects.get(slug=pin_slug)
         except Pin.DoesNotExist:
             return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
-        board.pins.add(pin)
-        return Response({'status': 'added', 'pinCount': board.pins.count()})
+        max_pos = PinBoard.objects.filter(board=board).aggregate(m=Max('position'))['m']
+        next_pos = (max_pos if max_pos is not None else -1) + 1
+        _, created_pb = PinBoard.objects.get_or_create(
+            pin=pin,
+            board=board,
+            defaults={'position': next_pos},
+        )
+        status_txt = 'added' if created_pb else 'already_present'
+        return Response({'status': status_txt, 'pinCount': board.pins.count()})
 
     @action(detail=True, methods=['post'], url_path='remove-pin')
     def remove_pin(self, request, pk=None):
@@ -884,7 +1045,7 @@ class BoardViewSet(viewsets.ModelViewSet):
             pin = Pin.objects.get(slug=pin_slug)
         except Pin.DoesNotExist:
             return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
-        board.pins.remove(pin)
+        PinBoard.objects.filter(pin=pin, board=board).delete()
         return Response({'status': 'removed', 'pinCount': board.pins.count()})
 
     @action(detail=True, methods=['get', 'post', 'delete'], url_path='collaborators')
@@ -935,6 +1096,103 @@ class BoardViewSet(viewsets.ModelViewSet):
             return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
         board.collaborators.filter(username=username).delete()
         return Response({'status': 'removed', 'collaborator_count': board.collaborators.count()})
+
+    @action(detail=False, methods=['get'], url_path='suggestions')
+    def suggestions(self, request):
+        """Board names inferred from author's pin topics + existing boards that match."""
+        user = request.user
+        topic_rows = (
+            Pin.objects.filter(author=user)
+            .exclude(topic__isnull=True)
+            .values('topic_id', 'topic__name', 'topic__slug')
+            .annotate(c=Count('id'))
+            .order_by('-c')[:14]
+        )
+        topic_ids = [row['topic_id'] for row in topic_rows if row['topic_id']]
+        existing_names = set(Board.objects.filter(user=user).values_list('name', flat=True))
+        new_board_hints = []
+        seen = set(existing_names)
+        for row in topic_rows:
+            name = (row['topic__name'] or '').strip()[:255]
+            if not name or name.lower() in {x.lower() for x in seen}:
+                continue
+            seen.add(name)
+            new_board_hints.append({
+                'name': name,
+                'topic_slug': row['topic__slug'],
+                'pin_count_hint': row['c'],
+            })
+        if topic_ids:
+            existing_boards_qs = (
+                Board.objects.filter(user=user)
+                .annotate(
+                    overlap_score=Count(
+                        'pin_board_memberships',
+                        filter=Q(pin_board_memberships__pin__topic_id__in=topic_ids),
+                    ),
+                    pin_total=Count('pins'),
+                )
+                .filter(overlap_score__gt=0)
+                .order_by('-overlap_score')[:12]
+            )
+        else:
+            existing_boards_qs = Board.objects.none()
+        return Response({
+            'new_board_hints': new_board_hints[:10],
+            'existing_boards': [
+                {
+                    'id': b.id,
+                    'name': b.name,
+                    'overlap_score': getattr(b, 'overlap_score', 0),
+                    'pin_count': getattr(b, 'pin_total', b.pins.count()),
+                }
+                for b in existing_boards_qs
+            ],
+        })
+
+    @action(detail=True, methods=['get'], url_path='ordered-pins')
+    def ordered_pins(self, request, pk=None):
+        board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to view this board order'}, status=status.HTTP_403_FORBIDDEN)
+        links = PinBoard.objects.filter(board=board).select_related('pin').order_by('position', 'id')
+        pins_payload = []
+        for link in links:
+            pin = link.pin
+            img = pin.image.url if pin.image else ''
+            pins_payload.append({
+                'id': pin.id,
+                'slug': pin.slug,
+                'title': pin.title,
+                'image': request.build_absolute_uri(img) if img else '',
+                'position': link.position,
+                'scheduled_publish_at': pin.scheduled_publish_at.isoformat() if pin.scheduled_publish_at else None,
+            })
+        return Response({'pins': pins_payload})
+
+    @action(detail=True, methods=['post'], url_path='reorder-pins')
+    def reorder_pins(self, request, pk=None):
+        board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to reorder this board'}, status=status.HTTP_403_FORBIDDEN)
+        raw_ids = request.data.get('pin_ids')
+        if not isinstance(raw_ids, list) or len(raw_ids) == 0:
+            return Response({'error': 'pin_ids must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            pin_ids = [int(x) for x in raw_ids]
+        except (TypeError, ValueError):
+            return Response({'error': 'pin_ids must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+        current_ids = list(
+            PinBoard.objects.filter(board=board).values_list('pin_id', flat=True).order_by('position', 'id'),
+        )
+        if sorted(pin_ids) != sorted(current_ids):
+            return Response(
+                {'error': 'pin_ids must match pins on this board exactly'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for idx, pid in enumerate(pin_ids):
+            PinBoard.objects.filter(board=board, pin_id=pid).update(position=idx)
+        return Response({'status': 'ok'})
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='platform-policy')
     def platform_policy(self, request):

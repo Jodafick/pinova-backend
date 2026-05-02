@@ -1,11 +1,23 @@
 from django.contrib import admin
-from .models import Pin, Save, Like, Comment, Board, Hashtag, PrivatePinTag, PinProvenanceEvent, Topic
+from .models import Pin, PinVariant, Save, Like, Comment, Board, Hashtag, PrivatePinTag, PinProvenanceEvent, Topic
+
+
+class PinVariantInline(admin.TabularInline):
+    model = PinVariant
+    extra = 0
+
 
 @admin.register(Pin)
 class PinAdmin(admin.ModelAdmin):
-    list_display = ('title', 'author', 'topic', 'visibility', 'created_at', 'likes_count', 'saves_count')
+    list_display = ('title', 'author', 'topic', 'visibility', 'is_story', 'created_at', 'likes_count', 'saves_count')
     list_filter = ('author', 'topic', 'visibility', 'created_at')
     search_fields = ('title', 'description', 'topic__name')
+    inlines = [PinVariantInline]
+
+
+@admin.register(PinVariant)
+class PinVariantAdmin(admin.ModelAdmin):
+    list_display = ('pin', 'kind', 'created_at')
 
 
 @admin.register(Topic)
