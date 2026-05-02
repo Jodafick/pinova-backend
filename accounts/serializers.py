@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Profile, EmailOTP
+from .models import Profile, EmailOTP, SubscriptionPayment
 from dj_rest_auth.registration.serializers import RegisterSerializer as BaseRegisterSerializer
 from django.core.mail import send_mail
 from django.conf import settings
@@ -51,6 +51,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'subscription_trial_consumed_at',
             'share_token',
             'birth_date',
+            'sensitive_media_blur_by_default',
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code', 'subscription_trial_consumed_at']
 
@@ -68,6 +69,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         'notifications_saves',
         'notifications_recommendations',
         'notifications_digest_creator_weekly',
+        'sensitive_media_blur_by_default',
         'share_token',
     })
 
@@ -229,11 +231,23 @@ class UserSerializer(serializers.ModelSerializer):
             'sponsor_username': profile.subscription_sponsor.username
             if getattr(profile, 'subscription_sponsor_id', None)
             else None,
+            'sensitive_media_blur_by_default': getattr(
+                profile,
+                'sensitive_media_blur_by_default',
+                True,
+            ),
         }
         from .subscription_seats import max_invitees_for_bundle, owner_eligible_as_seat_hub
 
         if owner_eligible_as_seat_hub(profile):
             sub['seat_max_invitees'] = max_invitees_for_bundle(profile.subscription_seat_bundle)
+        last_pay_cycle = (
+            SubscriptionPayment.objects.filter(user=obj, status=SubscriptionPayment.STATUS_APPROVED)
+            .order_by('-created_at')
+            .values_list('billing_cycle', flat=True)
+            .first()
+        )
+        sub['active_billing_cycle'] = last_pay_cycle or None
         return sub
 
 

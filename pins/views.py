@@ -1229,6 +1229,38 @@ class BoardViewSet(viewsets.ModelViewSet):
             raise ValidationError({'is_private': f'Public boards limit reached ({limits["public_max"]}).'})
         serializer.save(user=self.request.user)
 
+    def perform_update(self, serializer):
+        board = serializer.instance
+        if not self._can_manage_board_content(self.request.user, board):
+            raise PermissionDenied('Not allowed to edit this board.')
+        vd = serializer.validated_data
+        if board.user_id != self.request.user.id and 'is_private' in vd:
+            vd.pop('is_private')
+        if (
+            board.user_id == self.request.user.id
+            and 'is_private' in vd
+            and bool(vd.get('is_private')) != bool(board.is_private)
+        ):
+            profile = self.request.user.profile
+            limits = profile.board_limits
+            other_boards = Board.objects.filter(user=self.request.user).exclude(pk=board.pk)
+            if vd.get('is_private'):
+                n_priv = other_boards.filter(is_private=True).count() + 1
+                if limits['private_max'] is not None and n_priv > limits['private_max']:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError({'is_private': f'Private boards limit reached ({limits["private_max"]}).'})
+            else:
+                n_pub = other_boards.filter(is_private=False).count() + 1
+                if limits['public_max'] is not None and n_pub > limits['public_max']:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError({'is_private': f'Public boards limit reached ({limits["public_max"]}).'})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.user_id != self.request.user.id:
+            raise PermissionDenied('Only the board owner can delete this board.')
+        instance.delete()
+
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='share-token')
     def board_share_token(self, request, pk=None):
         board = self.get_object()

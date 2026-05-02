@@ -7,6 +7,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.core.validators import MaxValueValidator, MinValueValidator
 
 
 class Profile(models.Model):
@@ -67,6 +68,8 @@ class Profile(models.Model):
         on_delete=models.SET_NULL,
         related_name='provisioned_subscription_seats',
     )
+    # Plus/Pro uniquement en pratique : si False, médias signalés « sensibles » non floutés par défaut pour le spectateur majeur connecté.
+    sensitive_media_blur_by_default = models.BooleanField(default=True)
 
     @property
     def can_use_private_tags(self):
@@ -147,9 +150,18 @@ class SubscriptionPricing(models.Model):
         (BILLING_MONTHLY, 'Monthly'),
         (BILLING_YEARLY, 'Yearly'),
     ]
+    SEAT_SOLO = 'solo'
+    SEAT_FAMILY = 'family'
+    SEAT_TEAM = 'team'
+    SEAT_CHOICES = [
+        (SEAT_SOLO, 'Solo'),
+        (SEAT_FAMILY, 'Family'),
+        (SEAT_TEAM, 'Team'),
+    ]
 
     plan = models.CharField(max_length=20, choices=Profile.PLAN_CHOICES)
     billing_cycle = models.CharField(max_length=20, choices=BILLING_CHOICES, default=BILLING_MONTHLY)
+    seat_bundle = models.CharField(max_length=24, choices=SEAT_CHOICES, default=SEAT_SOLO)
     amount = models.PositiveIntegerField()
     duration_days = models.PositiveIntegerField(default=30)
     currency_iso = models.CharField(max_length=10, default='XOF')
@@ -158,11 +170,41 @@ class SubscriptionPricing(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('plan', 'billing_cycle')
-        ordering = ['plan', 'billing_cycle']
+        unique_together = ('plan', 'billing_cycle', 'seat_bundle')
+        ordering = ['plan', 'billing_cycle', 'seat_bundle']
 
     def __str__(self):
-        return f"{self.plan}:{self.billing_cycle}:{self.amount} {self.currency_iso}"
+        return f"{self.plan}:{self.billing_cycle}:{self.seat_bundle}:{self.amount} {self.currency_iso}"
+
+
+class PinovaSubscriptionConfig(models.Model):
+    """Singleton (pk fixe à 1) : paramètres d’affichage / marketing pour les abonnements."""
+
+    annual_discount_percent = models.PositiveSmallIntegerField(
+        default=10,
+        validators=[MinValueValidator(0), MaxValueValidator(99)],
+        help_text=(
+            'Badge −X % « annuel » sur la page Premium et valeur API annual_discount_percent. '
+            'Mettre 0 pour masquer le badge ; les paiements suivent encore les lignes SubscriptionPricing.'
+        ),
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Configuration abonnement Pinova'
+        verbose_name_plural = 'Configuration abonnement Pinova'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={'annual_discount_percent': 10})
+        return obj
+
+    def __str__(self):
+        return 'Configuration abonnement Pinova'
 
 
 class SubscriptionPayment(models.Model):

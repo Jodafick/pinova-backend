@@ -1,6 +1,12 @@
 from django.contrib import admin
 from django import forms
-from .models import Profile, SubscriptionPricing, SubscriptionPayment, SupportTicket
+from .models import (
+    Profile,
+    PinovaSubscriptionConfig,
+    SubscriptionPricing,
+    SubscriptionPayment,
+    SupportTicket,
+)
 from .currency_utils import currency_choices_with_symbols
 
 
@@ -30,9 +36,21 @@ class ProfileAdmin(admin.ModelAdmin):
 @admin.register(SubscriptionPricing)
 class SubscriptionPricingAdmin(admin.ModelAdmin):
     form = SubscriptionPricingAdminForm
-    list_display = ('plan', 'billing_cycle', 'amount', 'currency_iso', 'duration_days', 'is_active')
-    list_filter = ('plan', 'billing_cycle', 'currency_iso', 'is_active')
+    list_display = ('plan', 'billing_cycle', 'seat_bundle', 'amount', 'currency_iso', 'duration_days', 'is_active')
+    list_filter = ('plan', 'billing_cycle', 'seat_bundle', 'currency_iso', 'is_active')
     search_fields = ('plan', 'billing_cycle', 'currency_iso')
+
+
+@admin.register(PinovaSubscriptionConfig)
+class PinovaSubscriptionConfigAdmin(admin.ModelAdmin):
+    fields = ('annual_discount_percent', 'updated_at')
+    readonly_fields = ('updated_at',)
+
+    def has_add_permission(self, request):
+        return not PinovaSubscriptionConfig.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(SubscriptionPayment)

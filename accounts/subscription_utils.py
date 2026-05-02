@@ -40,6 +40,7 @@ def _enforce_subscription_state(profile: Profile) -> bool:
         profile.partner_ads_enabled = True
         profile.tips_enabled = False
         profile.tips_url = ''
+        profile.sensitive_media_blur_by_default = True
         from .subscription_seats import SUBSCRIPTION_BUNDLE_SOLO, revoke_all_seats_for_owner
 
         revoke_all_seats_for_owner(profile.user)
@@ -57,6 +58,7 @@ def _enforce_subscription_state(profile: Profile) -> bool:
             'tips_enabled',
             'tips_url',
             'subscription_seat_bundle',
+            'sensitive_media_blur_by_default',
         ]
     )
     return True

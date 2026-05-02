@@ -393,15 +393,24 @@ def cleanup_seed():
 
 def seed_subscription_pricing():
     catalog = [
-        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_MONTHLY, 2500, 30),
-        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_YEARLY, 24000, 365),
-        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_MONTHLY, 4900, 30),
-        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_YEARLY, 47000, 365),
+        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_MONTHLY, SubscriptionPricing.SEAT_SOLO, 1500, 30),
+        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_YEARLY, SubscriptionPricing.SEAT_SOLO, 16200, 365),
+        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_MONTHLY, SubscriptionPricing.SEAT_FAMILY, 4500, 30),
+        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_YEARLY, SubscriptionPricing.SEAT_FAMILY, 48600, 365),
+        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_MONTHLY, SubscriptionPricing.SEAT_TEAM, 12000, 30),
+        (Profile.PLAN_PLUS, SubscriptionPricing.BILLING_YEARLY, SubscriptionPricing.SEAT_TEAM, 129600, 365),
+        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_MONTHLY, SubscriptionPricing.SEAT_SOLO, 2500, 30),
+        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_YEARLY, SubscriptionPricing.SEAT_SOLO, 27000, 365),
+        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_MONTHLY, SubscriptionPricing.SEAT_FAMILY, 7500, 30),
+        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_YEARLY, SubscriptionPricing.SEAT_FAMILY, 81000, 365),
+        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_MONTHLY, SubscriptionPricing.SEAT_TEAM, 20000, 30),
+        (Profile.PLAN_PRO, SubscriptionPricing.BILLING_YEARLY, SubscriptionPricing.SEAT_TEAM, 216000, 365),
     ]
-    for plan, cycle, amount, days in catalog:
+    for plan, cycle, seat_bundle, amount, days in catalog:
         SubscriptionPricing.objects.update_or_create(
             plan=plan,
             billing_cycle=cycle,
+            seat_bundle=seat_bundle,
             defaults={
                 'amount': amount,
                 'duration_days': days,

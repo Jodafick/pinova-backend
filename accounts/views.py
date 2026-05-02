@@ -132,10 +132,12 @@ def _normalize_url_path_slashes(url: str):
     rest = re.sub(r'/+', '/', rest)
     return f'{scheme}://{rest}'
 
-def _catalog_entry(plan: str, billing_cycle: str):
+def _catalog_entry(plan: str, billing_cycle: str, seat_bundle=None):
+    bundle = _normalized_seat_bundle(seat_bundle)
     row = SubscriptionPricing.objects.filter(
         plan=plan,
         billing_cycle=billing_cycle,
+        seat_bundle=bundle,
         is_active=True,
     ).first()
     if row:
@@ -191,32 +193,16 @@ def _normalized_seat_bundle(raw) -> str:
     return SUBSCRIPTION_BUNDLE_SOLO
 
 
-def _bundle_discount_fraction(seat_bundle: str) -> float:
-    """Réduction famille / petite équipe (boards collaboratifs — angle B2B léger)."""
-    kind = _normalized_seat_bundle(seat_bundle)
-    try:
-        if kind == SUBSCRIPTION_BUNDLE_FAMILY:
-            return min(0.95, max(0.0, float(os.environ.get('SUBSCRIPTION_FAMILY_DISCOUNT_FRACTION', '0.15'))))
-        if kind == SUBSCRIPTION_BUNDLE_TEAM:
-            return min(0.95, max(0.0, float(os.environ.get('SUBSCRIPTION_TEAM_DISCOUNT_FRACTION', '0.25'))))
-    except ValueError:
-        pass
-    return 0.0
-
-
-def _apply_bundle_discount_amount(amount_minor: int, seat_bundle: str):
-    frac = _bundle_discount_fraction(seat_bundle)
-    if frac <= 0 or amount_minor <= 0:
-        return amount_minor, frac
-    discounted = int(round(amount_minor * (1.0 - frac)))
-    return max(discounted, 1), frac
-
-
 def _plus_trial_duration_days() -> int:
     try:
         return max(1, min(90, int(os.environ.get('SUBSCRIPTION_PLUS_TRIAL_DAYS', '14'))))
     except ValueError:
         return 14
+
+
+def _annual_discount_percent_display() -> int:
+    from .models import PinovaSubscriptionConfig
+    return int(PinovaSubscriptionConfig.load().annual_discount_percent)
 
 
 def _extract_invoice_url_from_fedapay(normalized):
@@ -273,7 +259,7 @@ def _subscription_catalog(target_currency: str, seat_bundle: str = SUBSCRIPTION_
                     'bundle_discount_fraction': 0.0,
                 }
                 continue
-            values = _catalog_entry(plan, cycle)
+            values = _catalog_entry(plan, cycle, bundle_normalized)
             if not values:
                 continue
             amount = int(values['amount'])
@@ -287,11 +273,10 @@ def _subscription_catalog(target_currency: str, seat_bundle: str = SUBSCRIPTION_
                 effective_currency = base_currency
                 effective_amount = amount
                 conversion_applied = False
-            amount_pre_bundle = int(effective_amount)
-            discounted_amount, discount_frac = _apply_bundle_discount_amount(amount_pre_bundle, bundle_normalized)
+            effective_minor = int(effective_amount)
             data[plan][cycle] = {
-                'amount_minor': discounted_amount,
-                'amount_display': _display_amount(discounted_amount, effective_currency),
+                'amount_minor': effective_minor,
+                'amount_display': _display_amount(effective_minor, effective_currency),
                 'currency_iso': effective_currency,
                 'duration_days': duration_days,
                 'source': values.get('source', 'unknown'),
@@ -299,8 +284,7 @@ def _subscription_catalog(target_currency: str, seat_bundle: str = SUBSCRIPTION_
                 'base_currency_iso': base_currency,
                 'conversion_applied': conversion_applied,
                 'seat_bundle': bundle_normalized,
-                'bundle_discount_fraction': discount_frac,
-                'amount_before_bundle_discount_minor': amount_pre_bundle,
+                'bundle_discount_fraction': 0.0,
             }
     return data
 
@@ -691,6 +675,13 @@ class UserMeView(APIView):
                 mutable_data.get('notifications_digest_creator_weekly'),
             ).lower() == 'true'
 
+        if profile.subscription_plan not in {Profile.PLAN_PLUS, Profile.PLAN_PRO}:
+            mutable_data.pop('sensitive_media_blur_by_default', None)
+        elif 'sensitive_media_blur_by_default' in mutable_data:
+            mutable_data['sensitive_media_blur_by_default'] = (
+                str(mutable_data.get('sensitive_media_blur_by_default')).lower() == 'true'
+            )
+
         # Search visibility maps to discoverable_profile.
         if 'discoverable_profile' in mutable_data:
             mutable_data['discoverable_profile'] = str(mutable_data.get('discoverable_profile')).lower() == 'true'
@@ -830,7 +821,8 @@ class SubscriptionCheckoutView(APIView):
         if not headers:
             return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        catalog = _catalog_entry(plan, billing_cycle)
+        seat_bundle = _normalized_seat_bundle(request.data.get('seat_bundle'))
+        catalog = _catalog_entry(plan, billing_cycle, seat_bundle)
         if not catalog:
             return Response({'error': 'Unsupported pricing configuration'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         base_amount = int(catalog['amount'])
@@ -846,10 +838,6 @@ class SubscriptionCheckoutView(APIView):
             amount = converted_amount
             currency_iso = target_currency
             conversion_applied = True
-
-        seat_bundle = _normalized_seat_bundle(request.data.get('seat_bundle'))
-        amount_before_bundle = int(amount)
-        amount, bundle_discount_frac = _apply_bundle_discount_amount(amount_before_bundle, seat_bundle)
 
         default_callback_url = f"{str(settings.FRONTEND_URL).rstrip('/')}/premium"
         callback_url = _normalize_url_path_slashes(
@@ -874,8 +862,7 @@ class SubscriptionCheckoutView(APIView):
                 'target_currency_iso': currency_iso,
                 'conversion_applied': conversion_applied,
                 'seat_bundle': seat_bundle,
-                'bundle_discount_fraction': bundle_discount_frac,
-                'amount_minor_before_bundle': amount_before_bundle,
+                'bundle_discount_fraction': 0.0,
             },
             'customer': {
                 'email': request.user.email,
@@ -975,8 +962,7 @@ class SubscriptionCheckoutView(APIView):
                     'base_currency_iso': base_currency_iso,
                     'conversion_applied': conversion_applied,
                     'seat_bundle': seat_bundle,
-                    'bundle_discount_fraction': bundle_discount_frac,
-                    'amount_minor_before_bundle': amount_before_bundle,
+                    'bundle_discount_fraction': 0.0,
                 },
             }, status=status.HTTP_201_CREATED)
         except requests.RequestException as exc:
@@ -1111,7 +1097,8 @@ class SubscriptionConfirmView(APIView):
         headers = self._fedapay_headers()
         if not headers:
             return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        catalog = _catalog_entry(payment.plan, payment.billing_cycle)
+        seat_bundle_pay = _normalized_seat_bundle(payment.promo_bundle)
+        catalog = _catalog_entry(payment.plan, payment.billing_cycle, seat_bundle_pay)
         duration_days = int((catalog or {}).get('duration_days') or 30)
         expected_amount = int(payment.amount)
 
@@ -1421,7 +1408,8 @@ class SubscriptionWebhookView(APIView):
         payment.fedapay_payload = payload
         approved_statuses = {'approved', 'success', 'successful', 'completed'}
         if status_value in approved_statuses:
-            catalog = _catalog_entry(payment.plan, payment.billing_cycle)
+            seat_bundle_pay = _normalized_seat_bundle(payment.promo_bundle)
+            catalog = _catalog_entry(payment.plan, payment.billing_cycle, seat_bundle_pay)
             duration_days = int((catalog or {}).get('duration_days') or 30)
             previous_plan = payment.user.profile.subscription_plan
             payment.status = SubscriptionPayment.STATUS_APPROVED
@@ -1583,14 +1571,99 @@ class SubscriptionInvoiceListView(APIView):
         return Response({'results': items})
 
 
+class SubscriptionInvoiceReceiptView(APIView):
+    """Récupère (ou recharge) une URL de reçu FedaPay pour une transaction stockée."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _fedapay_base_url(self):
+        env = os.environ.get('FEDAPAY_ENV', 'sandbox').strip().lower()
+        if env == 'live':
+            return 'https://api.fedapay.com/v1'
+        return 'https://sandbox-api.fedapay.com/v1'
+
+    def _fedapay_headers(self):
+        secret_key = os.environ.get('FEDAPAY_SECRET_KEY', '').strip()
+        if not secret_key:
+            return None
+        return {
+            'Authorization': f'Bearer {secret_key}',
+            'Content-Type': 'application/json',
+        }
+
+    def get(self, request, invoice_id):
+        payment = SubscriptionPayment.objects.filter(pk=invoice_id, user=request.user).first()
+        if not payment:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.invoice_url:
+            return Response({'invoice_url': payment.invoice_url})
+
+        headers = self._fedapay_headers()
+        if not headers:
+            return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        tid = (payment.fedapay_transaction_id or '').strip()
+        if not tid or tid.startswith('seed_'):
+            return Response(
+                {'invoice_url': None, 'detail': 'No downloadable receipt'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        base = self._fedapay_base_url()
+        try:
+            resp = requests.get(f'{base}/transactions/{tid}', headers=headers, timeout=25)
+            if resp.status_code >= 400:
+                logger.warning(
+                    'subscription_invoice_receipt: FedaPay GET failed pk=%s status=%s',
+                    invoice_id,
+                    resp.status_code,
+                )
+                return Response(
+                    {'error': 'Unable to fetch receipt from gateway'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            tx = resp.json() or {}
+        except requests.RequestException as exc:
+            logger.exception('subscription_invoice_receipt exception pk=%s', invoice_id)
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        normalized = _fedapay_normalize_transaction_body(tx)
+        invoice_url = _extract_invoice_url_from_fedapay(normalized)
+        pd = dict(payment.fedapay_payload) if isinstance(payment.fedapay_payload, dict) else {}
+        pd['normalized'] = normalized
+        pd['receipt_refresh_at'] = timezone.now().isoformat()
+        uf = ['fedapay_payload', 'updated_at']
+        if invoice_url:
+            payment.invoice_url = invoice_url
+            uf.append('invoice_url')
+        payment.fedapay_payload = pd
+        payment.save(update_fields=uf)
+
+        if not invoice_url:
+            return Response(
+                {'invoice_url': None, 'detail': 'No receipt URL in gateway response'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({'invoice_url': invoice_url})
+
+
 class SubscriptionPricingView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         selected_currency, detected_country = _resolve_user_currency(request)
         bundle = _normalized_seat_bundle(request.query_params.get('seat_bundle'))
+        pricing_by_bundle = {
+            SUBSCRIPTION_BUNDLE_SOLO: _subscription_catalog(selected_currency, SUBSCRIPTION_BUNDLE_SOLO),
+            SUBSCRIPTION_BUNDLE_FAMILY: _subscription_catalog(selected_currency, SUBSCRIPTION_BUNDLE_FAMILY),
+            SUBSCRIPTION_BUNDLE_TEAM: _subscription_catalog(selected_currency, SUBSCRIPTION_BUNDLE_TEAM),
+        }
+        plans = pricing_by_bundle.get(bundle, pricing_by_bundle[SUBSCRIPTION_BUNDLE_SOLO])
         return Response({
-            'plans': _subscription_catalog(selected_currency, bundle),
+            'plans': plans,
+            'pricing_by_bundle': pricing_by_bundle,
+            'annual_discount_percent': _annual_discount_percent_display(),
             'currency': {
                 'selected': selected_currency,
                 'country_code': detected_country,
@@ -1599,8 +1672,8 @@ class SubscriptionPricingView(APIView):
             'seat_bundle': bundle,
             'bundle_discounts': {
                 'solo': 0.0,
-                'family': _bundle_discount_fraction(SUBSCRIPTION_BUNDLE_FAMILY),
-                'team': _bundle_discount_fraction(SUBSCRIPTION_BUNDLE_TEAM),
+                'family': 0.0,
+                'team': 0.0,
             },
             'seat_invite_limits': {
                 'solo': 0,

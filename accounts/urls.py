@@ -20,6 +20,7 @@ from .views import (
     SubscriptionWebhookView,
     SubscriptionTrialStartView,
     SubscriptionInvoiceListView,
+    SubscriptionInvoiceReceiptView,
     SupportTicketView,
 )
 from .subscription_seat_views import (
@@ -47,6 +48,11 @@ urlpatterns = [
     path('subscription/pricing/', SubscriptionPricingView.as_view(), name='subscription-pricing'),
     path('subscription/trial/start/', SubscriptionTrialStartView.as_view(), name='subscription-trial-start'),
     path('subscription/invoices/', SubscriptionInvoiceListView.as_view(), name='subscription-invoices'),
+    path(
+        'subscription/invoices/<int:invoice_id>/receipt/',
+        SubscriptionInvoiceReceiptView.as_view(),
+        name='subscription-invoice-receipt',
+    ),
     path('subscription/currencies/', CurrencyOptionsView.as_view(), name='subscription-currencies'),
     path('subscription/checkout/', SubscriptionCheckoutView.as_view(), name='subscription-checkout'),
     path('subscription/confirm/', SubscriptionConfirmView.as_view(), name='subscription-confirm'),
