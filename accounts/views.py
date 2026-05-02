@@ -1107,6 +1107,7 @@ class SubscriptionConfirmView(APIView):
             return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
+class SubscriptionManageView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
