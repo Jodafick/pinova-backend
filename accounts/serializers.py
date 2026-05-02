@@ -6,6 +6,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
+from .currency_utils import normalize_currency
 
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
@@ -34,12 +35,20 @@ class ProfileSerializer(serializers.ModelSerializer):
             'discoverable_profile',
             'allow_ai_translation',
             'preferred_language',
+            'preferred_currency',
+            'country_code',
             'ad_ads_enabled',
             'partner_ads_enabled',
             'tips_enabled',
             'tips_url',
         ]
-        read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following']
+        read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code']
+
+    def validate_preferred_currency(self, value):
+        normalized = normalize_currency(value)
+        if not normalized:
+            raise serializers.ValidationError('Unsupported currency code')
+        return normalized
 
     def get_followers_count(self, obj):
         return obj.followers.count()

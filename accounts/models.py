@@ -30,6 +30,8 @@ class Profile(models.Model):
     discoverable_profile = models.BooleanField(default=True)
     allow_ai_translation = models.BooleanField(default=True)
     preferred_language = models.CharField(max_length=10, default='fr')
+    preferred_currency = models.CharField(max_length=3, default='XOF')
+    country_code = models.CharField(max_length=2, blank=True, default='')
     ad_ads_enabled = models.BooleanField(default=True)
     partner_ads_enabled = models.BooleanField(default=True)
     tips_enabled = models.BooleanField(default=False)
@@ -78,7 +80,6 @@ class EmailOTP(models.Model):
 
     def __str__(self):
         return f"OTP for {self.user.email}: {self.otp_code}"
-
 
 class SubscriptionPricing(models.Model):
     BILLING_MONTHLY = 'monthly'

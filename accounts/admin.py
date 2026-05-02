@@ -3,8 +3,9 @@ from .models import Profile, SubscriptionPricing, SubscriptionPayment
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'display_name', 'avatar_color')
-    search_fields = ('user__username', 'display_name', 'bio')
+    list_display = ('user', 'display_name', 'preferred_currency', 'country_code', 'avatar_color')
+    list_filter = ('preferred_currency', 'country_code', 'subscription_plan')
+    search_fields = ('user__username', 'display_name', 'bio', 'country_code', 'preferred_currency')
 
 
 @admin.register(SubscriptionPricing)

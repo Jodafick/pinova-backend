@@ -12,6 +12,7 @@ from .views import (
     SubscriptionCheckoutView,
     SubscriptionConfirmView,
     SubscriptionPricingView,
+    CurrencyOptionsView,
 )
 
 router = DefaultRouter()
@@ -25,6 +26,7 @@ urlpatterns = [
     path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),
     path('me/', UserMeView.as_view(), name='user-me'),
     path('subscription/pricing/', SubscriptionPricingView.as_view(), name='subscription-pricing'),
+    path('subscription/currencies/', CurrencyOptionsView.as_view(), name='subscription-currencies'),
     path('subscription/checkout/', SubscriptionCheckoutView.as_view(), name='subscription-checkout'),
     path('subscription/confirm/', SubscriptionConfirmView.as_view(), name='subscription-confirm'),
     

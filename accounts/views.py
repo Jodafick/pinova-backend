@@ -31,11 +31,16 @@ from datetime import timedelta
 from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
+from .currency_utils import (
+    SUPPORTED_CURRENCIES,
+    convert_minor_amount,
+    decimals_for_currency,
+    default_currency_for_country,
+    infer_country_code,
+    normalize_currency,
+)
 
 logger = logging.getLogger(__name__)
-
-DECIMAL_CURRENCIES = {'EUR', 'USD', 'GBP'}
-
 
 def _catalog_entry(plan: str, billing_cycle: str):
     row = SubscriptionPricing.objects.filter(
@@ -53,7 +58,31 @@ def _catalog_entry(plan: str, billing_cycle: str):
     return None
 
 
-def _subscription_catalog():
+def _resolve_user_currency(request):
+    if request.user.is_authenticated:
+        profile = request.user.profile
+        updates = []
+        detected_country = infer_country_code(request)
+        if not profile.country_code and detected_country:
+            profile.country_code = detected_country
+            updates.append('country_code')
+
+        resolved_currency = normalize_currency(profile.preferred_currency)
+        if not resolved_currency:
+            resolved_currency = default_currency_for_country(profile.country_code or detected_country)
+            profile.preferred_currency = resolved_currency
+            updates.append('preferred_currency')
+
+        if updates:
+            profile.save(update_fields=updates)
+        return resolved_currency, (profile.country_code or detected_country or '')
+
+    detected_country = infer_country_code(request)
+    return default_currency_for_country(detected_country), (detected_country or '')
+
+
+def _subscription_catalog(target_currency: str):
+    target = normalize_currency(target_currency) or 'XOF'
     plans = (Profile.PLAN_PLUS, Profile.PLAN_PRO)
     cycles = (SubscriptionPayment.BILLING_MONTHLY, SubscriptionPayment.BILLING_YEARLY)
     data = {}
@@ -65,22 +94,23 @@ def _subscription_catalog():
                 continue
             amount = int(values['amount'])
             duration_days = int(values['duration_days'])
-            currency_iso = values.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
+            base_currency = (values.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')).upper()
+            converted_amount = convert_minor_amount(amount, base_currency, target)
             data[plan][cycle] = {
-                'amount_minor': amount,
-                'amount_display': _display_amount(amount, currency_iso),
-                'currency_iso': currency_iso,
+                'amount_minor': converted_amount,
+                'amount_display': _display_amount(converted_amount, target),
+                'currency_iso': target,
                 'duration_days': duration_days,
                 'source': values.get('source', 'unknown'),
+                'base_amount_minor': amount,
+                'base_currency_iso': base_currency,
             }
     return data
 
 
 def _display_amount(amount_minor: int, currency_iso: str):
-    currency = (currency_iso or '').upper()
-    if currency in DECIMAL_CURRENCIES:
-        return amount_minor / 100
-    return amount_minor
+    decimals = decimals_for_currency(currency_iso)
+    return amount_minor / (10 ** decimals)
 
 class VerifyOTPView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -240,6 +270,7 @@ class UserMeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        _resolve_user_currency(request)
         serializer = UserSerializer(request.user, context={'request': request})
         return Response(serializer.data)
 
@@ -274,10 +305,18 @@ class UserMeView(APIView):
             mutable_data['tips_enabled'] = False
             mutable_data['tips_url'] = ''
 
+        preferred_currency = mutable_data.get('preferred_currency')
+        if preferred_currency is not None:
+            normalized_currency = normalize_currency(preferred_currency)
+            if not normalized_currency:
+                return Response({'preferred_currency': ['Unsupported currency code']}, status=status.HTTP_400_BAD_REQUEST)
+            mutable_data['preferred_currency'] = normalized_currency
+
         # Update profile fields
         profile_serializer = ProfileSerializer(profile, data=mutable_data, partial=True)
         if profile_serializer.is_valid():
             profile_serializer.save()
+            _resolve_user_currency(request)
             return Response(UserSerializer(user, context={'request': request}).data)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -350,9 +389,12 @@ class SubscriptionCheckoutView(APIView):
         catalog = _catalog_entry(plan, billing_cycle)
         if not catalog:
             return Response({'error': 'Unsupported pricing configuration'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        amount = int(catalog['amount'])
+        base_amount = int(catalog['amount'])
         duration_days = int(catalog['duration_days'])
-        currency_iso = catalog.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
+        base_currency_iso = (catalog.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')).upper()
+        target_currency, detected_country = _resolve_user_currency(request)
+        amount = convert_minor_amount(base_amount, base_currency_iso, target_currency)
+        currency_iso = target_currency
 
         callback_url = os.environ.get('FEDAPAY_CALLBACK_URL') or f"{settings.FRONTEND_URL}/premium"
         first_name = request.user.first_name or request.user.profile.display_name or request.user.username
@@ -368,6 +410,10 @@ class SubscriptionCheckoutView(APIView):
                 'plan': plan,
                 'billing_cycle': billing_cycle,
                 'duration_days': duration_days,
+                'country_code': detected_country,
+                'base_amount_minor': base_amount,
+                'base_currency_iso': base_currency_iso,
+                'target_currency_iso': currency_iso,
             },
             'customer': {
                 'email': request.user.email,
@@ -462,6 +508,8 @@ class SubscriptionCheckoutView(APIView):
                     'amount_display': _display_amount(amount, currency_iso),
                     'currency_iso': currency_iso,
                     'duration_days': duration_days,
+                    'base_amount_minor': base_amount,
+                    'base_currency_iso': base_currency_iso,
                 },
             }, status=status.HTTP_201_CREATED)
         except requests.RequestException as exc:
@@ -539,10 +587,8 @@ class SubscriptionConfirmView(APIView):
         if not headers:
             return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         catalog = _catalog_entry(payment.plan, payment.billing_cycle)
-        if not catalog:
-            return Response({'error': 'Unsupported pricing configuration'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        expected_amount = int(catalog['amount'])
-        duration_days = int(catalog['duration_days'])
+        duration_days = int((catalog or {}).get('duration_days') or 30)
+        expected_amount = int(payment.amount)
 
         base = self._fedapay_base_url()
         try:
@@ -592,4 +638,24 @@ class SubscriptionPricingView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        return Response({'plans': _subscription_catalog()})
+        selected_currency, detected_country = _resolve_user_currency(request)
+        return Response({
+            'plans': _subscription_catalog(selected_currency),
+            'currency': {
+                'selected': selected_currency,
+                'country_code': detected_country,
+                'supported': SUPPORTED_CURRENCIES,
+            },
+        })
+
+
+class CurrencyOptionsView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        selected_currency, detected_country = _resolve_user_currency(request)
+        return Response({
+            'supported': SUPPORTED_CURRENCIES,
+            'selected': selected_currency,
+            'country_code': detected_country,
+        })
