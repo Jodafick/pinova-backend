@@ -2,6 +2,7 @@ import logging
 import re
 from functools import lru_cache
 
+from babel.numbers import get_currency_symbol
 from babel.numbers import get_territory_currencies
 from forex_python.converter import CurrencyRates
 
@@ -44,6 +45,19 @@ _currency_rates = CurrencyRates(force_decimal=False)
 def normalize_currency(code):
     value = (code or '').strip().upper()
     return value if value in SUPPORTED_CURRENCIES else None
+
+
+@lru_cache(maxsize=1)
+def currency_choices_with_symbols():
+    choices = []
+    for code in SUPPORTED_CURRENCIES:
+        try:
+            symbol = get_currency_symbol(code)
+        except Exception:
+            symbol = code
+        label = f'{code} ({symbol})' if symbol and symbol != code else code
+        choices.append((code, label))
+    return choices
 
 
 def parse_country_from_accept_language(accept_language):

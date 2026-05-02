@@ -83,12 +83,24 @@ def _resolve_user_currency(request):
 
 def _subscription_catalog(target_currency: str):
     target = normalize_currency(target_currency) or 'XOF'
-    plans = (Profile.PLAN_PLUS, Profile.PLAN_PRO)
+    plans = (Profile.PLAN_FREE, Profile.PLAN_PLUS, Profile.PLAN_PRO)
     cycles = (SubscriptionPayment.BILLING_MONTHLY, SubscriptionPayment.BILLING_YEARLY)
     data = {}
     for plan in plans:
         data[plan] = {}
         for cycle in cycles:
+            if plan == Profile.PLAN_FREE:
+                duration_days = 30 if cycle == SubscriptionPayment.BILLING_MONTHLY else 365
+                data[plan][cycle] = {
+                    'amount_minor': 0,
+                    'amount_display': _display_amount(0, target),
+                    'currency_iso': target,
+                    'duration_days': duration_days,
+                    'source': 'system_free',
+                    'base_amount_minor': 0,
+                    'base_currency_iso': target,
+                }
+                continue
             values = _catalog_entry(plan, cycle)
             if not values:
                 continue
