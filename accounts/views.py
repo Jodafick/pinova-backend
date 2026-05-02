@@ -8,6 +8,7 @@ from dj_rest_auth.registration.views import SocialLoginView
 from django.conf import settings
 import os
 import re
+import time
 import requests
 from django.db import transaction
 import logging
@@ -42,6 +43,82 @@ from .currency_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _fedapay_normalize_transaction_body(body):
+    """FedaPay peut renvoyer la transaction à la racine ou sous data / v1/transaction / transaction."""
+    if not isinstance(body, dict):
+        return {}
+    data = body.get('data')
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        data = data[0]
+    if isinstance(data, dict) and any(k in data for k in ('status', 'id', 'amount', 'approved_at')):
+        return data
+    for key in ('v1/transaction', 'transaction'):
+        nested = body.get(key)
+        if isinstance(nested, dict) and any(k in nested for k in ('status', 'id', 'amount', 'approved_at')):
+            return nested
+    return body
+
+
+def _fedapay_normalized_status(normalized):
+    s = str((normalized or {}).get('status') or '').strip().lower()
+    if s:
+        return s
+    if (normalized or {}).get('approved_at'):
+        return 'approved'
+    return ''
+
+
+def _fedapay_webhook_transaction_id(payload):
+    if not isinstance(payload, dict):
+        return ''
+    tid = str(payload.get('transaction_id') or payload.get('id') or '').strip()
+    if tid:
+        return tid
+    for key in ('data', 'v1/transaction', 'transaction', 'entity'):
+        block = payload.get(key)
+        if isinstance(block, dict):
+            tid = str(block.get('id') or block.get('transaction_id') or '').strip()
+            if tid:
+                return tid
+        elif isinstance(block, list) and block and isinstance(block[0], dict):
+            tid = str(block[0].get('id') or block[0].get('transaction_id') or '').strip()
+            if tid:
+                return tid
+    return ''
+
+
+def _fedapay_webhook_status(payload):
+    """Lit le statut sur le corps webhook plat ou imbriqué."""
+    if not isinstance(payload, dict):
+        return ''
+    direct = str(payload.get('status') or '').strip().lower()
+    if direct:
+        return direct
+    for key in ('data', 'v1/transaction', 'transaction', 'entity'):
+        block = payload.get(key)
+        if isinstance(block, dict):
+            st = _fedapay_normalized_status(block)
+            if st:
+                return st
+        elif isinstance(block, list) and block and isinstance(block[0], dict):
+            st = _fedapay_normalized_status(block[0])
+            if st:
+                return st
+    return ''
+
+
+def _fedapay_confirm_response_summary(raw_body, normalized):
+    """Résumé court pour les logs (évite de logger tout le JSON FedaPay)."""
+    summary = {}
+    if isinstance(raw_body, dict):
+        summary['raw_keys'] = sorted(raw_body.keys())[:30]
+    if isinstance(normalized, dict):
+        for k in ('id', 'status', 'amount', 'approved_at', 'currency', 'reference'):
+            if normalized.get(k) is not None:
+                summary[k] = normalized.get(k)
+    return summary
 
 
 def _enforce_subscription_state(profile):
@@ -797,6 +874,12 @@ class SubscriptionConfirmView(APIView):
             return Response({'error': 'Payment session not found'}, status=status.HTTP_404_NOT_FOUND)
 
         if payment.status == SubscriptionPayment.STATUS_APPROVED:
+            logger.info(
+                'fedapay_confirm: déjà approuvé — user_id=%s transaction_id=%s payment_id=%s',
+                request.user.pk,
+                transaction_id,
+                payment.id,
+            )
             return Response({
                 'status': 'approved',
                 'plan': payment.plan,
@@ -813,16 +896,101 @@ class SubscriptionConfirmView(APIView):
         expected_amount = int(payment.amount)
 
         base = self._fedapay_base_url()
+        logger.info(
+            'fedapay_confirm: début — user_id=%s transaction_id=%s payment_id=%s plan=%s cycle=%s '
+            'callback_status=%s expected_amount=%s api_base=%s',
+            request.user.pk,
+            transaction_id,
+            payment.id,
+            payment.plan,
+            payment.billing_cycle,
+            callback_status or '(vide)',
+            expected_amount,
+            base,
+        )
+        approved_statuses = {'approved', 'success', 'successful', 'completed'}
+        negative_statuses = {'canceled', 'cancelled', 'failed', 'declined', 'rejected'}
+        transitional_statuses = {'', 'pending', 'processing', 'initialized', 'sent'}
         try:
-            resp = requests.get(f'{base}/transactions/{transaction_id}', headers=headers, timeout=20)
-            resp.raise_for_status()
-            tx = resp.json() or {}
-            if callback_status:
-                tx['callback_status'] = callback_status
-            paid_amount = self._extract_amount(tx)
+            tx = {}
+            for attempt in range(4):
+                url = f'{base}/transactions/{transaction_id}'
+                try:
+                    logger.debug(
+                        'fedapay_confirm: GET tentative=%s url=%s transaction_id=%s user_id=%s',
+                        attempt + 1,
+                        url,
+                        transaction_id,
+                        request.user.pk,
+                    )
+                    resp = requests.get(url, headers=headers, timeout=20)
+                    resp.raise_for_status()
+                    tx = resp.json() or {}
+                except requests.RequestException as exc:
+                    resp_obj = getattr(exc, 'response', None)
+                    status_code = getattr(resp_obj, 'status_code', None)
+                    body_preview = ''
+                    if resp_obj is not None:
+                        try:
+                            body_preview = (resp_obj.text or '')[:2000]
+                        except Exception:
+                            body_preview = '(lecture corps impossible)'
+                    logger.warning(
+                        'fedapay_confirm: GET échoué — tentative=%s/%s user_id=%s transaction_id=%s '
+                        'http_status=%s error=%s body_preview=%s',
+                        attempt + 1,
+                        4,
+                        request.user.pk,
+                        transaction_id,
+                        status_code,
+                        exc,
+                        body_preview,
+                    )
+                    if attempt < 3:
+                        time.sleep(0.45)
+                        continue
+                    raise
+                if callback_status:
+                    tx['callback_status'] = callback_status
+                normalized_try = _fedapay_normalize_transaction_body(tx)
+                status_try = _fedapay_normalized_status(normalized_try)
+                logger.info(
+                    'fedapay_confirm: GET OK — tentative=%s user_id=%s transaction_id=%s '
+                    'http_status=%s statut_gateway=%s résumé=%s',
+                    attempt + 1,
+                    request.user.pk,
+                    transaction_id,
+                    resp.status_code,
+                    status_try or '(vide)',
+                    _fedapay_confirm_response_summary(tx, normalized_try),
+                )
+                if status_try in approved_statuses or status_try in negative_statuses:
+                    break
+                if attempt < 3 and status_try in transitional_statuses:
+                    logger.info(
+                        'fedapay_confirm: statut transitoire, nouvelle tentative — '
+                        'tentative=%s statut=%s transaction_id=%s',
+                        attempt + 1,
+                        status_try or '(vide)',
+                        transaction_id,
+                    )
+                    time.sleep(0.45)
+                    continue
+                break
+            normalized = _fedapay_normalize_transaction_body(tx)
+            paid_amount = self._extract_amount(normalized) or self._extract_amount(tx)
             if paid_amount is not None and paid_amount != expected_amount:
+                logger.warning(
+                    'fedapay_confirm: montant incohérent — user_id=%s transaction_id=%s '
+                    'attendu=%s reçu=%s payment_id=%s',
+                    request.user.pk,
+                    transaction_id,
+                    expected_amount,
+                    paid_amount,
+                    payment.id,
+                )
                 payment.status = SubscriptionPayment.STATUS_FAILED
-                payment.fedapay_payload = {'transaction': tx, 'error': 'amount_mismatch'}
+                payment.fedapay_payload = {'transaction': tx, 'normalized': normalized, 'error': 'amount_mismatch'}
                 payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
                 return Response({
                     'status': 'failed',
@@ -830,11 +998,24 @@ class SubscriptionConfirmView(APIView):
                     'expected_amount': expected_amount,
                     'received_amount': paid_amount,
                 }, status=status.HTTP_400_BAD_REQUEST)
-            status_value = (tx.get('status') or '').strip().lower()
+            status_value = _fedapay_normalized_status(normalized)
             raw_status = status_value
-            approved_statuses = {'approved', 'success', 'successful', 'completed'}
-            negative_statuses = {'canceled', 'cancelled', 'failed', 'declined', 'rejected'}
             effective_status = status_value
+            if (
+                effective_status not in approved_statuses
+                and callback_status in approved_statuses
+                and effective_status not in negative_statuses
+            ):
+                logger.info(
+                    'fedapay_confirm: fusion callback — user_id=%s transaction_id=%s '
+                    'statut_gateway=%s callback=%s -> effective=%s',
+                    request.user.pk,
+                    transaction_id,
+                    raw_status or '(vide)',
+                    callback_status,
+                    callback_status,
+                )
+                effective_status = callback_status
 
             if effective_status in approved_statuses:
                 previous_plan = request.user.profile.subscription_plan
@@ -842,6 +1023,7 @@ class SubscriptionConfirmView(APIView):
                 with transaction.atomic():
                     payment.fedapay_payload = {
                         'transaction': tx,
+                        'normalized': normalized,
                         'gateway_status': raw_status,
                         'callback_status': callback_status,
                         'effective_status': effective_status,
@@ -849,6 +1031,18 @@ class SubscriptionConfirmView(APIView):
                     payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
                     self._apply_subscription(request.user.profile, payment, duration_days)
                     self._notify_payment_events(request.user, payment, previous_plan)
+                logger.info(
+                    'fedapay_confirm: succès — user_id=%s transaction_id=%s payment_id=%s '
+                    'statut_gateway=%s statut_effectif=%s montant_paye=%s attendu=%s résumé=%s',
+                    request.user.pk,
+                    transaction_id,
+                    payment.id,
+                    raw_status,
+                    effective_status,
+                    paid_amount,
+                    expected_amount,
+                    _fedapay_confirm_response_summary(tx, normalized),
+                )
                 return Response({
                     'status': 'approved',
                     'plan': payment.plan,
@@ -867,11 +1061,24 @@ class SubscriptionConfirmView(APIView):
                 payment.status = SubscriptionPayment.STATUS_PENDING
             payment.fedapay_payload = {
                 'transaction': tx,
+                'normalized': normalized,
                 'gateway_status': raw_status,
                 'callback_status': callback_status,
                 'effective_status': effective_status,
             }
             payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+            logger.info(
+                'fedapay_confirm: terminé sans approbation — user_id=%s transaction_id=%s payment_id=%s '
+                'statut_paiement=%s statut_gateway=%s statut_effectif=%s callback=%s résumé=%s',
+                request.user.pk,
+                transaction_id,
+                payment.id,
+                payment.status,
+                raw_status,
+                effective_status,
+                callback_status or '(vide)',
+                _fedapay_confirm_response_summary(tx, normalized),
+            )
             return Response({
                 'status': payment.status,
                 'gateway_status': raw_status,
@@ -879,10 +1086,27 @@ class SubscriptionConfirmView(APIView):
                 'effective_status': effective_status,
             })
         except requests.RequestException as exc:
+            resp_obj = getattr(exc, 'response', None)
+            status_code = getattr(resp_obj, 'status_code', None)
+            body_preview = ''
+            if resp_obj is not None:
+                try:
+                    body_preview = (resp_obj.text or '')[:2000]
+                except Exception:
+                    body_preview = '(lecture corps impossible)'
+            logger.error(
+                'fedapay_confirm: échec définitif après tentatives — user_id=%s transaction_id=%s '
+                'http_status=%s error=%s body_preview=%s',
+                request.user.pk,
+                transaction_id,
+                status_code,
+                exc,
+                body_preview,
+                exc_info=True,
+            )
             return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
-class SubscriptionManageView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -933,10 +1157,10 @@ class SubscriptionWebhookView(APIView):
         if expected_secret and provided_secret != expected_secret:
             return Response({'error': 'Invalid webhook token'}, status=status.HTTP_403_FORBIDDEN)
 
-        tx_id = str(request.data.get('transaction_id') or request.data.get('id') or '').strip()
+        tx_id = _fedapay_webhook_transaction_id(dict(request.data))
         if not tx_id:
             return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        status_value = str(request.data.get('status') or '').strip().lower()
+        status_value = _fedapay_webhook_status(dict(request.data))
         payment = SubscriptionPayment.objects.filter(fedapay_transaction_id=tx_id).select_related('user', 'user__profile').first()
         if not payment:
             return Response({'status': 'ignored_unknown_transaction'}, status=status.HTTP_202_ACCEPTED)

@@ -6,6 +6,9 @@ from django.db.models import Count, Q, Case, When, Value, IntegerField
 from django.contrib.auth.models import User
 from asgiref.sync import async_to_sync
 from googletrans import Translator
+from pathlib import Path
+from django.conf import settings
+from PIL import Image
 import hashlib
 import json
 import re
@@ -27,6 +30,38 @@ from .models import (
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, extract_hashtags
 from .translation import translate_text_to, detect_original_language
 from notifications.models import Notification
+
+
+def _pin_download_absolute_url(request, pin, requested_quality):
+    if requested_quality == 'standard':
+        return request.build_absolute_uri(pin.image.url)
+    variants_dir = Path(settings.MEDIA_ROOT) / 'pin_download_variants'
+    variants_dir.mkdir(parents=True, exist_ok=True)
+    max_side = {'hd': 1920, '4k': 3840}[requested_quality]
+    filename = f'{pin.id}_{requested_quality}.jpg'
+    out_path = variants_dir / filename
+    src_path = Path(pin.image.path)
+    needs_write = True
+    try:
+        if out_path.exists():
+            needs_write = out_path.stat().st_mtime < src_path.stat().st_mtime
+    except OSError:
+        needs_write = True
+    if needs_write:
+        with Image.open(src_path) as im:
+            im = im.convert('RGB')
+            w, h = im.size
+            longest = max(w, h)
+            if longest > max_side:
+                scale = max_side / float(longest)
+                nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+                im = im.resize((nw, nh), Image.Resampling.LANCZOS)
+            im.save(out_path, 'JPEG', quality=92, optimize=True)
+    media = settings.MEDIA_URL or '/media/'
+    if not str(media).endswith('/'):
+        media = f'{media}/'
+    rel_url = f'{media}pin_download_variants/{filename}'
+    return request.build_absolute_uri(rel_url)
 
 
 class CommentPagination(PageNumberPagination):
@@ -680,8 +715,12 @@ class PinViewSet(viewsets.ModelViewSet):
                 {'error': f'Quality "{requested_quality}" not allowed for your plan'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        try:
+            download_url = _pin_download_absolute_url(request, pin, requested_quality)
+        except Exception:
+            download_url = request.build_absolute_uri(pin.image.url)
         return Response({
-            'download_url': request.build_absolute_uri(pin.image.url),
+            'download_url': download_url,
             'quality': requested_quality,
         })
 
