@@ -13,6 +13,7 @@ from .models import (
     PrivatePinTag,
     PinProvenanceEvent,
     PinBoard,
+    BoardCollaborationInvite,
 )
 
 from accounts.models import Profile
@@ -26,7 +27,7 @@ from .moderation import (
     enforce_identical_content_flood,
     pin_is_story_flag,
 )
-from .topic_i18n import resolve_topic_language, ensure_topic_translation
+from .topic_i18n import resolve_topic_language, ensure_topic_translation, warm_topic_translations_for_new_topic
 
 
 HASHTAG_RE = re.compile(r'#([A-Za-z0-9_]{2,80})')
@@ -49,6 +50,8 @@ class BoardSerializer(serializers.ModelSerializer):
     pin_count = serializers.SerializerMethodField()
     collaborator_count = serializers.SerializerMethodField()
     preview_images = serializers.SerializerMethodField()
+    is_owner = serializers.SerializerMethodField()
+    owner_username = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
         model = Board
@@ -61,6 +64,8 @@ class BoardSerializer(serializers.ModelSerializer):
             'pin_count',
             'collaborator_count',
             'preview_images',
+            'is_owner',
+            'owner_username',
         ]
 
     def get_preview_images(self, obj):
@@ -94,6 +99,40 @@ class BoardSerializer(serializers.ModelSerializer):
 
     def get_collaborator_count(self, obj):
         return obj.collaborators.count()
+
+    def get_is_owner(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return obj.user_id == request.user.id
+
+
+class BoardCollaborationInviteSerializer(serializers.ModelSerializer):
+    board_name = serializers.CharField(source='board.name', read_only=True)
+    board_id = serializers.IntegerField(source='board.id', read_only=True)
+    owner_username = serializers.CharField(source='board.user.username', read_only=True)
+    invited_by_username = serializers.CharField(source='invited_by.username', read_only=True)
+
+    class Meta:
+        model = BoardCollaborationInvite
+        fields = [
+            'id',
+            'board_id',
+            'board_name',
+            'owner_username',
+            'invited_by_username',
+            'status',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id',
+            'board_id',
+            'board_name',
+            'owner_username',
+            'invited_by_username',
+            'status',
+            'created_at',
+        ]
 
 
 class PinProvenanceEventSerializer(serializers.ModelSerializer):
@@ -488,6 +527,7 @@ class PinSerializer(serializers.ModelSerializer):
         if topic:
             return topic
         topic = Topic.objects.create(name=name)
+        warm_topic_translations_for_new_topic(name)
         return topic
 
     def _normalize_string_list(self, raw):
@@ -593,12 +633,11 @@ class PinSerializer(serializers.ModelSerializer):
 
 class BoardDetailSerializer(BoardSerializer):
     pins = serializers.SerializerMethodField()
-    owner_username = serializers.CharField(source='user.username', read_only=True)
     viewer_can_manage = serializers.SerializerMethodField()
     share_token = serializers.SerializerMethodField()
 
     class Meta(BoardSerializer.Meta):
-        fields = list(BoardSerializer.Meta.fields) + ['pins', 'owner_username', 'viewer_can_manage', 'share_token']
+        fields = list(BoardSerializer.Meta.fields) + ['pins', 'viewer_can_manage', 'share_token']
 
     def get_viewer_can_manage(self, obj):
         request = self.context.get('request')

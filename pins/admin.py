@@ -1,5 +1,18 @@
 from django.contrib import admin
-from .models import Pin, PinVariant, Save, Like, Comment, Board, Hashtag, PrivatePinTag, PinProvenanceEvent, Topic
+from .models import (
+    Pin,
+    PinVariant,
+    Save,
+    Like,
+    Comment,
+    Board,
+    Hashtag,
+    PrivatePinTag,
+    PinProvenanceEvent,
+    Topic,
+    LegalDocument,
+    BoardCollaborationInvite,
+)
 
 
 class PinVariantInline(admin.TabularInline):
@@ -65,6 +78,17 @@ class PrivatePinTagAdmin(admin.ModelAdmin):
     list_display = ('user', 'pin', 'tag', 'created_at')
     list_filter = ('user',)
     search_fields = ('tag',)
+
+
+@admin.register(LegalDocument)
+class LegalDocumentAdmin(admin.ModelAdmin):
+    list_display = ('slug', 'updated_at')
+
+
+@admin.register(BoardCollaborationInvite)
+class BoardCollaborationInviteAdmin(admin.ModelAdmin):
+    list_display = ('id', 'board', 'invitee', 'status', 'created_at')
+    list_filter = ('status',)
 
 
 @admin.register(PinProvenanceEvent)

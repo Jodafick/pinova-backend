@@ -12,6 +12,7 @@ class Notification(models.Model):
         ('plan_change', 'Plan Change'),
         ('system', 'System'),
         ('digest', 'Digest'),
+        ('board_invite', 'Board invite'),
     )
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_notifications', null=True, blank=True)

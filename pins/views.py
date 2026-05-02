@@ -1,5 +1,6 @@
-from rest_framework import viewsets, status, permissions, serializers
-from rest_framework.decorators import action
+from rest_framework import mixins, viewsets, status, permissions, serializers
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -30,8 +31,18 @@ from .models import (
     SearchInteraction,
     PinBoard,
     ContentReport,
+    BoardCollaborationInvite,
+    LegalDocument,
 )
-from .serializers import PinSerializer, CommentSerializer, BoardSerializer, BoardDetailSerializer, extract_hashtags
+from .legal_defaults import default_body
+from .serializers import (
+    PinSerializer,
+    CommentSerializer,
+    BoardSerializer,
+    BoardDetailSerializer,
+    BoardCollaborationInviteSerializer,
+    extract_hashtags,
+)
 from .comment_media import compress_comment_media_upload
 from .visibility import pin_is_visible_for_request, sensitive_pins_query_filter, viewer_is_verified_adult
 from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
@@ -1306,13 +1317,55 @@ class BoardViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            board.collaborators.add(target_user)
-            return Response({'status': 'added', 'collaborator_count': board.collaborators.count()})
+            if board.collaborators.filter(id=target_user.id).exists():
+                return Response({'error': 'User is already a collaborator'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if BoardCollaborationInvite.objects.filter(
+                board=board,
+                invitee=target_user,
+                status=BoardCollaborationInvite.STATUS_PENDING,
+            ).exists():
+                return Response({'error': 'An invitation is already pending for this user'}, status=status.HTTP_400_BAD_REQUEST)
+
+            invite, created = BoardCollaborationInvite.objects.get_or_create(
+                board=board,
+                invitee=target_user,
+                defaults={
+                    'invited_by': request.user,
+                    'status': BoardCollaborationInvite.STATUS_PENDING,
+                },
+            )
+            if not created:
+                invite.invited_by = request.user
+                invite.status = BoardCollaborationInvite.STATUS_PENDING
+                invite.responded_at = None
+                invite.save(update_fields=['invited_by', 'status', 'responded_at'])
+
+            Notification.objects.create(
+                recipient=target_user,
+                sender=request.user,
+                notification_type='board_invite',
+                title='Invitation tableau',
+                message=f"{request.user.username} vous invite à collaborer sur « {board.name} ».",
+                action_url='/profile',
+                metadata={'invite_id': invite.id, 'board_id': board.id},
+            )
+            return Response({'status': 'invited', 'invite_id': invite.id, 'collaborator_count': board.collaborators.count()})
 
         username = (request.data.get('username') or '').strip()
         if not username:
             return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
-        board.collaborators.filter(username=username).delete()
+        try:
+            target_user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not board.collaborators.filter(id=target_user.id).exists():
+            return Response({'error': 'Not a collaborator'}, status=status.HTTP_400_BAD_REQUEST)
+        board.collaborators.remove(target_user)
+        BoardCollaborationInvite.objects.filter(board=board, invitee=target_user).update(
+            status=BoardCollaborationInvite.STATUS_DECLINED,
+            responded_at=timezone.now(),
+        )
         return Response({'status': 'removed', 'collaborator_count': board.collaborators.count()})
 
     @action(detail=False, methods=['get'], url_path='suggestions')
@@ -1418,3 +1471,102 @@ class BoardViewSet(viewsets.ModelViewSet):
             'ads': {'third_party_tracking': False, 'model': 'freemium_subscription'},
             'creator_credit': {'provenance_chain': False, 'tamper_resistant_hash': False},
         })
+
+
+class BoardCollaborationInviteViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Invitations entrantes pour collaborer sur un board."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = BoardCollaborationInviteSerializer
+
+    def get_queryset(self):
+        return BoardCollaborationInvite.objects.filter(
+            invitee=self.request.user,
+            status=BoardCollaborationInvite.STATUS_PENDING,
+        ).select_related('board', 'board__user', 'invited_by')
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        invite = (
+            BoardCollaborationInvite.objects.select_related('board', 'board__user', 'board__user__profile')
+            .filter(
+                pk=pk,
+                invitee=request.user,
+                status=BoardCollaborationInvite.STATUS_PENDING,
+            )
+            .first()
+        )
+        if not invite:
+            return Response({'error': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+        owner_profile = invite.board.user.profile
+        if owner_profile.subscription_plan == owner_profile.PLAN_FREE:
+            return Response(
+                {'error': 'Board owner no longer has a collaborative plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if owner_profile.subscription_plan == owner_profile.PLAN_PLUS and invite.board.collaborators.count() >= 10:
+            return Response(
+                {'error': 'Collaborators limit reached on this board'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        invite.board.collaborators.add(request.user)
+        invite.status = BoardCollaborationInvite.STATUS_ACCEPTED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=['status', 'responded_at'])
+        Notification.objects.filter(
+            recipient=request.user,
+            notification_type='board_invite',
+        ).filter(metadata__invite_id=invite.id).update(is_read=True)
+        return Response({'status': 'accepted', 'board_id': invite.board_id})
+
+    @action(detail=True, methods=['post'])
+    def decline(self, request, pk=None):
+        invite = BoardCollaborationInvite.objects.filter(
+            pk=pk,
+            invitee=request.user,
+            status=BoardCollaborationInvite.STATUS_PENDING,
+        ).first()
+        if not invite:
+            return Response({'error': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+        invite.status = BoardCollaborationInvite.STATUS_DECLINED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=['status', 'responded_at'])
+        Notification.objects.filter(
+            recipient=request.user,
+            notification_type='board_invite',
+        ).filter(metadata__invite_id=invite.id).update(is_read=True)
+        return Response({'status': 'declined'})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def legal_document_detail(request, slug):
+    if slug not in ('privacy', 'terms'):
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    lang = (request.query_params.get('lang') or 'fr').strip().lower()[:2]
+    if lang not in ('fr', 'en'):
+        lang = 'fr'
+    titles = {
+        ('privacy', 'fr'): 'Politique de confidentialité',
+        ('privacy', 'en'): 'Privacy policy',
+        ('terms', 'fr'): "Conditions générales d'utilisation",
+        ('terms', 'en'): 'Terms of service',
+    }
+    title = titles.get((slug, lang), titles[(slug, 'fr')])
+    body = default_body(slug, lang)
+    doc = LegalDocument.objects.filter(slug=slug).first()
+    updated_at = None
+    if doc:
+        updated_at = doc.updated_at
+        raw_override = (doc.body_en if lang == 'en' else doc.body_fr) or ''
+        if raw_override.strip():
+            body = raw_override
+    return Response(
+        {
+            'slug': slug,
+            'lang': lang,
+            'title': title,
+            'body': body,
+            'updated_at': updated_at.isoformat() if updated_at else None,
+        }
+    )

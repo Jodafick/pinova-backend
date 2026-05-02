@@ -6,6 +6,8 @@ TopicTranslation.translations par code langue (fr, en, es, …).
 """
 from __future__ import annotations
 
+import asyncio
+
 from googletrans import Translator
 from asgiref.sync import async_to_sync
 
@@ -74,3 +76,43 @@ def ensure_topic_translation(
         display = translations.get(lang, canonical_name)
 
     return display, translations
+
+
+async def _warm_topic_translations_async(canonical_name: str) -> None:
+    """À l’appui d’un nouveau Topic : préremplit toutes les langues supportées."""
+    if not canonical_name or not str(canonical_name).strip():
+        return
+
+    record, _ = TopicTranslation.objects.get_or_create(
+        topic=canonical_name,
+        defaults={'translations': {'fr': canonical_name}},
+    )
+    translations = dict(record.translations or {})
+    translations.setdefault('fr', canonical_name)
+
+    t_inst = Translator()
+
+    async def ensure_lang(lang_code: str) -> None:
+        if lang_code == 'fr':
+            return
+        if lang_code not in SUPPORTED_TOPIC_LANGS:
+            return
+        if translations.get(lang_code):
+            return
+        try:
+            translations[lang_code] = await translate_text_to(t_inst, canonical_name, lang_code)
+        except (RuntimeError, Exception):
+            pass
+
+    await asyncio.gather(*[ensure_lang(lc) for lc in sorted(SUPPORTED_TOPIC_LANGS)])
+
+    record.translations = translations
+    record.save(update_fields=['translations', 'updated_at'])
+
+
+def warm_topic_translations_for_new_topic(canonical_name: str) -> None:
+    """Version synchrone pour Serializer / signaux Django."""
+    try:
+        async_to_sync(_warm_topic_translations_async)(canonical_name)
+    except RuntimeError:
+        pass

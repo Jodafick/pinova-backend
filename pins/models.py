@@ -333,3 +333,52 @@ class SearchInteraction(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class LegalDocument(models.Model):
+    """Contenu juridique surchargeable (vide = texte par défaut du code)."""
+
+    SLUG_PRIVACY = 'privacy'
+    SLUG_TERMS = 'terms'
+    SLUG_CHOICES = [
+        (SLUG_PRIVACY, 'Politique de confidentialité'),
+        (SLUG_TERMS, "Conditions d'utilisation"),
+    ]
+
+    slug = models.CharField(max_length=40, choices=SLUG_CHOICES, unique=True)
+    body_fr = models.TextField(blank=True, default='')
+    body_en = models.TextField(blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['slug']
+
+    def __str__(self):
+        return self.slug
+
+
+class BoardCollaborationInvite(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_DECLINED = 'declined'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_DECLINED, 'Declined'),
+    ]
+
+    board = models.ForeignKey(Board, on_delete=models.CASCADE, related_name='collaboration_invites')
+    invitee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='board_collab_invites_received')
+    invited_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='board_collab_invites_sent')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['board', 'invitee'], name='unique_board_collab_invitee'),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.board_id} -> {self.invitee_id} ({self.status})'
