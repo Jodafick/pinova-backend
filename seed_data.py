@@ -15,6 +15,39 @@ from pins.models import Pin
 from accounts.models import Profile
 from django.conf import settings
 
+
+def ensure_superuser():
+    username = os.environ.get('SEED_SUPERUSER_USERNAME', 'admin')
+    email = os.environ.get('SEED_SUPERUSER_EMAIL', 'admin@example.com')
+    password = os.environ.get('SEED_SUPERUSER_PASSWORD', 'admin1234')
+
+    superuser, created = User.objects.get_or_create(
+        username=username,
+        defaults={'email': email},
+    )
+    if created:
+        superuser.email = email
+        superuser.is_staff = True
+        superuser.is_superuser = True
+        superuser.set_password(password)
+        superuser.save()
+        print(f"Superuser '{username}' créé.")
+        return superuser
+
+    if superuser.email != email:
+        superuser.email = email
+    if not superuser.is_staff:
+        superuser.is_staff = True
+    if not superuser.is_superuser:
+        superuser.is_superuser = True
+
+    # Toujours réaligner le mot de passe défini pour le seed.
+    superuser.set_password(password)
+    superuser.save()
+    print(f"Superuser '{username}' mis à jour.")
+    return superuser
+
+
 def download_image(url):
     response = requests.get(url)
     if response.status_code == 200:
@@ -53,8 +86,8 @@ def seed_data():
     usernames = ['Clara', 'Leo', 'Aya', 'Max', 'Zoe', 'Nina', 'Emma', 'Karim', 'Sofia', 'Lucas']
     users = []
     
-    # Créer l'admin si pas là
-    admin, _ = User.objects.get_or_create(username='admin')
+    # Créer/mette à jour le superuser admin
+    admin = ensure_superuser()
     users.append(admin)
 
     print("Création des utilisateurs...")

@@ -80,6 +80,31 @@ class EmailOTP(models.Model):
         return f"OTP for {self.user.email}: {self.otp_code}"
 
 
+class SubscriptionPricing(models.Model):
+    BILLING_MONTHLY = 'monthly'
+    BILLING_YEARLY = 'yearly'
+    BILLING_CHOICES = [
+        (BILLING_MONTHLY, 'Monthly'),
+        (BILLING_YEARLY, 'Yearly'),
+    ]
+
+    plan = models.CharField(max_length=20, choices=Profile.PLAN_CHOICES)
+    billing_cycle = models.CharField(max_length=20, choices=BILLING_CHOICES, default=BILLING_MONTHLY)
+    amount = models.PositiveIntegerField()
+    duration_days = models.PositiveIntegerField(default=30)
+    currency_iso = models.CharField(max_length=10, default='XOF')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('plan', 'billing_cycle')
+        ordering = ['plan', 'billing_cycle']
+
+    def __str__(self):
+        return f"{self.plan}:{self.billing_cycle}:{self.amount} {self.currency_iso}"
+
+
 class SubscriptionPayment(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_APPROVED = 'approved'

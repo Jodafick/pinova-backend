@@ -28,11 +28,59 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
-from .models import Profile, EmailOTP, SubscriptionPayment
+from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
 
 logger = logging.getLogger(__name__)
+
+DECIMAL_CURRENCIES = {'EUR', 'USD', 'GBP'}
+
+
+def _catalog_entry(plan: str, billing_cycle: str):
+    row = SubscriptionPricing.objects.filter(
+        plan=plan,
+        billing_cycle=billing_cycle,
+        is_active=True,
+    ).first()
+    if row:
+        return {
+            'amount': int(row.amount),
+            'duration_days': int(row.duration_days),
+            'currency_iso': row.currency_iso or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF'),
+            'source': 'backoffice',
+        }
+    return None
+
+
+def _subscription_catalog():
+    plans = (Profile.PLAN_PLUS, Profile.PLAN_PRO)
+    cycles = (SubscriptionPayment.BILLING_MONTHLY, SubscriptionPayment.BILLING_YEARLY)
+    data = {}
+    for plan in plans:
+        data[plan] = {}
+        for cycle in cycles:
+            values = _catalog_entry(plan, cycle)
+            if not values:
+                continue
+            amount = int(values['amount'])
+            duration_days = int(values['duration_days'])
+            currency_iso = values.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
+            data[plan][cycle] = {
+                'amount_minor': amount,
+                'amount_display': _display_amount(amount, currency_iso),
+                'currency_iso': currency_iso,
+                'duration_days': duration_days,
+                'source': values.get('source', 'unknown'),
+            }
+    return data
+
+
+def _display_amount(amount_minor: int, currency_iso: str):
+    currency = (currency_iso or '').upper()
+    if currency in DECIMAL_CURRENCIES:
+        return amount_minor / 100
+    return amount_minor
 
 class VerifyOTPView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -237,11 +285,6 @@ class UserMeView(APIView):
 class SubscriptionCheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    PRICE_MAP_XOF = {
-        'plus': {'monthly': 499, 'yearly': 4900},
-        'pro': {'monthly': 1299, 'yearly': 12900},
-    }
-
     def _fedapay_base_url(self):
         env = os.environ.get('FEDAPAY_ENV', 'sandbox').strip().lower()
         if env == 'live':
@@ -256,9 +299,6 @@ class SubscriptionCheckoutView(APIView):
             'Authorization': f'Bearer {secret_key}',
             'Content-Type': 'application/json',
         }
-
-    def _get_amount(self, plan, billing_cycle):
-        return self.PRICE_MAP_XOF.get(plan, {}).get(billing_cycle)
 
     def _should_expose_debug(self):
         return settings.DEBUG or os.environ.get('FEDAPAY_VERBOSE_ERRORS', 'False').lower() == 'true'
@@ -307,9 +347,12 @@ class SubscriptionCheckoutView(APIView):
         if not headers:
             return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        amount = self._get_amount(plan, billing_cycle)
-        if not amount:
+        catalog = _catalog_entry(plan, billing_cycle)
+        if not catalog:
             return Response({'error': 'Unsupported pricing configuration'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        amount = int(catalog['amount'])
+        duration_days = int(catalog['duration_days'])
+        currency_iso = catalog.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
 
         callback_url = os.environ.get('FEDAPAY_CALLBACK_URL') or f"{settings.FRONTEND_URL}/premium"
         first_name = request.user.first_name or request.user.profile.display_name or request.user.username
@@ -318,12 +361,13 @@ class SubscriptionCheckoutView(APIView):
         payload = {
             'description': f"Pinova {plan.title()} ({billing_cycle})",
             'amount': amount,
-            'currency': {'iso': os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')},
+            'currency': {'iso': currency_iso},
             'callback_url': callback_url,
             'custom_metadata': {
                 'user_id': request.user.id,
                 'plan': plan,
                 'billing_cycle': billing_cycle,
+                'duration_days': duration_days,
             },
             'customer': {
                 'email': request.user.email,
@@ -397,7 +441,7 @@ class SubscriptionCheckoutView(APIView):
                     'plan': plan,
                     'billing_cycle': billing_cycle,
                     'amount': amount,
-                    'currency_iso': os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF'),
+                    'currency_iso': currency_iso,
                     'fedapay_reference': str(transaction_data.get('reference') or ''),
                     'status': SubscriptionPayment.STATUS_PENDING,
                     'checkout_url': checkout_url,
@@ -411,6 +455,14 @@ class SubscriptionCheckoutView(APIView):
             return Response({
                 'checkout_url': checkout_url,
                 'transaction_id': str(transaction_id),
+                'pricing': {
+                    'plan': plan,
+                    'billing_cycle': billing_cycle,
+                    'amount_minor': amount,
+                    'amount_display': _display_amount(amount, currency_iso),
+                    'currency_iso': currency_iso,
+                    'duration_days': duration_days,
+                },
             }, status=status.HTTP_201_CREATED)
         except requests.RequestException as exc:
             logger.exception('FedaPay checkout request exception')
@@ -443,11 +495,26 @@ class SubscriptionConfirmView(APIView):
             'Content-Type': 'application/json',
         }
 
-    def _apply_subscription(self, profile, payment):
+    def _extract_amount(self, tx_payload):
+        if not isinstance(tx_payload, dict):
+            return None
+        direct = tx_payload.get('amount')
+        if isinstance(direct, (int, float)):
+            return int(direct)
+        for key in ('transaction', 'data', 'v1/transaction'):
+            nested = tx_payload.get(key)
+            if isinstance(nested, dict):
+                value = nested.get('amount')
+                if isinstance(value, (int, float)):
+                    return int(value)
+        return None
+
+    def _apply_subscription(self, profile, payment, duration_days):
         profile.subscription_plan = payment.plan
-        now = timezone.now()
-        duration_days = 365 if payment.billing_cycle == SubscriptionPayment.BILLING_YEARLY else 30
-        profile.subscription_renewal_at = now + timedelta(days=duration_days)
+        base_start = timezone.now()
+        if profile.subscription_renewal_at and profile.subscription_renewal_at > base_start:
+            base_start = profile.subscription_renewal_at
+        profile.subscription_renewal_at = base_start + timedelta(days=duration_days)
         if payment.plan == Profile.PLAN_FREE:
             profile.translation_quota_monthly = 5
         else:
@@ -471,12 +538,28 @@ class SubscriptionConfirmView(APIView):
         headers = self._fedapay_headers()
         if not headers:
             return Response({'error': 'FedaPay is not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        catalog = _catalog_entry(payment.plan, payment.billing_cycle)
+        if not catalog:
+            return Response({'error': 'Unsupported pricing configuration'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        expected_amount = int(catalog['amount'])
+        duration_days = int(catalog['duration_days'])
 
         base = self._fedapay_base_url()
         try:
             resp = requests.get(f'{base}/transactions/{transaction_id}', headers=headers, timeout=20)
             resp.raise_for_status()
             tx = resp.json() or {}
+            paid_amount = self._extract_amount(tx)
+            if paid_amount is not None and paid_amount != expected_amount:
+                payment.status = SubscriptionPayment.STATUS_FAILED
+                payment.fedapay_payload = {'transaction': tx, 'error': 'amount_mismatch'}
+                payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+                return Response({
+                    'status': 'failed',
+                    'error': 'Payment amount mismatch',
+                    'expected_amount': expected_amount,
+                    'received_amount': paid_amount,
+                }, status=status.HTTP_400_BAD_REQUEST)
             status_value = (tx.get('status') or '').strip().lower()
             raw_status = status_value
             if status_value in {'approved', 'success', 'successful', 'completed'}:
@@ -484,8 +567,14 @@ class SubscriptionConfirmView(APIView):
                 with transaction.atomic():
                     payment.fedapay_payload = {'transaction': tx}
                     payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
-                    self._apply_subscription(request.user.profile, payment)
-                return Response({'status': 'approved', 'plan': payment.plan})
+                    self._apply_subscription(request.user.profile, payment, duration_days)
+                return Response({
+                    'status': 'approved',
+                    'plan': payment.plan,
+                    'billing_cycle': payment.billing_cycle,
+                    'duration_days': duration_days,
+                    'renewal_at': request.user.profile.subscription_renewal_at,
+                })
             if status_value in {'canceled', 'cancelled'}:
                 payment.status = SubscriptionPayment.STATUS_CANCELED
             elif status_value in {'failed', 'declined', 'rejected'}:
@@ -497,3 +586,10 @@ class SubscriptionConfirmView(APIView):
             return Response({'status': payment.status, 'gateway_status': raw_status})
         except requests.RequestException as exc:
             return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class SubscriptionPricingView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({'plans': _subscription_catalog()})
