@@ -11,6 +11,7 @@ import json
 import re
 from .models import (
     Pin,
+    Topic,
     Comment,
     Like,
     Save,
@@ -60,12 +61,21 @@ class PinViewSet(viewsets.ModelViewSet):
         items = list(queryset)
         items.sort(
             key=lambda pin: (
-                topic_scores.get(pin.topic, 0),
+                topic_scores.get(self._pin_topic_name(pin), 0),
                 pin.created_at.timestamp(),
             ),
             reverse=True,
         )
         return items
+
+    def _pin_topic_name(self, pin):
+        return pin.topic.name if getattr(pin, 'topic_id', None) and pin.topic else ''
+
+    def _apply_topic_filter(self, queryset, topic_filter):
+        topic_filter = (topic_filter or '').strip()
+        if not topic_filter:
+            return queryset
+        return queryset.filter(Q(topic__slug=topic_filter) | Q(topic__name=topic_filter))
 
     def _build_topic_scores(self, user):
         scores = {}
@@ -73,29 +83,29 @@ class PinViewSet(viewsets.ModelViewSet):
             return scores
         recent_likes = (
             Like.objects.filter(user=user)
-            .select_related('pin')
+            .select_related('pin', 'pin__topic')
             .order_by('-created_at')[:200]
         )
         recent_saves = (
             Save.objects.filter(user=user)
-            .select_related('pin')
+            .select_related('pin', 'pin__topic')
             .order_by('-created_at')[:200]
         )
         recent_views = (
             PinViewEvent.objects.filter(user=user)
-            .select_related('pin')
+            .select_related('pin', 'pin__topic')
             .order_by('-created_at')[:300]
         )
         for item in recent_likes:
-            topic = item.pin.topic
+            topic = self._pin_topic_name(item.pin)
             if topic:
                 scores[topic] = scores.get(topic, 0) + 4
         for item in recent_saves:
-            topic = item.pin.topic
+            topic = self._pin_topic_name(item.pin)
             if topic:
                 scores[topic] = scores.get(topic, 0) + 4
         for item in recent_views:
-            topic = item.pin.topic
+            topic = self._pin_topic_name(item.pin)
             if topic:
                 scores[topic] = scores.get(topic, 0) + 1
         recent_queries = SearchInteraction.objects.filter(user=user).order_by('-created_at')[:100]
@@ -103,20 +113,19 @@ class PinViewSet(viewsets.ModelViewSet):
             q = (query.query or '').strip()
             if not q:
                 continue
-            for topic in Pin.objects.filter(topic__icontains=q).values_list('topic', flat=True).distinct()[:20]:
+            for topic in Pin.objects.filter(topic__name__icontains=q).values_list('topic__name', flat=True).distinct()[:20]:
                 scores[topic] = scores.get(topic, 0) + 2
         return scores
 
     def get_queryset(self):
         queryset = (
-            Pin.objects.select_related('author', 'author__profile')
+            Pin.objects.select_related('author', 'author__profile', 'topic')
             .prefetch_related('hashtags')
             .all()
             .order_by('-created_at')
         )
         topic = self.request.query_params.get('topic')
-        if topic:
-            queryset = queryset.filter(topic=topic)
+        queryset = self._apply_topic_filter(queryset, topic)
         if not self.request.user.is_authenticated:
             return queryset.filter(visibility=Pin.VISIBILITY_PUBLIC)
         my_profile = self.request.user.profile
@@ -457,8 +466,7 @@ class PinViewSet(viewsets.ModelViewSet):
             following_profiles = request.user.profile.following.all()
             queryset = queryset.exclude(author__profile__in=following_profiles).exclude(author=request.user)
         topic = (request.query_params.get('topic') or '').strip()
-        if topic:
-            queryset = queryset.filter(topic=topic)
+        queryset = self._apply_topic_filter(queryset, topic)
         page = self.paginate_queryset(queryset.order_by('-created_at'))
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -481,8 +489,8 @@ class PinViewSet(viewsets.ModelViewSet):
             .exclude(author=request.user)
         )
         if topic:
-            following_queryset = following_queryset.filter(topic=topic)
-            discover_queryset = discover_queryset.filter(topic=topic)
+            following_queryset = self._apply_topic_filter(following_queryset, topic)
+            discover_queryset = self._apply_topic_filter(discover_queryset, topic)
 
         topic_scores = self._build_topic_scores(request.user)
         following_items = list(following_queryset.order_by('-created_at'))
@@ -517,13 +525,20 @@ class PinViewSet(viewsets.ModelViewSet):
 
         base_qs = (
             Pin.objects.exclude(topic__isnull=True)
-            .exclude(topic__exact='')
             .exclude(visibility=Pin.VISIBILITY_PRIVATE)
         )
         topics_qs = (
-            base_qs.values('topic')
-            .annotate(pin_count=Count('id'))
-            .order_by('-pin_count', 'topic')
+            Topic.objects.filter(is_active=True)
+            .annotate(
+                pin_count=Count(
+                    'pins',
+                    filter=~Q(pins__visibility=Pin.VISIBILITY_PRIVATE),
+                    distinct=True,
+                )
+            )
+            .filter(pin_count__gt=0)
+            .order_by('-pin_count', 'name')
+            .values('id', 'name', 'slug', 'icon', 'color', 'pin_count')
         )
 
         # Suggestions personnalisées pour l'utilisateur connecté.
@@ -534,20 +549,20 @@ class PinViewSet(viewsets.ModelViewSet):
                     | Q(saves__user=request.user)
                     | Q(comments__user=request.user)
                 )
-                .values('topic')
+                .values('topic_id')
                 .annotate(interactions=Count('id'))
-                .order_by('-interactions', 'topic')
+                .order_by('-interactions', 'topic_id')
             )
-            suggested_names = [row['topic'] for row in suggested_topics[: (200 if search_query else limit)]]
-            if suggested_names:
+            suggested_ids = [row['topic_id'] for row in suggested_topics[: (200 if search_query else limit)] if row['topic_id']]
+            if suggested_ids:
                 # Garder les suggestions d'abord, puis compléter par les plus populaires.
                 popular_rows = list(topics_qs)
-                topic_map = {row['topic']: row['pin_count'] for row in popular_rows}
-                merged = [{'topic': name, 'pin_count': topic_map.get(name, 0)} for name in suggested_names]
+                topic_map = {row['id']: row for row in popular_rows}
+                merged = [topic_map[topic_id] for topic_id in suggested_ids if topic_id in topic_map]
                 for row in popular_rows:
                     if len(merged) >= (200 if search_query else limit):
                         break
-                    if row['topic'] not in suggested_names:
+                    if row['id'] not in suggested_ids:
                         merged.append(row)
                 topics_qs = merged[: (200 if search_query else limit)]
             else:
@@ -562,7 +577,7 @@ class PinViewSet(viewsets.ModelViewSet):
         translator = Translator() if target_lang and target_lang not in ('fr', 'auto') else None
         supported_langs = ['fr', 'en', 'es', 'de', 'it', 'pt', 'ar', 'ja', 'zh', 'fon']
         for item in topics_qs:
-            topic_name = item['topic']
+            topic_name = item['name']
             record, _ = TopicTranslation.objects.get_or_create(
                 topic=topic_name,
                 defaults={'translations': {'fr': topic_name}},
@@ -591,6 +606,9 @@ class PinViewSet(viewsets.ModelViewSet):
             items.append({
                 'name': display_name,
                 'originalName': topic_name,
+                'slug': item['slug'],
+                'icon': item['icon'],
+                'color': item['color'],
                 'pinCount': item['pin_count'],
                 'translations': translations,
             })

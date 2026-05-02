@@ -11,9 +11,44 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pinova_backend.settings')
 django.setup()
 
 from django.contrib.auth.models import User
-from pins.models import Pin
+from pins.models import Pin, Topic
 from accounts.models import Profile
 from django.conf import settings
+
+
+TOPIC_ICONS = [
+    'home',
+    'restaurant',
+    'flight',
+    'palette',
+    'brush',
+    'park',
+    'checkroom',
+    'self_improvement',
+    'photo_camera',
+    'construction',
+    'computer',
+    'sports_esports',
+    'business_center',
+    'payments',
+    'school',
+    'rocket_launch',
+]
+
+TOPIC_COLORS = [
+    '#F59E0B',
+    '#10B981',
+    '#3B82F6',
+    '#8B5CF6',
+    '#EC4899',
+    '#84CC16',
+    '#06B6D4',
+    '#EF4444',
+    '#6366F1',
+    '#14B8A6',
+    '#F97316',
+    '#22C55E',
+]
 
 
 def ensure_superuser():
@@ -105,7 +140,7 @@ def seed_data():
             profile.save()
         users.append(user)
 
-    topics = [
+    topic_names = [
         'Maison et déco', 'Recettes faciles', 'Voyages', 'Inspiration design', 'Art & illustration',
         'Plantes', 'Mode', 'Bien-être', 'Photographie', 'DIY & Crafts',
         'Technologie', 'Gaming setup', 'Business', 'Finance perso', 'Éducation',
@@ -117,14 +152,36 @@ def seed_data():
         'Science', 'Astronomie', 'Automobile', 'Moto', 'Cyclisme',
         'Immobilier', 'Minimalisme', 'Rénovation', 'Jardinage', 'Écologie'
     ]
+    topics_catalog = [
+        {
+            'name': name,
+            'icon': TOPIC_ICONS[index % len(TOPIC_ICONS)],
+            'color': TOPIC_COLORS[index % len(TOPIC_COLORS)],
+        }
+        for index, name in enumerate(topic_names)
+    ]
+    topics_by_name = {}
+    for topic_data in topics_catalog:
+        topic_obj, _ = Topic.objects.get_or_create(name=topic_data['name'])
+        updates = []
+        if topic_obj.icon != topic_data['icon']:
+            topic_obj.icon = topic_data['icon']
+            updates.append('icon')
+        if topic_obj.color != topic_data['color']:
+            topic_obj.color = topic_data['color']
+            updates.append('color')
+        if updates:
+            topic_obj.save(update_fields=updates)
+        topics_by_name[topic_data['name']] = topic_obj
     
     image_queries = ['architecture', 'food', 'japan', 'workspace', 'tattoo', 'plants', 'baking', 'streetwear', 'yoga', 'colors', 'paris', 'macrame', 'nature', 'design', 'art', 'decor', 'kitchen', 'beach', 'mountain', 'city']
     
     print("Téléchargement des images et création de 500 Pins supplémentaires...")
     for i in range(100, 600):
         query = random.choice(image_queries)
-        topic = random.choice(topics)
-        
+        topic = random.choice(topic_names)
+        topic_obj = topics_by_name[topic]
+
         img_url = f"https://picsum.photos/seed/{i}_{query}/600/900"
         
         temp_img = download_image(img_url)
@@ -134,7 +191,7 @@ def seed_data():
                 title=f"Inspiration {query.capitalize()} {i+1}",
                 description=f"Une superbe découverte sur le thème {query} pour votre catégorie {topic}.",
                 author=user,
-                topic=topic
+                topic=topic_obj
             )
             pin.image.save(f"{query}_{i}.jpg", File(temp_img))
             print(f"[{i+1}/600] Pin '{pin.title}' ({topic}) créé par {user.username}")

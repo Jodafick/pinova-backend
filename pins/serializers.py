@@ -3,6 +3,7 @@ import re
 from django.db.models import Count, Case, When, Value, IntegerField
 from .models import (
     Pin,
+    Topic,
     Comment,
     Like,
     Save,
@@ -156,6 +157,8 @@ class CommentSerializer(serializers.ModelSerializer):
 
 class PinSerializer(serializers.ModelSerializer):
     author_profile = ProfileSerializer(source='author.profile', read_only=True)
+    topic = serializers.CharField(required=False, allow_blank=True)
+    topic_meta = serializers.SerializerMethodField()
     boards = BoardSerializer(many=True, read_only=True)
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
@@ -192,6 +195,7 @@ class PinSerializer(serializers.ModelSerializer):
             'author_profile',
             'boards',
             'topic',
+            'topic_meta',
             'visibility',
             'certified_credit',
             'provenance_root_hash',
@@ -238,6 +242,29 @@ class PinSerializer(serializers.ModelSerializer):
             .values_list('tag', flat=True)
             .order_by('tag')
         )
+
+    def get_topic_meta(self, obj):
+        if not obj.topic:
+            return None
+        return {
+            'name': obj.topic.name,
+            'slug': obj.topic.slug,
+            'icon': obj.topic.icon,
+            'color': obj.topic.color,
+        }
+
+    def _resolve_topic(self, topic_value):
+        name = (topic_value or '').strip()
+        if not name:
+            return None
+        topic = Topic.objects.filter(slug=name).first()
+        if topic:
+            return topic
+        topic = Topic.objects.filter(name__iexact=name).first()
+        if topic:
+            return topic
+        topic = Topic.objects.create(name=name)
+        return topic
 
     def _normalize_string_list(self, raw):
         if raw in (None, ''):
@@ -293,6 +320,7 @@ class PinSerializer(serializers.ModelSerializer):
         private_tags = self._normalize_string_list(validated_data.pop('private_tags_input', []))
         public_tags = self._normalize_string_list(validated_data.pop('public_tags_input', []))
         board_ids = self._normalize_int_list(validated_data.pop('board_ids_input', []))
+        topic_value = validated_data.pop('topic', '')
         request = self.context.get('request')
         if request and request.user.is_authenticated and private_tags:
             if not request.user.profile.can_use_private_tags:
@@ -301,6 +329,13 @@ class PinSerializer(serializers.ModelSerializer):
                 })
         if request and request.user.is_authenticated:
             validated_data['author'] = request.user
+        validated_data['topic'] = self._resolve_topic(topic_value)
         pin = super().create(validated_data)
         self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, board_ids)
         return pin
+
+    def update(self, instance, validated_data):
+        if 'topic' in validated_data:
+            topic_value = validated_data.pop('topic')
+            validated_data['topic'] = self._resolve_topic(topic_value)
+        return super().update(instance, validated_data)

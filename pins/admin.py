@@ -1,11 +1,18 @@
 from django.contrib import admin
-from .models import Pin, Save, Like, Comment, Board, Hashtag, PrivatePinTag, PinProvenanceEvent
+from .models import Pin, Save, Like, Comment, Board, Hashtag, PrivatePinTag, PinProvenanceEvent, Topic
 
 @admin.register(Pin)
 class PinAdmin(admin.ModelAdmin):
-    list_display = ('title', 'author', 'visibility', 'created_at', 'likes_count', 'saves_count')
-    list_filter = ('author', 'visibility', 'created_at')
-    search_fields = ('title', 'description')
+    list_display = ('title', 'author', 'topic', 'visibility', 'created_at', 'likes_count', 'saves_count')
+    list_filter = ('author', 'topic', 'visibility', 'created_at')
+    search_fields = ('title', 'description', 'topic__name')
+
+
+@admin.register(Topic)
+class TopicAdmin(admin.ModelAdmin):
+    list_display = ('name', 'slug', 'icon', 'color', 'is_active', 'created_at')
+    list_filter = ('is_active', 'created_at')
+    search_fields = ('name', 'slug', 'icon', 'color')
 
 
 @admin.register(Board)

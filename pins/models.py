@@ -34,6 +34,32 @@ class Board(models.Model):
         return f"{self.user.username} - {self.name}"
 
 
+class Topic(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=140, unique=True, blank=True)
+    color = models.CharField(max_length=80, default='#6B7280')
+    icon = models.CharField(max_length=50, default='category')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.name)[:120] or 'topic'
+            slug = base
+            index = 1
+            while Topic.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base}-{index}"
+                index += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+
 class Pin(models.Model):
     VISIBILITY_PUBLIC = 'public'
     VISIBILITY_FOLLOWERS = 'followers'
@@ -49,7 +75,7 @@ class Pin(models.Model):
     description = models.TextField(blank=True)
     image = models.ImageField(upload_to='pins/')
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pins')
-    topic = models.CharField(max_length=100, default='Général')
+    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, null=True, blank=True, related_name='pins')
     visibility = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default=VISIBILITY_PUBLIC)
     certified_credit = models.BooleanField(default=False)
     provenance_root_hash = models.CharField(max_length=128, blank=True)
@@ -82,6 +108,10 @@ class Pin(models.Model):
     @property
     def saves_count(self):
         return self.saves.count()
+
+    @property
+    def topic_name(self):
+        return self.topic.name if self.topic else ''
 
 class Save(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saves')

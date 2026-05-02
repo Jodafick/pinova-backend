@@ -325,12 +325,11 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         topic_rows = (
             request.user.likes.select_related('pin')
             .exclude(pin__topic__isnull=True)
-            .exclude(pin__topic__exact='')
-            .values('pin__topic')
+            .values('pin__topic__name')
             .annotate(score=models.Count('id'))
             .order_by('-score')[:8]
         )
-        preferred_topics = [row['pin__topic'] for row in topic_rows]
+        preferred_topics = [row['pin__topic__name'] for row in topic_rows]
 
         candidates = (
             User.objects.select_related('profile')
@@ -340,7 +339,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 followers_total=models.Count('profile__followers', distinct=True),
                 preferred_topic_pins=models.Count(
                     'pins',
-                    filter=models.Q(pins__topic__in=preferred_topics),
+                    filter=models.Q(pins__topic__name__in=preferred_topics),
                     distinct=True,
                 ),
             )
