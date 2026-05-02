@@ -110,7 +110,7 @@ from django.db.models import Prefetch
 
 from pins.models import Save
 from pins.models import Board, PinBoard, Pin
-from pins.visibility import pin_is_visible_for_request
+from pins.visibility import pin_is_visible_for_request, count_pins_visible_on_profile
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -118,10 +118,17 @@ class UserSerializer(serializers.ModelSerializer):
     saved_pins = serializers.SerializerMethodField()
     boards = serializers.SerializerMethodField()
     subscription = serializers.SerializerMethodField()
+    pins_count = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'profile', 'saved_pins', 'boards', 'subscription']
+        fields = ['id', 'username', 'email', 'profile', 'saved_pins', 'boards', 'subscription', 'pins_count']
+
+    def get_pins_count(self, obj):
+        request = self.context.get('request')
+        if request is None:
+            return 0
+        return count_pins_visible_on_profile(obj, request)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

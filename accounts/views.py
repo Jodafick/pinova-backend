@@ -489,12 +489,15 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     def mentions(self, request):
         query = (request.query_params.get('q') or '').strip()
         users = User.objects.select_related('profile').filter(profile__discoverable_profile=True)
+        viewer = getattr(request, 'user', None)
+        if viewer and viewer.is_authenticated:
+            users = users.exclude(pk=viewer.pk)
+
         if query:
             users = users.filter(
                 models.Q(username__icontains=query) |
                 models.Q(profile__display_name__icontains=query)
             )
-        users = users.order_by('username')
 
         class MentionPagination(PageNumberPagination):
             page_size = 10
@@ -502,6 +505,63 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             max_page_size = 30
 
         paginator = MentionPagination()
+
+        if viewer and viewer.is_authenticated:
+            my_profile = viewer.profile
+            since = timezone.now() - timedelta(days=60)
+
+            fu = frozenset(my_profile.following.values_list('user_id', flat=True))
+            fru = frozenset(my_profile.followers.values_list('user_id', flat=True))
+            mutual = fu & fru
+            following_only = fu - mutual
+            follower_only = fru - mutual
+
+            rank_whens = []
+            if mutual:
+                rank_whens.append(models.When(models.Q(pk__in=list(mutual)), then=models.Value(0)))
+            if following_only:
+                rank_whens.append(models.When(models.Q(pk__in=list(following_only)), then=models.Value(1)))
+            if follower_only:
+                rank_whens.append(models.When(models.Q(pk__in=list(follower_only)), then=models.Value(2)))
+
+            users = users.annotate(
+                view_score=models.Count(
+                    'pins__view_events',
+                    filter=models.Q(
+                        pins__view_events__user=viewer,
+                        pins__view_events__created_at__gte=since,
+                    ),
+                ),
+                rank_group=models.Case(
+                    *rank_whens,
+                    default=models.Value(3),
+                    output_field=models.IntegerField(),
+                ),
+            ).order_by('rank_group', '-view_score', 'username')
+            page = paginator.paginate_queryset(users, request)
+            data = []
+            for user in page:
+                rel = ''
+                if mutual and user.pk in mutual:
+                    rel = 'mutual'
+                elif following_only and user.pk in following_only:
+                    rel = 'following'
+                elif follower_only and user.pk in follower_only:
+                    rel = 'follower'
+                elif getattr(user, 'view_score', 0) > 0:
+                    rel = 'often_viewed'
+                data.append(
+                    {
+                        'username': user.username,
+                        'display_name': user.profile.display_name or user.username,
+                        'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
+                        'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
+                        'relation': rel,
+                    }
+                )
+            return paginator.get_paginated_response(data)
+
+        users = users.order_by('username')
         page = paginator.paginate_queryset(users, request)
         data = [
             {
@@ -509,6 +569,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 'display_name': user.profile.display_name or user.username,
                 'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
                 'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
+                'relation': '',
             }
             for user in page
         ]

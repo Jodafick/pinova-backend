@@ -49,6 +49,7 @@ from accounts.models import (
     SupportTicket,
 )
 from notifications.models import Notification, PushSubscription
+from pins.serializers import extract_mentions
 from pins.models import (
     Board,
     Comment,
@@ -145,9 +146,25 @@ COMMENT_SNIPPETS_FR = [
     'Tu as une source pour ça ?',
     'Ajouté à mes favoris.',
     'Incroyable travail.',
+    'Le cadrage est nickel.',
+    'Ça donne envie d’y être.',
+    'Texture / lumière au top.',
+    'J’adore l’ambiance.',
+    'Référence enregistrée pour plus tard.',
+    'Plutôt audacieux, ça marche.',
+    'Le contraste fonctionne super bien.',
+    'Simple et efficace.',
+    'Merci pour le partage 🙏',
+    'On sent le travail derrière.',
 ]
 
-
+COMMENT_REPLY_SNIPPETS_FR = [
+    'Totalement d’accord 👍',
+    'Exactement mon ressenti.',
+    'Oui, surtout au niveau des tons.',
+    '😍 pareil !',
+    '+1, bien vu.',
+]
 def ensure_superuser():
     username = os.environ.get('SEED_SUPERUSER_USERNAME', 'admin')
     email = os.environ.get('SEED_SUPERUSER_EMAIL', 'admin@example.com')
@@ -906,40 +923,59 @@ def seed_data():
                 query=random.choice(queries_search),
             )
 
-    # Commentaires & réponses
+    # Commentaires & réponses (couverture élargie + mentions @)
     print('Commentaires…')
-    comment_pins = random.sample(
-        public_pins,
-        min(55, len(public_pins)),
-    )
+    if not public_pins:
+        comment_pins = []
+    else:
+        n_sample = min(len(public_pins), max(160, len(public_pins) // 3))
+        comment_pin_ids = set(random.sample(public_pins, n_sample))
+        david_ref = User.objects.filter(username='david1anato').first()
+        if david_ref:
+            david_public = [
+                p for p in public_pins if p.author_id == david_ref.id
+            ]
+            if david_public:
+                n_d = min(len(david_public), 70)
+                comment_pin_ids.update(random.sample(david_public, n_d))
+        comment_pins = list(comment_pin_ids)
+        random.shuffle(comment_pins)
+
     all_users_for_comments = regular_users + [admin]
 
     for pin in comment_pins:
         authors_pool = [x for x in all_users_for_comments if x.id != pin.author_id]
         if not authors_pool:
             continue
-        n_root = random.randint(1, 3)
+        n_root = random.choices([1, 2, 3, 4, 5], weights=[18, 35, 28, 13, 6], k=1)[0]
         roots: list[Comment] = []
         for _ in range(n_root):
             cu = random.choice(authors_pool)
             base_txt = random.choice(COMMENT_SNIPPETS_FR)
             if random.random() < 0.15:
                 base_txt += ' #design'
+            if random.random() < 0.42:
+                mention_opts = [x.username for x in authors_pool if x.id != cu.id]
+                if mention_opts:
+                    m = random.choice(mention_opts)
+                    base_txt = f'{base_txt.rstrip()} @{m}'
             use_gif = (
                 profiles_by_username[cu.username].subscription_plan != Profile.PLAN_FREE
-                and random.random() < 0.25
+                and random.random() < 0.22
             )
             gif_url_val = (
                 'https://media.giphy.com/media/l0MYC0LajPoPotuRu/giphy.gif'
                 if use_gif
                 else ''
             )
+            mentions_seed = extract_mentions(base_txt)
             c = Comment.objects.create(
                 user=cu,
                 pin=pin,
                 text=base_txt,
                 gif_url=gif_url_val,
                 original_language='fr',
+                mentions=mentions_seed,
             )
             if '#' in base_txt:
                 ht_part = base_txt.split('#')[-1].strip().split()[0]
@@ -948,22 +984,42 @@ def seed_data():
                     c.hashtags.add(ht)
             roots.append(c)
 
-        # Réponses
-        if roots and random.random() < 0.55:
-            parent = random.choice(roots)
-            replier = random.choice([x for x in authors_pool if x.id != parent.user_id])
-            child = Comment.objects.create(
-                user=replier,
-                pin=pin,
-                text='Totalement d’accord 👍',
-                parent=parent,
-                original_language='fr',
-            )
-            roots.append(child)
+        # Réponses (souvent plusieurs)
+        if roots and random.random() < 0.72:
+            parent = random.choice([c for c in roots if c.parent_id is None] or roots)
+            replier_pool = [x for x in authors_pool if x.id != parent.user_id]
+            if replier_pool:
+                replier = random.choice(replier_pool)
+                rtxt = random.choice(COMMENT_REPLY_SNIPPETS_FR)
+                if random.random() < 0.35:
+                    moz = random.choice([x.username for x in authors_pool if x.id != replier.id])
+                    rtxt = f'{rtxt} @{moz}'
+                child = Comment.objects.create(
+                    user=replier,
+                    pin=pin,
+                    text=rtxt,
+                    parent=parent,
+                    original_language='fr',
+                    mentions=extract_mentions(rtxt),
+                )
+                roots.append(child)
+
+                if random.random() < 0.45:
+                    rp2 = random.choice([x for x in replier_pool if x.id != replier.id])
+                    rtxt2 = random.choice(COMMENT_REPLY_SNIPPETS_FR)
+                    gc = Comment.objects.create(
+                        user=rp2,
+                        pin=pin,
+                        text=rtxt2,
+                        parent=child,
+                        original_language='fr',
+                        mentions=extract_mentions(rtxt2),
+                    )
+                    roots.append(gc)
 
         # Likes sur commentaires
         for c in roots:
-            likers_c = random.sample(authors_pool, k=min(3, len(authors_pool)))
+            likers_c = random.sample(authors_pool, k=min(random.randint(1, 4), len(authors_pool)))
             for lc in likers_c:
                 CommentLike.objects.get_or_create(user=lc, comment=c)
 

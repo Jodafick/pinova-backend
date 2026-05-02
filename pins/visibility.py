@@ -46,6 +46,44 @@ def sensitive_pins_query_filter(request):
     return Q(media_sensitive_blur=False)
 
 
+def count_pins_visible_on_profile(author_user, request) -> int:
+    """
+    Nombre de pins d'un créateur visibles pour le visiteur, aligné sur
+    PinViewSet.get_queryset avec le filtre ?author=<username> (liste profil).
+    """
+    queryset = Pin.objects.filter(author=author_user).select_related('author', 'author__profile')
+    sched = Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=timezone.now())
+    story_q = Q(is_story=False) | Q(is_story=True, story_expires_at__gt=timezone.now())
+    user = request.user if getattr(request, 'user', None) and request.user.is_authenticated else None
+    if user is not None:
+        story_q |= Q(is_story=True, author=user)
+
+
+    if not user:
+        core = (
+            Q(visibility=Pin.VISIBILITY_PUBLIC, author__profile__private_profile=False)
+            & sched
+            & story_q
+            & Q(moderation_hidden=False)
+        )
+        qs = queryset.filter(core)
+        qs = qs.filter(sensitive_pins_query_filter(request))
+        return qs.count()
+
+    my_profile = user.profile
+    visibility_q = (
+        Q(visibility=Pin.VISIBILITY_PUBLIC, author__profile__private_profile=False)
+        | Q(author=user)
+        | Q(visibility=Pin.VISIBILITY_FOLLOWERS, author__profile__followers=my_profile)
+        | Q(author__profile__private_profile=True, author__profile__followers=my_profile)
+    )
+    core = visibility_q & story_q & (sched | Q(author=user))
+    qs = queryset.filter(core).distinct()
+    qs = qs.filter(sensitive_pins_query_filter(request))
+    qs = qs.exclude(Q(moderation_hidden=True) & ~Q(author=user))
+    return qs.count()
+
+
 def pin_is_visible_for_request(pin: Pin, request) -> bool:
     """Aligné sur PinViewSet.get_queryset pour une instance."""
     user = request.user if request.user.is_authenticated else None
