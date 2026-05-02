@@ -11,6 +11,7 @@ from pathlib import Path
 from django.conf import settings
 from PIL import Image
 import re
+from collections import OrderedDict
 from .models import (
     Pin,
     Topic,
@@ -197,7 +198,11 @@ class PinViewSet(viewsets.ModelViewSet):
         sched = self._scheduled_publish_ok_q()
         story_q = self._story_feed_q()
         placement_q = self._story_main_feed_placement_q()
-        detail_route = getattr(self, 'detail', False)
+        # Ne pas exclure les stories des autres dans retrieve/save/like/etc., sinon 404 sur ces pins.
+        story_placement_actions = frozenset({
+            'list', 'discover', 'recommendations', 'following', 'home_feed',
+        })
+        apply_story_placement = getattr(self, 'action', None) in story_placement_actions
 
         if not self.request.user.is_authenticated:
             core = (
@@ -205,7 +210,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 & sched
                 & story_q
             )
-            if not detail_route:
+            if apply_story_placement:
                 core &= placement_q
             return queryset.filter(core)
 
@@ -217,7 +222,7 @@ class PinViewSet(viewsets.ModelViewSet):
             | Q(author__profile__private_profile=True, author__profile__followers=my_profile)
         )
         core = visibility_q & story_q & (sched | Q(author=self.request.user))
-        if not detail_route:
+        if apply_story_placement:
             core &= placement_q
         return queryset.filter(core).distinct()
 
@@ -231,7 +236,8 @@ class PinViewSet(viewsets.ModelViewSet):
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
 
-    def save(self, request, slug=None):
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='save')
+    def toggle_save(self, request, slug=None):
         pin = self.get_object()
         save, created = Save.objects.get_or_create(user=request.user, pin=pin)
 
@@ -286,6 +292,42 @@ class PinViewSet(viewsets.ModelViewSet):
         SearchInteraction.objects.create(user=request.user, query=query[:120])
         return Response({'status': 'recorded'})
 
+    def _story_ring_groups_from_pins(self, ordered_pins, request):
+        """ordered_pins : ordre reco/global ; couverture = pin la plus récente ; lecture chronologique ancienne → récente."""
+        by_author = OrderedDict()
+        first_rank = {}
+        for rank, pin in enumerate(ordered_pins):
+            aid = pin.author_id
+            if aid not in by_author:
+                by_author[aid] = []
+                first_rank[aid] = rank
+            by_author[aid].append(pin)
+
+        ordered_aids = sorted(by_author.keys(), key=lambda x: first_rank[x])
+        groups = []
+        for aid in ordered_aids:
+            plist = by_author[aid]
+            chron = sorted(plist, key=lambda p: p.created_at)
+            cover = max(plist, key=lambda p: p.created_at)
+            author = chron[0].author
+            profile = author.profile
+            avatar_url = ''
+            av = getattr(profile, 'avatar', None)
+            if av:
+                avatar_url = request.build_absolute_uri(av.url)
+            cover_url = ''
+            if cover.image:
+                cover_url = request.build_absolute_uri(cover.image.url)
+            groups.append({
+                'username': author.username,
+                'display_name': profile.display_name or author.username,
+                'avatar_url': avatar_url,
+                'avatar_color': profile.avatar_color or 'bg-neutral-400',
+                'cover_image_url': cover_url,
+                'pins': PinSerializer(chron, many=True, context={'request': request}).data,
+            })
+        return groups
+
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='active-stories')
     def active_stories(self, request):
         username = (request.query_params.get('username') or '').strip()
@@ -302,30 +344,31 @@ class PinViewSet(viewsets.ModelViewSet):
         if username:
             owner = User.objects.filter(username=username).first()
             if not owner:
-                return Response({'pins': []})
+                return Response({'pins': [], 'groups': []})
             qs = qs.filter(author=owner).order_by('-created_at')[:48]
             visible = [pin for pin in qs if pin_is_visible_for_request(pin, request)]
-        else:
-            pool = list(qs.order_by('-created_at')[:150])
-            visible = [pin for pin in pool if pin_is_visible_for_request(pin, request)]
-            user = request.user
-            if (
-                user.is_authenticated
-                and getattr(user.profile, 'notifications_recommendations', False)
-                and visible
-            ):
-                topic_scores = self._build_topic_scores(user)
-                if topic_scores:
-                    vis_qs = Pin.objects.filter(id__in=[p.id for p in visible]).select_related(
-                        'author',
-                        'author__profile',
-                        'topic',
-                    )
-                    visible = self._ordered_by_topic_score(vis_qs, topic_scores)
-            visible = visible[:80]
-
-        serializer = PinSerializer(visible, many=True, context={'request': request})
-        return Response({'pins': serializer.data})
+            visible = sorted(visible, key=lambda p: p.created_at)
+            serializer = PinSerializer(visible, many=True, context={'request': request})
+            return Response({'pins': serializer.data, 'groups': []})
+        pool = list(qs.order_by('-created_at')[:150])
+        visible = [pin for pin in pool if pin_is_visible_for_request(pin, request)]
+        user = request.user
+        if (
+            user.is_authenticated
+            and getattr(user.profile, 'notifications_recommendations', False)
+            and visible
+        ):
+            topic_scores = self._build_topic_scores(user)
+            if topic_scores:
+                vis_qs = Pin.objects.filter(id__in=[p.id for p in visible]).select_related(
+                    'author',
+                    'author__profile',
+                    'topic',
+                )
+                visible = self._ordered_by_topic_score(vis_qs, topic_scores)
+        visible = visible[:80]
+        groups = self._story_ring_groups_from_pins(visible, request)
+        return Response({'pins': [], 'groups': groups})
 
     @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
     def comments(self, request, slug=None):
