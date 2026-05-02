@@ -29,7 +29,7 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
-from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing
+from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
 from .currency_utils import (
@@ -42,6 +42,40 @@ from .currency_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _enforce_subscription_state(profile):
+    now = timezone.now()
+    if not profile.subscription_renewal_at or profile.subscription_renewal_at > now:
+        return
+    if profile.subscription_scheduled_plan:
+        profile.subscription_plan = profile.subscription_scheduled_plan
+    elif profile.subscription_cancel_at_period_end:
+        profile.subscription_plan = Profile.PLAN_FREE
+    else:
+        return
+    profile.subscription_scheduled_plan = ''
+    profile.subscription_cancel_at_period_end = False
+    profile.subscription_renewal_at = None if profile.subscription_plan == Profile.PLAN_FREE else profile.subscription_renewal_at
+    if profile.subscription_plan == Profile.PLAN_FREE:
+        profile.translation_quota_monthly = 5
+        profile.translation_used_monthly = 0
+        profile.ad_ads_enabled = True
+        profile.partner_ads_enabled = True
+        profile.tips_enabled = False
+        profile.tips_url = ''
+    profile.save(update_fields=[
+        'subscription_plan',
+        'subscription_scheduled_plan',
+        'subscription_cancel_at_period_end',
+        'subscription_renewal_at',
+        'translation_quota_monthly',
+        'translation_used_monthly',
+        'ad_ads_enabled',
+        'partner_ads_enabled',
+        'tips_enabled',
+        'tips_url',
+    ])
 
 
 def _normalize_url_path_slashes(url: str):
@@ -71,6 +105,7 @@ def _catalog_entry(plan: str, billing_cycle: str):
 def _resolve_user_currency(request):
     if request.user.is_authenticated:
         profile = request.user.profile
+        _enforce_subscription_state(profile)
         updates = []
         detected_country = infer_country_code(request)
         if not profile.country_code and detected_country:
@@ -226,6 +261,14 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         profile = self.get_object()
+        if profile.private_profile:
+            is_owner = request.user.is_authenticated and request.user == profile.user
+            is_follower = (
+                request.user.is_authenticated
+                and profile.followers.filter(user=request.user).exists()
+            )
+            if not is_owner and not is_follower:
+                return Response({'error': 'This profile is private'}, status=status.HTTP_403_FORBIDDEN)
         serializer = UserSerializer(profile.user, context={'request': request})
         return Response(serializer.data)
 
@@ -243,13 +286,14 @@ class ProfileViewSet(viewsets.ModelViewSet):
         else:
             current_user_profile.following.add(profile_to_follow)
             # Ici on pourrait créer une notification
-            from notifications.models import Notification
-            Notification.objects.create(
-                recipient=profile_to_follow.user,
-                sender=request.user,
-                notification_type='follow',
-                message=f"{request.user.username} a commencé à vous suivre."
-            )
+            if profile_to_follow.notifications_followers:
+                from notifications.models import Notification
+                Notification.objects.create(
+                    recipient=profile_to_follow.user,
+                    sender=request.user,
+                    notification_type='follow',
+                    message=f"{request.user.username} a commencé à vous suivre."
+                )
             return Response({'status': 'followed'})
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='followers')
@@ -384,6 +428,7 @@ class UserMeView(APIView):
     def patch(self, request):
         user = request.user
         profile = user.profile
+        _enforce_subscription_state(profile)
         
         # Update user fields
         if 'email' in request.data:
@@ -411,6 +456,19 @@ class UserMeView(APIView):
         if profile.subscription_plan != Profile.PLAN_PRO:
             mutable_data['tips_enabled'] = False
             mutable_data['tips_url'] = ''
+
+        if 'private_profile' in mutable_data:
+            mutable_data['private_profile'] = str(mutable_data.get('private_profile')).lower() == 'true'
+        if 'notifications_followers' in mutable_data:
+            mutable_data['notifications_followers'] = str(mutable_data.get('notifications_followers')).lower() == 'true'
+        if 'notifications_saves' in mutable_data:
+            mutable_data['notifications_saves'] = str(mutable_data.get('notifications_saves')).lower() == 'true'
+        if 'notifications_recommendations' in mutable_data:
+            mutable_data['notifications_recommendations'] = str(mutable_data.get('notifications_recommendations')).lower() == 'true'
+
+        # Search visibility maps to discoverable_profile.
+        if 'discoverable_profile' in mutable_data:
+            mutable_data['discoverable_profile'] = str(mutable_data.get('discoverable_profile')).lower() == 'true'
 
         preferred_currency = mutable_data.get('preferred_currency')
         if preferred_currency is not None:
@@ -678,6 +736,8 @@ class SubscriptionConfirmView(APIView):
 
     def _apply_subscription(self, profile, payment, duration_days):
         profile.subscription_plan = payment.plan
+        profile.subscription_cancel_at_period_end = False
+        profile.subscription_scheduled_plan = ''
         base_start = timezone.now()
         if profile.subscription_renewal_at and profile.subscription_renewal_at > base_start:
             base_start = profile.subscription_renewal_at
@@ -775,9 +835,6 @@ class SubscriptionConfirmView(APIView):
             approved_statuses = {'approved', 'success', 'successful', 'completed'}
             negative_statuses = {'canceled', 'cancelled', 'failed', 'declined', 'rejected'}
             effective_status = status_value
-            # Some gateways redirect with approved before transaction status is propagated.
-            if callback_status in approved_statuses and status_value not in approved_statuses and status_value not in negative_statuses:
-                effective_status = callback_status
 
             if effective_status in approved_statuses:
                 previous_plan = request.user.profile.subscription_plan
@@ -822,31 +879,135 @@ class SubscriptionConfirmView(APIView):
                 'effective_status': effective_status,
             })
         except requests.RequestException as exc:
-            approved_statuses = {'approved', 'success', 'successful', 'completed'}
-            if callback_status in approved_statuses:
-                previous_plan = request.user.profile.subscription_plan
-                payment.status = SubscriptionPayment.STATUS_APPROVED
-                with transaction.atomic():
-                    payment.fedapay_payload = {
-                        'transaction': {},
-                        'callback_status': callback_status,
-                        'effective_status': callback_status,
-                        'network_error': str(exc),
-                    }
-                    payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
-                    self._apply_subscription(request.user.profile, payment, duration_days)
-                    self._notify_payment_events(request.user, payment, previous_plan)
-                return Response({
-                    'status': 'approved',
-                    'plan': payment.plan,
-                    'billing_cycle': payment.billing_cycle,
-                    'duration_days': duration_days,
-                    'renewal_at': request.user.profile.subscription_renewal_at,
-                    'callback_status': callback_status,
-                    'effective_status': callback_status,
-                    'warning': 'Approved via callback_status fallback',
-                })
             return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class SubscriptionManageView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        profile = request.user.profile
+        _enforce_subscription_state(profile)
+        return Response({
+            'plan': profile.subscription_plan,
+            'renewal_at': profile.subscription_renewal_at,
+            'cancel_at_period_end': profile.subscription_cancel_at_period_end,
+            'scheduled_plan': profile.subscription_scheduled_plan or None,
+        })
+
+    def post(self, request):
+        action = str(request.data.get('action') or '').strip().lower()
+        profile = request.user.profile
+        _enforce_subscription_state(profile)
+        if action == 'cancel':
+            if profile.subscription_plan == Profile.PLAN_FREE:
+                return Response({'error': 'No paid plan to cancel'}, status=status.HTTP_400_BAD_REQUEST)
+            profile.subscription_cancel_at_period_end = True
+            profile.subscription_scheduled_plan = Profile.PLAN_FREE
+            profile.save(update_fields=['subscription_cancel_at_period_end', 'subscription_scheduled_plan'])
+            return Response({'status': 'scheduled_cancel', 'scheduled_plan': Profile.PLAN_FREE})
+        if action == 'reactivate':
+            profile.subscription_cancel_at_period_end = False
+            profile.subscription_scheduled_plan = ''
+            profile.save(update_fields=['subscription_cancel_at_period_end', 'subscription_scheduled_plan'])
+            return Response({'status': 'reactivated'})
+        if action == 'downgrade_to_free':
+            profile.subscription_cancel_at_period_end = True
+            profile.subscription_scheduled_plan = Profile.PLAN_FREE
+            profile.save(update_fields=['subscription_cancel_at_period_end', 'subscription_scheduled_plan'])
+            return Response({'status': 'scheduled_downgrade', 'scheduled_plan': Profile.PLAN_FREE})
+        return Response({'error': 'Unsupported action'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SubscriptionWebhookView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        expected_secret = (os.environ.get('FEDAPAY_WEBHOOK_SECRET') or '').strip()
+        provided_secret = str(
+            request.headers.get('X-Webhook-Token')
+            or request.headers.get('X-Fedapay-Webhook-Token')
+            or request.data.get('webhook_token')
+            or ''
+        ).strip()
+        if expected_secret and provided_secret != expected_secret:
+            return Response({'error': 'Invalid webhook token'}, status=status.HTTP_403_FORBIDDEN)
+
+        tx_id = str(request.data.get('transaction_id') or request.data.get('id') or '').strip()
+        if not tx_id:
+            return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        status_value = str(request.data.get('status') or '').strip().lower()
+        payment = SubscriptionPayment.objects.filter(fedapay_transaction_id=tx_id).select_related('user', 'user__profile').first()
+        if not payment:
+            return Response({'status': 'ignored_unknown_transaction'}, status=status.HTTP_202_ACCEPTED)
+        payload = dict(payment.fedapay_payload or {})
+        payload['webhook'] = request.data
+        payment.fedapay_payload = payload
+        approved_statuses = {'approved', 'success', 'successful', 'completed'}
+        if status_value in approved_statuses:
+            catalog = _catalog_entry(payment.plan, payment.billing_cycle)
+            duration_days = int((catalog or {}).get('duration_days') or 30)
+            previous_plan = payment.user.profile.subscription_plan
+            payment.status = SubscriptionPayment.STATUS_APPROVED
+            with transaction.atomic():
+                payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+                SubscriptionConfirmView()._apply_subscription(payment.user.profile, payment, duration_days)
+                SubscriptionConfirmView()._notify_payment_events(payment.user, payment, previous_plan)
+            return Response({'status': 'approved'})
+        if status_value in {'canceled', 'cancelled'}:
+            payment.status = SubscriptionPayment.STATUS_CANCELED
+        elif status_value in {'failed', 'declined', 'rejected'}:
+            payment.status = SubscriptionPayment.STATUS_FAILED
+        else:
+            payment.status = SubscriptionPayment.STATUS_PENDING
+        payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+        return Response({'status': payment.status})
+
+
+class SupportTicketView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rows = SupportTicket.objects.filter(user=request.user).order_by('-created_at')[:50]
+        return Response({
+            'results': [
+                {
+                    'id': row.id,
+                    'subject': row.subject,
+                    'message': row.message,
+                    'status': row.status,
+                    'priority': row.priority,
+                    'created_at': row.created_at,
+                    'updated_at': row.updated_at,
+                }
+                for row in rows
+            ]
+        })
+
+    def post(self, request):
+        subject = str(request.data.get('subject') or '').strip()
+        message = str(request.data.get('message') or '').strip()
+        if len(subject) < 4 or len(message) < 8:
+            return Response({'error': 'subject and message are required'}, status=status.HTTP_400_BAD_REQUEST)
+        profile = request.user.profile
+        priority = (
+            SupportTicket.PRIORITY_PRIORITY
+            if profile.subscription_plan == Profile.PLAN_PRO
+            else SupportTicket.PRIORITY_NORMAL
+        )
+        ticket = SupportTicket.objects.create(
+            user=request.user,
+            subject=subject[:140],
+            message=message,
+            priority=priority,
+        )
+        return Response({
+            'id': ticket.id,
+            'subject': ticket.subject,
+            'status': ticket.status,
+            'priority': ticket.priority,
+            'created_at': ticket.created_at,
+        }, status=status.HTTP_201_CREATED)
 
 
 class SubscriptionPricingView(APIView):

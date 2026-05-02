@@ -190,6 +190,7 @@ class PinSerializer(serializers.ModelSerializer):
             'slug',
             'title',
             'description',
+            'link',
             'image',
             'author',
             'author_profile',

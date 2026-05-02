@@ -13,6 +13,9 @@ from .views import (
     SubscriptionConfirmView,
     SubscriptionPricingView,
     CurrencyOptionsView,
+    SubscriptionManageView,
+    SubscriptionWebhookView,
+    SupportTicketView,
 )
 
 router = DefaultRouter()
@@ -29,6 +32,9 @@ urlpatterns = [
     path('subscription/currencies/', CurrencyOptionsView.as_view(), name='subscription-currencies'),
     path('subscription/checkout/', SubscriptionCheckoutView.as_view(), name='subscription-checkout'),
     path('subscription/confirm/', SubscriptionConfirmView.as_view(), name='subscription-confirm'),
+    path('subscription/manage/', SubscriptionManageView.as_view(), name='subscription-manage'),
+    path('subscription/webhook/fedapay/', SubscriptionWebhookView.as_view(), name='subscription-webhook-fedapay'),
+    path('support/tickets/', SupportTicketView.as_view(), name='support-tickets'),
     
     # Auth endpoints
     path('auth/', include('dj_rest_auth.urls')),

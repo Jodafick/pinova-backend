@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import Profile, SubscriptionPricing, SubscriptionPayment
+from .models import Profile, SubscriptionPricing, SubscriptionPayment, SupportTicket
 from .currency_utils import currency_choices_with_symbols
 
 
@@ -40,3 +40,10 @@ class SubscriptionPaymentAdmin(admin.ModelAdmin):
     list_display = ('user', 'plan', 'billing_cycle', 'amount', 'currency_iso', 'status', 'fedapay_transaction_id', 'created_at')
     list_filter = ('plan', 'billing_cycle', 'status', 'currency_iso')
     search_fields = ('user__username', 'fedapay_transaction_id', 'fedapay_reference')
+
+
+@admin.register(SupportTicket)
+class SupportTicketAdmin(admin.ModelAdmin):
+    list_display = ('user', 'subject', 'status', 'priority', 'created_at')
+    list_filter = ('status', 'priority')
+    search_fields = ('user__username', 'subject', 'message')

@@ -73,6 +73,7 @@ class Pin(models.Model):
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=300, unique=True, blank=True)
     description = models.TextField(blank=True)
+    link = models.URLField(blank=True, default='')
     image = models.ImageField(upload_to='pins/')
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pins')
     topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, null=True, blank=True, related_name='pins')

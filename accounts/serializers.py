@@ -41,6 +41,12 @@ class ProfileSerializer(serializers.ModelSerializer):
             'partner_ads_enabled',
             'tips_enabled',
             'tips_url',
+            'private_profile',
+            'notifications_followers',
+            'notifications_saves',
+            'notifications_recommendations',
+            'subscription_cancel_at_period_end',
+            'subscription_scheduled_plan',
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code']
 
@@ -106,6 +112,8 @@ class UserSerializer(serializers.ModelSerializer):
             'partner_ads_enabled': profile.partner_ads_enabled,
             'tips_enabled': profile.tips_enabled,
             'tips_url': profile.tips_url,
+            'cancel_at_period_end': profile.subscription_cancel_at_period_end,
+            'scheduled_plan': profile.subscription_scheduled_plan or None,
         }
 
 class RegisterSerializer(BaseRegisterSerializer):

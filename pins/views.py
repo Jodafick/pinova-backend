@@ -127,12 +127,16 @@ class PinViewSet(viewsets.ModelViewSet):
         topic = self.request.query_params.get('topic')
         queryset = self._apply_topic_filter(queryset, topic)
         if not self.request.user.is_authenticated:
-            return queryset.filter(visibility=Pin.VISIBILITY_PUBLIC)
+            return queryset.filter(
+                visibility=Pin.VISIBILITY_PUBLIC,
+                author__profile__private_profile=False,
+            )
         my_profile = self.request.user.profile
         return queryset.filter(
-            Q(visibility=Pin.VISIBILITY_PUBLIC)
+            Q(visibility=Pin.VISIBILITY_PUBLIC, author__profile__private_profile=False)
             | Q(author=self.request.user)
             | Q(visibility=Pin.VISIBILITY_FOLLOWERS, author__profile__followers=my_profile)
+            | Q(author__profile__private_profile=True, author__profile__followers=my_profile)
         ).distinct()
 
     def perform_create(self, serializer):
@@ -174,7 +178,7 @@ class PinViewSet(viewsets.ModelViewSet):
             metadata={'saved_by': request.user.username},
         )
 
-        if pin.author != request.user:
+        if pin.author != request.user and pin.author.profile.notifications_saves:
             Notification.objects.create(
                 recipient=pin.author,
                 sender=request.user,

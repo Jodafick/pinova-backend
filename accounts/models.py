@@ -36,6 +36,17 @@ class Profile(models.Model):
     partner_ads_enabled = models.BooleanField(default=True)
     tips_enabled = models.BooleanField(default=False)
     tips_url = models.URLField(blank=True, null=True)
+    private_profile = models.BooleanField(default=False)
+    notifications_followers = models.BooleanField(default=True)
+    notifications_saves = models.BooleanField(default=True)
+    notifications_recommendations = models.BooleanField(default=False)
+    subscription_cancel_at_period_end = models.BooleanField(default=False)
+    subscription_scheduled_plan = models.CharField(
+        max_length=20,
+        choices=PLAN_CHOICES,
+        blank=True,
+        default='',
+    )
 
     @property
     def can_use_private_tags(self):
@@ -143,6 +154,37 @@ class SubscriptionPayment(models.Model):
 
     def __str__(self):
         return f"{self.user.username}:{self.plan}:{self.status}"
+
+
+class SupportTicket(models.Model):
+    STATUS_OPEN = 'open'
+    STATUS_IN_PROGRESS = 'in_progress'
+    STATUS_RESOLVED = 'resolved'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Open'),
+        (STATUS_IN_PROGRESS, 'In progress'),
+        (STATUS_RESOLVED, 'Resolved'),
+    ]
+    PRIORITY_NORMAL = 'normal'
+    PRIORITY_PRIORITY = 'priority'
+    PRIORITY_CHOICES = [
+        (PRIORITY_NORMAL, 'Normal'),
+        (PRIORITY_PRIORITY, 'Priority'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='support_tickets')
+    subject = models.CharField(max_length=140)
+    message = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default=PRIORITY_NORMAL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username}:{self.subject[:30]}:{self.status}"
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
