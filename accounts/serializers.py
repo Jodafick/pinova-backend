@@ -94,6 +94,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         return data
 
 
+from django.db.models import Count
+
 from pins.models import Save
 from pins.models import Board
 
@@ -125,12 +127,12 @@ class UserSerializer(serializers.ModelSerializer):
         boards = Board.objects.filter(user=obj)
         if not (request and request.user.is_authenticated and request.user == obj):
             boards = boards.filter(is_private=False)
-        boards = boards.order_by('-created_at')
+        boards = boards.annotate(pins_total=Count('pins')).order_by('-created_at')
         return [
             {
                 'id': board.id,
                 'name': board.name,
-                'pinCount': board.pin_count,
+                'pinCount': board.pins_total,
                 'isPrivate': board.is_private,
             }
             for board in boards

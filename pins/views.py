@@ -956,7 +956,7 @@ class BoardViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         base = (
-            Board.objects.annotate(pin_count=Count('pins'))
+            Board.objects.annotate(pins_total=Count('pins'))
             .select_related('user', 'user__profile')
             .order_by('-created_at')
         )

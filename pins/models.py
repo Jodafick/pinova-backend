@@ -26,10 +26,6 @@ class Board(models.Model):
         unique_together = ('user', 'name')
         ordering = ['-created_at']
 
-    @property
-    def pin_count(self):
-        return self.pins.count()
-
     def __str__(self):
         return f"{self.user.username} - {self.name}"
 

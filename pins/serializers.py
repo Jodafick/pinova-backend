@@ -36,12 +36,18 @@ def extract_mentions(text: str) -> list[str]:
 
 
 class BoardSerializer(serializers.ModelSerializer):
-    pin_count = serializers.IntegerField(read_only=True)
+    pin_count = serializers.SerializerMethodField()
     collaborator_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Board
         fields = ['id', 'name', 'description', 'is_private', 'created_at', 'pin_count', 'collaborator_count']
+
+    def get_pin_count(self, obj):
+        total = getattr(obj, 'pins_total', None)
+        if total is not None:
+            return total
+        return obj.pins.count()
 
     def get_collaborator_count(self, obj):
         return obj.collaborators.count()

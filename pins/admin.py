@@ -29,7 +29,11 @@ class TopicAdmin(admin.ModelAdmin):
 
 @admin.register(Board)
 class BoardAdmin(admin.ModelAdmin):
-    list_display = ('name', 'user', 'is_private', 'pin_count', 'created_at')
+    list_display = ('name', 'user', 'is_private', 'pins_total_display', 'created_at')
+
+    @admin.display(description='Pins')
+    def pins_total_display(self, obj):
+        return obj.pins.count()
     list_filter = ('user', 'is_private')
     search_fields = ('name', 'description')
 
