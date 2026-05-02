@@ -447,7 +447,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
             {
                 'username': follower.user.username,
                 'display_name': follower.display_name or follower.user.username,
-                'avatar_color': follower.avatar_color,
+                'avatar_color': follower.avatar_color or 'bg-neutral-400',
                 'avatar': request.build_absolute_uri(follower.avatar.url) if follower.avatar else None,
                 'is_pro': follower.subscription_plan == Profile.PLAN_PRO,
             }
@@ -471,7 +471,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
             {
                 'username': followed.user.username,
                 'display_name': followed.display_name or followed.user.username,
-                'avatar_color': followed.avatar_color,
+                'avatar_color': followed.avatar_color or 'bg-neutral-400',
                 'avatar': request.build_absolute_uri(followed.avatar.url) if followed.avatar else None,
                 'is_pro': followed.subscription_plan == Profile.PLAN_PRO,
             }
@@ -507,7 +507,8 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             {
                 'username': user.username,
                 'display_name': user.profile.display_name or user.username,
-                'avatar_color': user.profile.avatar_color,
+                'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
+                'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
             }
             for user in page
         ]
@@ -547,7 +548,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             {
                 'username': user.username,
                 'display_name': user.profile.display_name or user.username,
-                'avatar_color': user.profile.avatar_color,
+                'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
                 'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
                 'is_pro': user.profile.subscription_plan == Profile.PLAN_PRO,
                 'reason': 'preferred_topic' if user.preferred_topic_pins > 0 else 'popular',
@@ -575,6 +576,9 @@ class UserMeView(APIView):
 
     def get(self, request):
         _resolve_user_currency(request)
+        from pins.scheduled_publish_utils import publish_user_due_scheduled_pins
+
+        publish_user_due_scheduled_pins(request.user, limit=50)
         serializer = UserSerializer(request.user, context={'request': request})
         return Response(serializer.data)
 
@@ -656,6 +660,33 @@ class ProfileShareTokenView(APIView):
             profile.share_token = uuid.uuid4()
             profile.save(update_fields=['share_token'])
         return Response({'share_token': str(profile.share_token)})
+
+
+class AccountDeletionRequestView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """Programme une suppression définitive du compte (purge serveur après 30 jours)."""
+        raw = str(request.data.get('confirm', '')).strip().upper()
+        if raw not in ('DELETE', 'SUPPRIMER'):
+            return Response(
+                {'confirm': ['La confirmation doit être DELETE ou SUPPRIMER.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile = request.user.profile
+        profile.account_scheduled_deletion_at = timezone.now() + timedelta(days=30)
+        profile.save(update_fields=['account_scheduled_deletion_at'])
+        return Response({'scheduled_at': profile.account_scheduled_deletion_at.isoformat()})
+
+
+class AccountDeletionCancelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        profile = request.user.profile
+        profile.account_scheduled_deletion_at = None
+        profile.save(update_fields=['account_scheduled_deletion_at'])
+        return Response({'ok': True})
 
 
 class SubscriptionCheckoutView(APIView):

@@ -13,6 +13,7 @@ class Notification(models.Model):
         ('system', 'System'),
         ('digest', 'Digest'),
         ('board_invite', 'Board invite'),
+        ('scheduled_publish', 'Scheduled pin published'),
     )
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_notifications', null=True, blank=True)

@@ -214,6 +214,9 @@ class UserSerializer(serializers.ModelSerializer):
                 profile.subscription_plan == Profile.PLAN_FREE and profile.subscription_trial_consumed_at is None
             ),
             'digest_creator_weekly': profile.notifications_digest_creator_weekly,
+            'account_scheduled_deletion_at': profile.account_scheduled_deletion_at.isoformat()
+            if profile.account_scheduled_deletion_at
+            else None,
         }
 
 

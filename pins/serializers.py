@@ -155,6 +155,7 @@ class CommentSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     display_name = serializers.CharField(source='user.profile.display_name', read_only=True)
     avatar_color = serializers.CharField(source='user.profile.avatar_color', read_only=True)
+    avatar_url = serializers.SerializerMethodField()
     replies = serializers.SerializerMethodField()
     replies_next_page = serializers.SerializerMethodField()
     replies_count = serializers.SerializerMethodField()
@@ -170,6 +171,7 @@ class CommentSerializer(serializers.ModelSerializer):
             'username',
             'display_name',
             'avatar_color',
+            'avatar_url',
             'text',
             'gif_url',
             'media',
@@ -188,6 +190,19 @@ class CommentSerializer(serializers.ModelSerializer):
             'replies_count',
         ]
         read_only_fields = ['mentions', 'hashtags', 'translated_text', 'replies', 'hidden_by_owner', 'moderation_hidden']
+
+    def get_avatar_url(self, obj):
+        request = self.context.get('request')
+        profile = getattr(obj.user, 'profile', None)
+        if not profile:
+            return ''
+        avatar = getattr(profile, 'avatar', None)
+        if not avatar or not getattr(avatar, 'name', ''):
+            return ''
+        url = avatar.url
+        if request:
+            return request.build_absolute_uri(url)
+        return url
 
     def to_representation(self, instance):
         request = self.context.get('request')

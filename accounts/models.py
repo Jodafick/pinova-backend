@@ -54,6 +54,8 @@ class Profile(models.Model):
     share_token = models.UUIDField(null=True, blank=True, unique=True, editable=False)
     # Obligatoire pour publier du média ; utilisée pour distinguer mineurs / adultes (≥18 ans).
     birth_date = models.DateField(null=True, blank=True)
+    # Suppression différée : purge serveur après cette date si la demande est maintenue.
+    account_scheduled_deletion_at = models.DateTimeField(null=True, blank=True)
     # Une fois défini : l'utilisateur ne peut plus activer l'offre essai Plus 14 j.
     subscription_trial_consumed_at = models.DateTimeField(null=True, blank=True)
 

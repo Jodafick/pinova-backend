@@ -7,7 +7,12 @@ Usage :
 Variables d'environnement optionnelles :
   SEED_SUPERUSER_USERNAME / SEED_SUPERUSER_EMAIL / SEED_SUPERUSER_PASSWORD
   SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420)
-  SEED_SKIP_NETWORK=1     — pas de téléchargement picsum ; pins sans image (tests offline)
+  SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG uniquement en local.
+
+  Images avec réseau : picsum (seed, id, aléatoire, grayscale),
+  placehold.co (.png/.jpg/.webp + couleur), dummyimage (.png/.gif),
+  placebear.com, placekitten, baconmockup, dicebear (png/webp),
+  miniatures Wikimedia Commons (JPEG).
 
 Les utilisateurs de test ont le mot de passe : password123
 """
@@ -19,8 +24,10 @@ import random
 import secrets
 import base64
 import uuid
-from datetime import timedelta
+from datetime import timedelta, date
 from pathlib import Path
+import re
+from urllib.parse import quote
 
 import django
 
@@ -173,18 +180,134 @@ def ensure_superuser():
 
 
 def download_image(url: str):
+    """Compat : télécharge sans exposer le type MIME."""
+    tmp, _ext = download_image_to_temp(url)
+    return tmp
+
+
+def download_image_to_temp(url: str):
+    """GET ; retourne (tempfile | None, extension : jpg, png, webp, gif)."""
     if requests is None:
-        return None
+        return None, None
     try:
-        response = requests.get(url, timeout=25)
-        if response.status_code == 200:
-            img_temp = NamedTemporaryFile()
-            img_temp.write(response.content)
-            img_temp.flush()
-            return img_temp
-    except OSError:
+        response = requests.get(
+            url,
+            timeout=30,
+            headers={'User-Agent': 'PinovaSeed/1.1 (+https://pinova.invalid/seed)', 'Accept': 'image/*'},
+        )
+        if response.status_code != 200:
+            return None, None
+        ctype = (response.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+        ext = {
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'image/png': 'png',
+            'image/webp': 'webp',
+            'image/gif': 'gif',
+        }.get(ctype)
+        if not ext:
+            path_low = url.split('?', 1)[0].lower()
+            for marker, e in (
+                ('.webp', 'webp'),
+                ('.png', 'png'),
+                ('.gif', 'gif'),
+                ('.jpeg', 'jpg'),
+                ('.jpg', 'jpg'),
+            ):
+                if path_low.endswith(marker):
+                    ext = e
+                    break
+            else:
+                ext = 'jpg'
+        img_temp = NamedTemporaryFile(suffix='.' + ext)
+        img_temp.write(response.content)
+        img_temp.flush()
+        return img_temp, ext
+    except Exception:
         pass
-    return None
+    return None, None
+
+
+# Portrait / paysage / carré, tailles mobiles et bannières.
+SEED_IMAGE_DIMENSIONS: list[tuple[int, int]] = [
+    (600, 900),
+    (900, 600),
+    (720, 1280),
+    (1280, 720),
+    (800, 800),
+    (1080, 1080),
+    (480, 720),
+    (720, 480),
+    (640, 960),
+    (960, 640),
+    (1024, 768),
+    (768, 1024),
+    (640, 1136),
+    (1200, 675),
+    (413, 531),
+]
+
+
+def _safe_seed_slug(key: str, max_len: int = 56) -> str:
+    s = re.sub(r'[^a-zA-Z0-9_-]', '_', str(key)).strip('_')
+    if not s:
+        s = 'pinova'
+    return s[:max_len]
+
+
+def candidate_seed_image_urls(seed_key: str, width: int, height: int) -> list[str]:
+    """Plusieurs hôtes ; PNG / JPG / WebP explicites ou JPEG via redirections picsum."""
+    safe = _safe_seed_slug(f'{seed_key}_{width}x{height}')
+    short_txt = quote(_safe_seed_slug(seed_key, 10))
+    hid = abs(hash(str(seed_key))) % 999 + 1
+    wl, hh = sorted((width, height))
+    wk, hk = wl, hh
+    hex_bg = f'{(abs(hash(seed_key)) >> 16) & 0xFFFFFF:06x}'
+    hex_fg = 'eeeeee'
+    av_seed = _safe_seed_slug(seed_key, 48)
+    smax = max(128, min(width, height, 512))
+    wiki_thumb = random.choice(('240', '320', '440', '480'))
+    return [
+        f'https://picsum.photos/seed/{safe}/{width}/{height}',
+        f'https://picsum.photos/id/{hid}/{width}/{height}',
+        f'https://picsum.photos/id/{(hid % 200) + 1}/{width}/{height}?grayscale',
+        f'https://picsum.photos/{width}/{height}?random={hid}',
+        f'https://placehold.co/{width}x{height}.png',
+        f'https://placehold.co/{width}x{height}.jpg',
+        f'https://placehold.co/{width}x{height}.webp',
+        f'https://placehold.co/{width}x{height}/{hex_bg}/{hex_fg}.png',
+        f'https://dummyimage.com/{width}x{height}/{hex_bg}/{hex_fg}.png&text={short_txt}',
+        f'https://dummyimage.com/{width}x{height}/e2e8f0/0f172a.gif&text=S',
+        f'https://placebear.com/{width}/{height}',
+        f'http://placekitten.com/{wk}/{hk}',
+        f'http://placekitten.com/g/{wk}/{hk}',
+        f'https://baconmockup.com/{width}/{height}',
+        f'https://picsum.photos/seed/alt_{safe}/{height}/{width}',
+        f'https://api.dicebear.com/9.x/avataaars/png?seed={av_seed}&size={smax}',
+        f'https://api.dicebear.com/9.x/notionists/webp?seed={av_seed}&size={smax}',
+        (
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/'
+            'Sunflower_from_Silesia_UK.jpg/{w}px-Sunflower_from_Silesia_UK.jpg'
+        ).format(w=wiki_thumb),
+        (
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/'
+            'Cat03.jpg/{w}px-Cat03.jpg'
+        ).format(w=wiki_thumb),
+    ]
+
+
+def fetch_seed_image_file(seed_key: str, skip_network: bool, tries: int = 10):
+    """Teste jusqu’à `tries` URLs parmi des fournisseurs et formats variés."""
+    if skip_network:
+        return None, 'seed_offline.png'
+    w, h = random.choice(SEED_IMAGE_DIMENSIONS)
+    urls = candidate_seed_image_urls(seed_key, w, h)
+    random.shuffle(urls)
+    for url in urls[: max(tries, 1)]:
+        tmp, ext = download_image_to_temp(url)
+        if tmp:
+            return tmp, f'{_safe_seed_slug(seed_key, 52)}.{ext}'
+    return None, 'seed_failed.jpg'
 
 
 def placeholder_png_bytes(seed: str = 'pinova') -> bytes:
@@ -296,19 +419,19 @@ def seed_topic_translations(topics_by_name: dict[str, Topic]):
 
 
 def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> bool:
+    stem = Path(fname).stem if fname else f'pin_{pin.pk}'
     if temp_img:
         pin.image.save(fname, File(temp_img))
         return True
     if skip_network:
         pin.image.save(
-            fname.replace('.jpg', '.png'),
+            f'{stem}.png',
             ContentFile(placeholder_png_bytes(str(pin.pk))),
             save=True,
         )
         return True
-    # Picsum indisponible : éviter un pin sans fichier
     pin.image.save(
-        fname.replace('.jpg', '_fallback.png'),
+        f'{stem}_fallback.png',
         ContentFile(placeholder_png_bytes(str(pin.slug))),
         save=True,
     )
@@ -387,6 +510,28 @@ def seed_data():
         profiles_by_username[uname] = profile
         users.append(user)
 
+    david_user = User.objects.create_user(
+        username='david1anato',
+        email='david1anato@gmail.com',
+        password='password123',
+    )
+    dprof: Profile = david_user.profile
+    dprof.display_name = 'David Anato'
+    dprof.subscription_plan = Profile.PLAN_PRO
+    dprof.bio = 'Créateur Pinova — design, photo & voyage.'
+    dprof.avatar_color = 'bg-rose-500'
+    dprof.discoverable_profile = True
+    dprof.preferred_language = 'fr'
+    dprof.translation_quota_monthly = 5000
+    dprof.subscription_renewal_at = dj_tz.now() + timedelta(days=25)
+    dprof.private_profile = False
+    dprof.birth_date = date(1995, 6, 15)
+    dprof.tips_enabled = True
+    dprof.tips_url = 'https://ko-fi.com/david1anato'
+    dprof.save()
+    profiles_by_username['david1anato'] = dprof
+    users.append(david_user)
+
     # Admin peut commenter dans le seed ; même clé que pour les autres utilisateurs.
     profiles_by_username[admin.username] = admin.profile
 
@@ -396,6 +541,19 @@ def seed_data():
         others = [x for x in regular_users if x.id != u.id]
         for f in random.sample(others, k=min(4, len(others))):
             u.profile.following.add(f.profile)
+
+    DAVID_BOARDS = [
+        ('Inspirations studio', False),
+        ('Photos — Afrique', False),
+        ('Privé — clients', True),
+        ('Moodboard UI/UX', False),
+        ('Voyages 2025', False),
+        ('Textures & matières', False),
+        ('Food & recettes', False),
+        ('Architecture', False),
+        ('Street & urbain', False),
+        ('Références perso', True),
+    ]
 
     print('Création des boards…')
     boards_by_user: dict[int, list[Board]] = {}
@@ -407,7 +565,8 @@ def seed_data():
     ]
     for u in regular_users:
         boards_by_user[u.id] = []
-        for bname, is_priv in board_names[: random.randint(2, 4)]:
+        board_pairs = DAVID_BOARDS if u.username == 'david1anato' else board_names[: random.randint(2, 4)]
+        for bname, is_priv in board_pairs:
             b, _ = Board.objects.get_or_create(
                 user=u,
                 name=bname,
@@ -530,7 +689,7 @@ def seed_data():
     created_pins: list[Pin] = []
     story_pins: list[Pin] = []
 
-    print(f'Création de ~{pin_target} pins (stories réparties free/plus/pro)…')
+    print(f'Création de ~{pin_target} pins — multi-sources JPG/PNG/WebP/GIF, dimensions variées (stories free/plus/pro)…')
 
     def maybe_visibility(u: User, topic_obj: Topic) -> str:
         pr = profiles_by_username[u.username]
@@ -547,8 +706,7 @@ def seed_data():
         query = random.choice(image_queries)
         topic = random.choice(topic_names)
         topic_obj = topics_by_name[topic]
-        img_url = f'https://picsum.photos/seed/{i}_{query}/600/900'
-        temp_img = None if skip_network else download_image(img_url)
+        temp_img, media_fname = fetch_seed_image_file(f'pin{i}_{query}', skip_network)
 
         author = random.choice(regular_users)
         vis = maybe_visibility(author, topic_obj)
@@ -573,8 +731,7 @@ def seed_data():
             scheduled_publish_at=scheduled,
         )
 
-        fname = f'{query}_{i}.jpg'
-        if attach_image_to_pin(pin, temp_img, fname, skip_network):
+        if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
             pin.refresh_from_db()
 
         if is_story:
@@ -612,7 +769,10 @@ def seed_data():
             raw = pin.image.read()
             pin.image.close()
             pv = PinVariant(pin=pin, kind=PinVariant.KIND_STORY)
-            pv.image.save(f'story_variant_{pin.slug}.jpg', ContentFile(raw), save=True)
+            suf = Path(pin.image.name).suffix.lower() if pin.image and pin.image.name else '.jpg'
+            if suf not in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
+                suf = '.jpg'
+            pv.image.save(f'story_variant_{pin.slug}{suf}', ContentFile(raw), save=True)
 
         # Historique provenance minimal
         if random.random() < 0.08:
@@ -645,6 +805,49 @@ def seed_data():
 
     print(f'Pins créés : {len(created_pins)} dont {len(story_pins)} stories.')
 
+    david_u = User.objects.filter(username='david1anato').first()
+    if david_u and topics_by_name:
+        d_boards = boards_by_user.get(david_u.id, [])
+        topic_keys = list(topics_by_name.keys())
+        david_queries = ['portrait', 'studio', 'benin', 'lagos', 'texture', 'gradient', 'sunset', 'grid']
+        print('Pins additionnels pour david1anato…')
+        for di in range(180):
+            q = david_queries[di % len(david_queries)]
+            topic = random.choice(topic_keys)
+            topic_obj = topics_by_name[topic]
+            sid = 70000 + di
+            temp_img, media_fname = fetch_seed_image_file(f'david_{sid}_{q}', skip_network)
+            vis = Pin.VISIBILITY_PUBLIC if random.random() < 0.88 else Pin.VISIBILITY_FOLLOWERS
+            is_story = random.random() < 0.12
+            pin = Pin.objects.create(
+                title=f'David — {q.capitalize()} #{di + 1}',
+                description=f'Seed tableau David Anato · {topic}.',
+                author=david_u,
+                topic=topic_obj,
+                visibility=vis,
+                link=f'https://pinova.invalid/ref/david/{sid}' if random.random() < 0.12 else '',
+                is_story=is_story,
+            )
+            if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
+                pin.refresh_from_db()
+            if is_story:
+                pin.refresh_story_expiry()
+                pin.save(update_fields=['story_expires_at'])
+            if d_boards and random.random() < 0.78:
+                b = random.choice(d_boards)
+                PinBoard.objects.update_or_create(
+                    pin=pin,
+                    board=b,
+                    defaults={'position': random.randint(0, 60)},
+                )
+            created_pins.append(pin)
+            if is_story:
+                story_pins.append(pin)
+            if temp_img:
+                temp_img.close()
+        print(f'Pins David : +180 (boards remplis).')
+
+
     # Stories additionnelles pour garantir plusieurs stories par utilisateur « créatif »
     boost_users = [
         User.objects.filter(username=u).first()
@@ -656,8 +859,7 @@ def seed_data():
         topic_obj = topics_by_name[random.choice(topic_names)]
         q = extra_story_queries[j % len(extra_story_queries)]
         sid = 9000 + j
-        img_url = f'https://picsum.photos/seed/story_extra_{sid}/600/900'
-        temp_img = None if skip_network else download_image(img_url)
+        temp_img, media_fname = fetch_seed_image_file(f'story_extra_{sid}_{q}', skip_network)
         pin = Pin.objects.create(
             title=f'Story — {author.username} · {q}',
             description=f'Story seed #{j} ({author.profile.subscription_plan}).',
@@ -666,7 +868,7 @@ def seed_data():
             visibility=Pin.VISIBILITY_PUBLIC,
             is_story=True,
         )
-        attach_image_to_pin(pin, temp_img, f'story_boost_{sid}.jpg', skip_network)
+        attach_image_to_pin(pin, temp_img, media_fname, skip_network)
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
         story_pins.append(pin)
@@ -839,6 +1041,20 @@ def seed_data():
                 fedapay_payload={'seed': True},
             )
         )
+    du_pay = User.objects.filter(username='david1anato').first()
+    if du_pay and du_pay.profile.subscription_plan == Profile.PLAN_PRO:
+        pay_rows.append(
+            SubscriptionPayment(
+                user=du_pay,
+                plan=Profile.PLAN_PRO,
+                billing_cycle=SubscriptionPayment.BILLING_YEARLY,
+                amount=47000,
+                currency_iso='XOF',
+                fedapay_transaction_id=f'seed_tx_{uuid.uuid4().hex[:20]}',
+                status=SubscriptionPayment.STATUS_APPROVED,
+                fedapay_payload={'seed': True, 'david': True},
+            )
+        )
     SubscriptionPayment.objects.bulk_create(pay_rows)
 
     SupportTicket.objects.create(
@@ -858,7 +1074,7 @@ def seed_data():
 
     print(
         'Seed terminé — connexion test : password123 — '
-        f'réseau picsum={"off" if skip_network else "on"} — '
+        f'réseau images seed={"off" if skip_network else "on"} — '
         f'{len(regular_users)} utilisateurs.'
     )
 
