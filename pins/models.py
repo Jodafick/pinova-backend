@@ -20,6 +20,8 @@ class Board(models.Model):
     description = models.TextField(blank=True)
     is_private = models.BooleanField(default=False)
     collaborators = models.ManyToManyField(User, blank=True, related_name='collaborative_boards')
+    # Accès lecture invité (?share=…) pour tableaux privés
+    share_token = models.UUIDField(null=True, blank=True, unique=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -68,9 +70,9 @@ class Pin(models.Model):
 
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=300, unique=True, blank=True)
-    description = models.TextField(blank=True)
+    description = models.TextField(blank=True, max_length=1000)
     link = models.URLField(blank=True, default='')
-    image = models.ImageField(upload_to='pins/')
+    image = models.ImageField(upload_to='pins/', null=True, blank=True)
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pins')
     topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, null=True, blank=True, related_name='pins')
     visibility = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default=VISIBILITY_PUBLIC)
@@ -82,6 +84,7 @@ class Pin(models.Model):
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     is_story = models.BooleanField(default=False)
     story_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    story_video = models.FileField(upload_to='story_videos/', null=True, blank=True)
 
     def __str__(self):
         return self.title

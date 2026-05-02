@@ -30,6 +30,7 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+import uuid
 from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
 from allauth.account.models import EmailAddress
@@ -336,15 +337,27 @@ class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
     lookup_field = 'user__username'
 
+    def _share_access_ok(self, request, profile):
+        if not profile.share_token:
+            return False
+        share_raw = (request.query_params.get('share') or '').strip()
+        if not share_raw:
+            return False
+        try:
+            return uuid.UUID(share_raw) == profile.share_token
+        except ValueError:
+            return False
+
     def retrieve(self, request, *args, **kwargs):
         profile = self.get_object()
+        share_ok = self._share_access_ok(request, profile)
         if profile.private_profile:
             is_owner = request.user.is_authenticated and request.user == profile.user
             is_follower = (
                 request.user.is_authenticated
                 and profile.followers.filter(user=request.user).exists()
             )
-            if not is_owner and not is_follower:
+            if not is_owner and not is_follower and not share_ok:
                 return Response({'error': 'This profile is private'}, status=status.HTTP_403_FORBIDDEN)
         serializer = UserSerializer(profile.user, context={'request': request})
         return Response(serializer.data)
@@ -376,6 +389,15 @@ class ProfileViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='followers')
     def followers(self, request, user__username=None):
         profile = self.get_object()
+        share_ok = self._share_access_ok(request, profile)
+        if profile.private_profile:
+            is_owner = request.user.is_authenticated and request.user == profile.user
+            is_follower = (
+                request.user.is_authenticated
+                and profile.followers.filter(user=request.user).exists()
+            )
+            if not is_owner and not is_follower and not share_ok:
+                return Response({'error': 'This profile is private'}, status=status.HTTP_403_FORBIDDEN)
         data = [
             {
                 'username': follower.user.username,
@@ -391,6 +413,15 @@ class ProfileViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='following')
     def following(self, request, user__username=None):
         profile = self.get_object()
+        share_ok = self._share_access_ok(request, profile)
+        if profile.private_profile:
+            is_owner = request.user.is_authenticated and request.user == profile.user
+            is_follower = (
+                request.user.is_authenticated
+                and profile.followers.filter(user=request.user).exists()
+            )
+            if not is_owner and not is_follower and not share_ok:
+                return Response({'error': 'This profile is private'}, status=status.HTTP_403_FORBIDDEN)
         data = [
             {
                 'username': followed.user.username,
@@ -561,6 +592,19 @@ class UserMeView(APIView):
             _resolve_user_currency(request)
             return Response(UserSerializer(user, context={'request': request}).data)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProfileShareTokenView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """Crée ou régénère le jeton ?share= pour un profil privé."""
+        profile = request.user.profile
+        regenerate = str(request.data.get('regenerate', '')).lower() in ('true', '1', 'yes')
+        if regenerate or profile.share_token is None:
+            profile.share_token = uuid.uuid4()
+            profile.save(update_fields=['share_token'])
+        return Response({'share_token': str(profile.share_token)})
 
 
 class SubscriptionCheckoutView(APIView):

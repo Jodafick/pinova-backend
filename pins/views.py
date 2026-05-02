@@ -11,6 +11,7 @@ from pathlib import Path
 from django.conf import settings
 from PIL import Image
 import re
+import uuid
 from collections import OrderedDict
 from .models import (
     Pin,
@@ -22,19 +23,23 @@ from .models import (
     PrivatePinTag,
     Board,
     CommentLike,
-    TopicTranslation,
     PinViewEvent,
     SearchInteraction,
     PinBoard,
 )
 from .serializers import PinSerializer, CommentSerializer, BoardSerializer, BoardDetailSerializer, extract_hashtags
+from .comment_media import compress_comment_media_upload
 from .visibility import pin_is_visible_for_request
 from .translation import translate_text_to, detect_original_language
+from .topic_i18n import resolve_topic_language, ensure_topic_translation
+from .pagination import PinFeedPagination
 from notifications.models import Notification
 
 
 def _pin_download_absolute_url(request, pin, requested_quality, apply_watermark=False):
     """Génère (ou lit le cache) un JPEG export ; filigrane discret pour Plus/Pro."""
+    if not pin.image:
+        raise ValueError('Pin has no image')
     if requested_quality == 'standard' and not apply_watermark:
         return request.build_absolute_uri(pin.image.url)
 
@@ -94,6 +99,7 @@ class PinViewSet(viewsets.ModelViewSet):
     serializer_class = PinSerializer
     lookup_field = 'slug'
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = PinFeedPagination
 
     def _resolve_target_lang(self, request):
         explicit = request.data.get('target_lang') or request.query_params.get('target_lang')
@@ -193,6 +199,9 @@ class PinViewSet(viewsets.ModelViewSet):
             .all()
             .order_by('-created_at')
         )
+        profile_author = (self.request.query_params.get('author') or '').strip()
+        if profile_author:
+            queryset = queryset.filter(author__username=profile_author)
         topic = self.request.query_params.get('topic')
         queryset = self._apply_topic_filter(queryset, topic)
         sched = self._scheduled_publish_ok_q()
@@ -202,7 +211,7 @@ class PinViewSet(viewsets.ModelViewSet):
         story_placement_actions = frozenset({
             'list', 'discover', 'recommendations', 'following', 'home_feed',
         })
-        apply_story_placement = getattr(self, 'action', None) in story_placement_actions
+        apply_story_placement = getattr(self, 'action', None) in story_placement_actions and not profile_author
 
         if not self.request.user.is_authenticated:
             core = (
@@ -328,7 +337,7 @@ class PinViewSet(viewsets.ModelViewSet):
             })
         return groups
 
-    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='active-stories')
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='active-stories')
     def active_stories(self, request):
         username = (request.query_params.get('username') or '').strip()
         sched_ok = self._scheduled_publish_ok_q()
@@ -381,17 +390,24 @@ class PinViewSet(viewsets.ModelViewSet):
             parent_id = request.data.get('parentId') or request.data.get('parent')
             if not text and not gif_url and not media_file:
                 return Response({'error': 'Comment text, gif or media is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if gif_url and not request.user.profile.can_use_comment_gifs:
+                return Response(
+                    {'error': 'GIF links in comments require Plus or Pro plan'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             if media_file:
+                if not request.user.profile.can_use_comment_gifs:
+                    return Response(
+                        {'error': 'Images and GIFs in comments require Plus or Pro plan'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
                 if not str(getattr(media_file, 'content_type', '')).startswith('image/'):
                     return Response({'error': 'Only image files are allowed'}, status=status.HTTP_400_BAD_REQUEST)
                 if media_file.size > 5 * 1024 * 1024:
                     return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
-            is_gif_media = str(getattr(media_file, 'content_type', '')).lower() == 'image/gif' if media_file else False
-            if (gif_url or is_gif_media) and not request.user.profile.can_use_comment_gifs:
-                return Response(
-                    {'error': 'GIF comments require Plus or Pro plan'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+                media_file = compress_comment_media_upload(media_file)
+                if getattr(media_file, 'size', 0) > 5 * 1024 * 1024:
+                    return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
             parent = None
             if parent_id:
                 try:
@@ -735,32 +751,16 @@ class PinViewSet(viewsets.ModelViewSet):
         else:
             topics_qs = list(topics_qs[: (200 if search_query else limit)])
 
-        target_lang = (request.query_params.get('lang') or '').lower()
-        if not target_lang and request.user.is_authenticated:
-            target_lang = (request.user.profile.preferred_language or '').lower()
+        target_lang = resolve_topic_language(request)
         items = []
-        translator = Translator() if target_lang and target_lang not in ('fr', 'auto') else None
-        supported_langs = ['fr', 'en', 'es', 'de', 'it', 'pt', 'ar', 'ja', 'zh', 'fon']
+        translator = Translator() if target_lang != 'fr' else None
         for item in topics_qs:
             topic_name = item['name']
-            record, _ = TopicTranslation.objects.get_or_create(
-                topic=topic_name,
-                defaults={'translations': {'fr': topic_name}},
+            display_name, translations = ensure_topic_translation(
+                topic_name,
+                target_lang,
+                translator=translator,
             )
-            translations = dict(record.translations or {})
-            if 'fr' not in translations:
-                translations['fr'] = topic_name
-            if translator and target_lang in supported_langs and target_lang not in translations:
-                try:
-                    translated_name = async_to_sync(translate_text_to)(translator, topic_name, target_lang)
-                    translations[target_lang] = translated_name
-                    record.translations = translations
-                    record.save(update_fields=['translations', 'updated_at'])
-                except RuntimeError:
-                    pass
-            display_name = topic_name
-            if target_lang and target_lang not in ('auto', 'fr'):
-                display_name = translations.get(target_lang, topic_name)
             if search_query_lower:
                 if not (
                     search_query_lower in topic_name.lower()
@@ -840,6 +840,11 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': f'Quality "{requested_quality}" not allowed for your plan'},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+        if not pin.image:
+            return Response(
+                {'error': 'This pin has no image to download (video-only stories cannot be exported here).'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         try:
             apply_wm = profile.subscription_plan in {profile.PLAN_PLUS, profile.PLAN_PRO}
@@ -984,11 +989,19 @@ class BoardViewSet(viewsets.ModelViewSet):
             return base.filter(user=user)
 
         if self.action == 'retrieve':
+            share_raw = (self.request.query_params.get('share') or '').strip()
+            q_share = Q(pk__in=[])
+            if share_raw:
+                try:
+                    uid = uuid.UUID(share_raw)
+                    q_share = Q(share_token=uid)
+                except ValueError:
+                    pass
             q_public = Q(is_private=False)
             if user.is_authenticated:
                 q_mine = Q(user=user) | Q(collaborators=user)
-                return base.filter(q_public | q_mine).distinct()
-            return base.filter(q_public)
+                return base.filter(q_public | q_mine | q_share).distinct()
+            return base.filter(q_public | q_share).distinct()
 
         if user.is_authenticated:
             return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
@@ -1011,6 +1024,17 @@ class BoardViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'is_private': f'Public boards limit reached ({limits["public_max"]}).'})
         serializer.save(user=self.request.user)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='share-token')
+    def board_share_token(self, request, pk=None):
+        board = self.get_object()
+        if board.user_id != request.user.id:
+            return Response({'error': 'Only board owner can create share links'}, status=status.HTTP_403_FORBIDDEN)
+        regenerate = str(request.data.get('regenerate', '')).lower() in ('true', '1', 'yes')
+        if regenerate or board.share_token is None:
+            board.share_token = uuid.uuid4()
+            board.save(update_fields=['share_token'])
+        return Response({'share_token': str(board.share_token)})
 
     @action(detail=True, methods=['post'], url_path='add-pin')
     def add_pin(self, request, pk=None):

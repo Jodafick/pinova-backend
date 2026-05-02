@@ -47,6 +47,8 @@ class Profile(models.Model):
         blank=True,
         default='',
     )
+    # Lien de partage pour profil privé (?share=…)
+    share_token = models.UUIDField(null=True, blank=True, unique=True, editable=False)
 
     @property
     def can_use_private_tags(self):
@@ -54,6 +56,7 @@ class Profile(models.Model):
 
     @property
     def can_use_comment_gifs(self):
+        """GIF (URL ou fichier) et pièces jointes image dans les commentaires (Plus / Pro)."""
         return self.subscription_plan in {self.PLAN_PLUS, self.PLAN_PRO}
 
     @property

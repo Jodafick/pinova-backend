@@ -47,6 +47,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'notifications_recommendations',
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
+            'share_token',
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code']
 
@@ -62,6 +63,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         'notifications_followers',
         'notifications_saves',
         'notifications_recommendations',
+        'share_token',
     })
 
     def validate_preferred_currency(self, value):
@@ -94,10 +96,11 @@ class ProfileSerializer(serializers.ModelSerializer):
         return data
 
 
-from django.db.models import Count
+from django.db.models import Prefetch
 
 from pins.models import Save
-from pins.models import Board, PinBoard
+from pins.models import Board, PinBoard, Pin
+from pins.visibility import pin_is_visible_for_request
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -120,39 +123,62 @@ class UserSerializer(serializers.ModelSerializer):
         return data
 
     def get_saved_pins(self, obj):
+        request = self.context.get('request')
+        viewer = getattr(request, 'user', None) if request else None
+        if not (viewer and viewer.is_authenticated and viewer.id == obj.id):
+            return []
         return list(Save.objects.filter(user=obj).values_list('pin_id', flat=True))
 
     def get_boards(self, obj):
         request = self.context.get('request')
+        owner_view = bool(request and request.user.is_authenticated and request.user == obj)
         boards = Board.objects.filter(user=obj)
-        if not (request and request.user.is_authenticated and request.user == obj):
+        if not owner_view:
             boards = boards.filter(is_private=False)
-        boards = boards.annotate(pins_total=Count('pins')).order_by('-created_at')
-        def preview_for(board_obj):
-            rows = (
-                PinBoard.objects.filter(board=board_obj)
-                .select_related('pin')
-                .order_by('position', 'id')[:6]
+        boards = boards.prefetch_related(
+            Prefetch(
+                'pins',
+                queryset=Pin.objects.select_related('author', 'author__profile'),
             )
+        ).order_by('-created_at')
+
+        def visible_pin_count(board_obj):
+            return sum(
+                1 for p in board_obj.pins.all() if pin_is_visible_for_request(p, request)
+            )
+
+        def preview_for(board_obj):
             urls = []
-            for row in rows:
+            for row in (
+                PinBoard.objects.filter(board=board_obj)
+                .select_related('pin', 'pin__author', 'pin__author__profile')
+                .order_by('position', 'id')
+            ):
+                if not pin_is_visible_for_request(row.pin, request):
+                    continue
                 img = getattr(row.pin, 'image', None)
-                if not img:
+                if not img or not getattr(img, 'name', None):
                     continue
                 url = img.url
                 urls.append(request.build_absolute_uri(url) if request else url)
+                if len(urls) >= 6:
+                    break
             return urls
 
-        return [
-            {
+        rows_out = []
+        for board in boards:
+            row = {
                 'id': board.id,
                 'name': board.name,
-                'pinCount': board.pins_total,
+                'pinCount': visible_pin_count(board),
                 'isPrivate': board.is_private,
                 'previewImages': preview_for(board),
+                'collaboratorCount': board.collaborators.count(),
             }
-            for board in boards
-        ]
+            if owner_view and board.share_token:
+                row['share_token'] = str(board.share_token)
+            rows_out.append(row)
+        return rows_out
 
     def get_subscription(self, obj):
         profile = obj.profile

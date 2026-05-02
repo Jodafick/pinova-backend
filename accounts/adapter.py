@@ -1,7 +1,17 @@
+import logging
+
+import requests
+from django.core.files.base import ContentFile
+
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from django.contrib.auth.models import User
 from allauth.account.models import EmailAddress
+
+from .models import Profile
+
+logger = logging.getLogger(__name__)
+
 
 class NoEmailConfirmationAdapter(DefaultAccountAdapter):
     # ... (vos méthodes existantes)
@@ -20,13 +30,61 @@ class NoEmailConfirmationAdapter(DefaultAccountAdapter):
         return getattr(settings, 'FRONTEND_URL', 'http://localhost:5174') + '/login'
 
 class MySocialAccountAdapter(DefaultSocialAccountAdapter):
+    def _google_picture_url(self, sociallogin) -> str:
+        """URL photo profil Google depuis les données renvoyées par le provider."""
+        if sociallogin.account.provider != 'google':
+            return ''
+        extra = sociallogin.account.extra_data or {}
+        if not isinstance(extra, dict):
+            return ''
+        url = (extra.get('picture') or '').strip()
+        if url:
+            return url
+        user_block = extra.get('user')
+        if isinstance(user_block, dict):
+            return (user_block.get('picture') or '').strip()
+        return ''
+
+    def _sync_google_avatar_if_empty(self, user: User, sociallogin) -> None:
+        """Si le profil n’a pas encore d’avatar, télécharge la photo Google (scope profile)."""
+        if sociallogin.account.provider != 'google':
+            return
+        try:
+            profile = Profile.objects.get(user=user)
+        except Profile.DoesNotExist:
+            return
+        if profile.avatar:
+            return
+        url = self._google_picture_url(sociallogin)
+        if not url:
+            return
+        try:
+            resp = requests.get(url, timeout=15)
+            if resp.status_code != 200 or not resp.content:
+                return
+            ctype = (resp.headers.get('Content-Type') or '').lower()
+            ext = '.jpg'
+            if 'png' in ctype:
+                ext = '.png'
+            elif 'webp' in ctype:
+                ext = '.webp'
+            elif 'gif' in ctype:
+                ext = '.gif'
+            fname = f'google_avatar_{user.pk}{ext}'
+            profile.avatar.save(fname, ContentFile(resp.content), save=True)
+        except Exception as exc:
+            logger.debug('Avatar Google non importé pour %s: %s', user.username, exc)
+
     def _get_social_email(self, sociallogin):
         # Google peut renvoyer l'email dans user.email ou extra_data selon le flow OAuth.
-        return (sociallogin.user.email or sociallogin.account.extra_data.get('email') or '').strip()
+        extra = sociallogin.account.extra_data or {}
+        email_extra = extra.get('email', '') if isinstance(extra, dict) else ''
+        return (sociallogin.user.email or email_extra or '').strip()
 
     def pre_social_login(self, request, sociallogin):
         # Si le compte social est déjà lié, allauth gère la connexion directement.
         if sociallogin.is_existing:
+            self._sync_google_avatar_if_empty(sociallogin.user, sociallogin)
             return
 
         # Comportement voulu:
@@ -39,6 +97,7 @@ class MySocialAccountAdapter(DefaultSocialAccountAdapter):
         existing_user = User.objects.filter(email__iexact=email).order_by('id').first()
         if existing_user:
             sociallogin.connect(request, existing_user)
+            self._sync_google_avatar_if_empty(existing_user, sociallogin)
             return
 
         # Nouveau compte: normaliser l'email avant création automatique.
@@ -52,4 +111,5 @@ class MySocialAccountAdapter(DefaultSocialAccountAdapter):
                 email=user.email,
                 defaults={'verified': True, 'primary': True},
             )
+        self._sync_google_avatar_if_empty(user, sociallogin)
         return user

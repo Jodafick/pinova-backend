@@ -17,6 +17,7 @@ from .models import (
 
 from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
+from .topic_i18n import resolve_topic_language, ensure_topic_translation
 
 
 HASHTAG_RE = re.compile(r'#([A-Za-z0-9_]{2,80})')
@@ -195,6 +196,8 @@ class PinSerializer(serializers.ModelSerializer):
     topic = serializers.CharField(required=False, allow_blank=True)
     topic_meta = serializers.SerializerMethodField()
     boards = serializers.SerializerMethodField()
+    description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    story_video_url = serializers.SerializerMethodField(read_only=True)
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
     saves_count = serializers.IntegerField(read_only=True)
@@ -227,6 +230,8 @@ class PinSerializer(serializers.ModelSerializer):
             'description',
             'link',
             'image',
+            'story_video',
+            'story_video_url',
             'author',
             'author_profile',
             'boards',
@@ -251,7 +256,27 @@ class PinSerializer(serializers.ModelSerializer):
         read_only_fields = ['story_expires_at']
         extra_kwargs = {
             'author': {'required': False},
+            'story_video': {'write_only': True},
         }
+
+    def get_story_video_url(self, obj):
+        if not getattr(obj, 'story_video', None) or not obj.story_video.name:
+            return None
+        request = self.context.get('request')
+        url = obj.story_video.url
+        return request.build_absolute_uri(url) if request else url
+
+    def validate_story_video(self, value):
+        if not value:
+            return value
+        ct = (getattr(value, 'content_type', '') or '').split(';')[0].strip().lower()
+        allowed = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
+        if ct not in allowed:
+            raise serializers.ValidationError('Unsupported video type (use MP4, WebM or MOV).')
+        max_bytes = 48 * 1024 * 1024
+        if getattr(value, 'size', 0) > max_bytes:
+            raise serializers.ValidationError('Video too large (max 48 MB).')
+        return value
 
     def get_boards(self, obj):
         rows = (
@@ -277,6 +302,9 @@ class PinSerializer(serializers.ModelSerializer):
         if not viewer_ok:
             data.pop('scheduled_publish_at', None)
             data.pop('story_expires_at', None)
+        # Toujours exposer le nom canonique du topic (filtres API / topic=...)
+        if instance.topic_id:
+            data['topic'] = instance.topic.name
         return data
 
     def validate(self, attrs):
@@ -294,6 +322,19 @@ class PinSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({
                         'scheduled_publish_at': 'Scheduled time must be in the future.',
                     })
+        req = self.context.get('request')
+        method = getattr(req, 'method', '') if req else ''
+        if method == 'POST':
+            image = attrs.get('image')
+            vid = attrs.get('story_video')
+            if not image and not vid:
+                raise serializers.ValidationError({
+                    'non_field_errors': 'Provide an image or a story video file.',
+                })
+            raw_story = attrs.get('is_story', False)
+            is_story = raw_story is True or str(raw_story).lower() in ('true', '1', 'yes')
+            if vid and not is_story:
+                raise serializers.ValidationError({'is_story': 'Story video requires is_story=true.'})
         return attrs
 
     def get_is_liked(self, obj):
@@ -326,11 +367,20 @@ class PinSerializer(serializers.ModelSerializer):
     def get_topic_meta(self, obj):
         if not obj.topic:
             return None
+        request = self.context.get('request')
+        lang = resolve_topic_language(request)
+        canonical = obj.topic.name
+        cache = self.context.setdefault('_topic_translation_cache', {})
+        if canonical not in cache:
+            cache[canonical] = ensure_topic_translation(canonical, lang)
+        display, translations = cache[canonical]
         return {
-            'name': obj.topic.name,
+            'name': display,
+            'originalName': canonical,
             'slug': obj.topic.slug,
             'icon': obj.topic.icon,
             'color': obj.topic.color,
+            'translations': translations,
         }
 
     def _resolve_topic(self, topic_value):
@@ -439,9 +489,10 @@ class BoardDetailSerializer(BoardSerializer):
     pins = serializers.SerializerMethodField()
     owner_username = serializers.CharField(source='user.username', read_only=True)
     viewer_can_manage = serializers.SerializerMethodField()
+    share_token = serializers.SerializerMethodField()
 
     class Meta(BoardSerializer.Meta):
-        fields = list(BoardSerializer.Meta.fields) + ['pins', 'owner_username', 'viewer_can_manage']
+        fields = list(BoardSerializer.Meta.fields) + ['pins', 'owner_username', 'viewer_can_manage', 'share_token']
 
     def get_viewer_can_manage(self, obj):
         request = self.context.get('request')
@@ -449,6 +500,14 @@ class BoardDetailSerializer(BoardSerializer):
             return False
         u = request.user
         return obj.user_id == u.id or obj.collaborators.filter(id=u.id).exists()
+
+    def get_share_token(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        if obj.user_id != request.user.id:
+            return None
+        return str(obj.share_token) if obj.share_token else None
 
     def get_pins(self, obj):
         from .visibility import pin_is_visible_for_request
