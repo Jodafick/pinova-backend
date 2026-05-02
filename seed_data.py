@@ -387,6 +387,9 @@ def seed_data():
         profiles_by_username[uname] = profile
         users.append(user)
 
+    # Admin peut commenter dans le seed ; même clé que pour les autres utilisateurs.
+    profiles_by_username[admin.username] = admin.profile
+
     # Graphe de follows (pas symétrique)
     regular_users = [u for u in users if not u.is_superuser]
     for u in regular_users:
