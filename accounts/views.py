@@ -615,6 +615,7 @@ class SubscriptionConfirmView(APIView):
 
     def post(self, request):
         transaction_id = str(request.data.get('transaction_id') or '').strip()
+        callback_status = str(request.data.get('callback_status') or '').strip().lower()
         if not transaction_id:
             return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -638,6 +639,8 @@ class SubscriptionConfirmView(APIView):
             resp = requests.get(f'{base}/transactions/{transaction_id}', headers=headers, timeout=20)
             resp.raise_for_status()
             tx = resp.json() or {}
+            if callback_status:
+                tx['callback_status'] = callback_status
             paid_amount = self._extract_amount(tx)
             if paid_amount is not None and paid_amount != expected_amount:
                 payment.status = SubscriptionPayment.STATUS_FAILED
