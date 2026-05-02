@@ -2,7 +2,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count, Q, Case, When, Value, IntegerField, Max
+from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery
 from django.contrib.auth.models import User
 from django.utils import timezone
 from asgiref.sync import async_to_sync
@@ -193,6 +193,10 @@ class PinViewSet(viewsets.ModelViewSet):
         return q
 
     def get_queryset(self):
+        saved_by_me = (self.request.query_params.get('saved_by_me') or '').strip().lower() in ('1', 'true', 'yes')
+        if saved_by_me and not self.request.user.is_authenticated:
+            return Pin.objects.none()
+
         queryset = (
             Pin.objects.select_related('author', 'author__profile', 'topic')
             .prefetch_related('hashtags', 'boards')
@@ -200,6 +204,8 @@ class PinViewSet(viewsets.ModelViewSet):
             .order_by('-created_at')
         )
         profile_author = (self.request.query_params.get('author') or '').strip()
+        if saved_by_me:
+            profile_author = ''
         if profile_author:
             queryset = queryset.filter(author__username=profile_author)
         topic = self.request.query_params.get('topic')
@@ -211,7 +217,11 @@ class PinViewSet(viewsets.ModelViewSet):
         story_placement_actions = frozenset({
             'list', 'discover', 'recommendations', 'following', 'home_feed',
         })
-        apply_story_placement = getattr(self, 'action', None) in story_placement_actions and not profile_author
+        apply_story_placement = (
+            getattr(self, 'action', None) in story_placement_actions
+            and not profile_author
+            and not saved_by_me
+        )
 
         if not self.request.user.is_authenticated:
             core = (
@@ -233,7 +243,17 @@ class PinViewSet(viewsets.ModelViewSet):
         core = visibility_q & story_q & (sched | Q(author=self.request.user))
         if apply_story_placement:
             core &= placement_q
-        return queryset.filter(core).distinct()
+        queryset = queryset.filter(core).distinct()
+        if saved_by_me:
+            user = self.request.user
+            queryset = queryset.filter(id__in=Save.objects.filter(user=user).values('pin_id'))
+            saved_at_sub = (
+                Save.objects.filter(pin_id=OuterRef('pk'), user=user)
+                .order_by('-created_at')
+                .values('created_at')[:1]
+            )
+            queryset = queryset.annotate(_saved_at=Subquery(saved_at_sub)).order_by('-_saved_at')
+        return queryset
 
     def perform_create(self, serializer):
         pin = serializer.save(author=self.request.user)
