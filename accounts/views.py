@@ -654,10 +654,22 @@ class SubscriptionConfirmView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
             status_value = (tx.get('status') or '').strip().lower()
             raw_status = status_value
-            if status_value in {'approved', 'success', 'successful', 'completed'}:
+            approved_statuses = {'approved', 'success', 'successful', 'completed'}
+            negative_statuses = {'canceled', 'cancelled', 'failed', 'declined', 'rejected'}
+            effective_status = status_value
+            # Some gateways redirect with approved before transaction status is propagated.
+            if callback_status in approved_statuses and status_value not in approved_statuses and status_value not in negative_statuses:
+                effective_status = callback_status
+
+            if effective_status in approved_statuses:
                 payment.status = SubscriptionPayment.STATUS_APPROVED
                 with transaction.atomic():
-                    payment.fedapay_payload = {'transaction': tx}
+                    payment.fedapay_payload = {
+                        'transaction': tx,
+                        'gateway_status': raw_status,
+                        'callback_status': callback_status,
+                        'effective_status': effective_status,
+                    }
                     payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
                     self._apply_subscription(request.user.profile, payment, duration_days)
                 return Response({
@@ -666,17 +678,52 @@ class SubscriptionConfirmView(APIView):
                     'billing_cycle': payment.billing_cycle,
                     'duration_days': duration_days,
                     'renewal_at': request.user.profile.subscription_renewal_at,
+                    'gateway_status': raw_status,
+                    'callback_status': callback_status,
+                    'effective_status': effective_status,
                 })
-            if status_value in {'canceled', 'cancelled'}:
+            if effective_status in {'canceled', 'cancelled'}:
                 payment.status = SubscriptionPayment.STATUS_CANCELED
-            elif status_value in {'failed', 'declined', 'rejected'}:
+            elif effective_status in {'failed', 'declined', 'rejected'}:
                 payment.status = SubscriptionPayment.STATUS_FAILED
             else:
                 payment.status = SubscriptionPayment.STATUS_PENDING
-            payment.fedapay_payload = {'transaction': tx}
+            payment.fedapay_payload = {
+                'transaction': tx,
+                'gateway_status': raw_status,
+                'callback_status': callback_status,
+                'effective_status': effective_status,
+            }
             payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
-            return Response({'status': payment.status, 'gateway_status': raw_status})
+            return Response({
+                'status': payment.status,
+                'gateway_status': raw_status,
+                'callback_status': callback_status,
+                'effective_status': effective_status,
+            })
         except requests.RequestException as exc:
+            approved_statuses = {'approved', 'success', 'successful', 'completed'}
+            if callback_status in approved_statuses:
+                payment.status = SubscriptionPayment.STATUS_APPROVED
+                with transaction.atomic():
+                    payment.fedapay_payload = {
+                        'transaction': {},
+                        'callback_status': callback_status,
+                        'effective_status': callback_status,
+                        'network_error': str(exc),
+                    }
+                    payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
+                    self._apply_subscription(request.user.profile, payment, duration_days)
+                return Response({
+                    'status': 'approved',
+                    'plan': payment.plan,
+                    'billing_cycle': payment.billing_cycle,
+                    'duration_days': duration_days,
+                    'renewal_at': request.user.profile.subscription_renewal_at,
+                    'callback_status': callback_status,
+                    'effective_status': callback_status,
+                    'warning': 'Approved via callback_status fallback',
+                })
             return Response({'error': f'FedaPay error: {str(exc)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
