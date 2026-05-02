@@ -7,6 +7,7 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
 from django.conf import settings
 import os
+import re
 import requests
 from django.db import transaction
 import logging
@@ -41,6 +42,15 @@ from .currency_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_url_path_slashes(url: str):
+    value = (url or '').strip()
+    if '://' not in value:
+        return value
+    scheme, rest = value.split('://', 1)
+    rest = re.sub(r'/+', '/', rest)
+    return f'{scheme}://{rest}'
 
 def _catalog_entry(plan: str, billing_cycle: str):
     row = SubscriptionPricing.objects.filter(
@@ -424,7 +434,10 @@ class SubscriptionCheckoutView(APIView):
             currency_iso = target_currency
             conversion_applied = True
 
-        callback_url = os.environ.get('FEDAPAY_CALLBACK_URL') or f"{settings.FRONTEND_URL}/premium"
+        default_callback_url = f"{str(settings.FRONTEND_URL).rstrip('/')}/premium"
+        callback_url = _normalize_url_path_slashes(
+            os.environ.get('FEDAPAY_CALLBACK_URL') or default_callback_url
+        )
         first_name = request.user.first_name or request.user.profile.display_name or request.user.username
         last_name = request.user.last_name or 'Pinova'
 
