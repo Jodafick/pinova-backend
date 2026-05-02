@@ -50,6 +50,20 @@ class ProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code']
 
+    _PUBLIC_PROFILE_HIDDEN_FIELDS = frozenset({
+        'email',
+        'subscription_renewal_at',
+        'subscription_cancel_at_period_end',
+        'subscription_scheduled_plan',
+        'translation_quota_monthly',
+        'translation_used_monthly',
+        'ad_ads_enabled',
+        'partner_ads_enabled',
+        'notifications_followers',
+        'notifications_saves',
+        'notifications_recommendations',
+    })
+
     def validate_preferred_currency(self, value):
         normalized = normalize_currency(value)
         if not normalized:
@@ -69,8 +83,20 @@ class ProfileSerializer(serializers.ModelSerializer):
             return request.user.profile.following.filter(id=obj.id).exists()
         return False
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        viewer = getattr(request, 'user', None) if request else None
+        is_owner = viewer and viewer.is_authenticated and viewer.id == instance.user_id
+        if not is_owner:
+            for key in self._PUBLIC_PROFILE_HIDDEN_FIELDS:
+                data.pop(key, None)
+        return data
+
+
 from pins.models import Save
 from pins.models import Board
+
 
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
@@ -81,6 +107,15 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'profile', 'saved_pins', 'boards', 'subscription']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        viewer = getattr(request, 'user', None) if request else None
+        is_owner = viewer and viewer.is_authenticated and viewer.id == instance.id
+        if not is_owner:
+            data.pop('email', None)
+        return data
 
     def get_saved_pins(self, obj):
         return list(Save.objects.filter(user=obj).values_list('pin_id', flat=True))
@@ -103,6 +138,11 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_subscription(self, obj):
         profile = obj.profile
+        request = self.context.get('request')
+        viewer = getattr(request, 'user', None) if request else None
+        is_owner = viewer and viewer.is_authenticated and viewer.id == obj.id
+        if not is_owner:
+            return {'plan': profile.subscription_plan}
         return {
             'plan': profile.subscription_plan,
             'renewal_at': profile.subscription_renewal_at,
@@ -115,6 +155,7 @@ class UserSerializer(serializers.ModelSerializer):
             'cancel_at_period_end': profile.subscription_cancel_at_period_end,
             'scheduled_plan': profile.subscription_scheduled_plan or None,
         }
+
 
 class RegisterSerializer(BaseRegisterSerializer):
     username = serializers.CharField(required=False, allow_blank=True)

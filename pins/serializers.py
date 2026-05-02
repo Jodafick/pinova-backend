@@ -13,6 +13,7 @@ from .models import (
     PinProvenanceEvent,
 )
 
+from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
 
 
@@ -216,6 +217,18 @@ class PinSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'author': {'required': False},
         }
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        certified = attrs.get('certified_credit')
+        if certified is True:
+            if not request or not request.user.is_authenticated:
+                raise serializers.ValidationError({'certified_credit': 'Authentication required.'})
+            if request.user.profile.subscription_plan != Profile.PLAN_PRO:
+                raise serializers.ValidationError({
+                    'certified_credit': 'Certified creator credit requires Pro plan.',
+                })
+        return attrs
 
     def get_is_liked(self, obj):
         request = self.context.get('request')
