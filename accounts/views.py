@@ -108,14 +108,23 @@ def _subscription_catalog(target_currency: str):
             duration_days = int(values['duration_days'])
             base_currency = (values.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')).upper()
             converted_amount = convert_minor_amount(amount, base_currency, target)
+            effective_currency = target
+            effective_amount = converted_amount
+            conversion_applied = True
+            if converted_amount is None:
+                # If rate lookup fails, keep original amount/currency to avoid fake prices.
+                effective_currency = base_currency
+                effective_amount = amount
+                conversion_applied = False
             data[plan][cycle] = {
-                'amount_minor': converted_amount,
-                'amount_display': _display_amount(converted_amount, target),
-                'currency_iso': target,
+                'amount_minor': effective_amount,
+                'amount_display': _display_amount(effective_amount, effective_currency),
+                'currency_iso': effective_currency,
                 'duration_days': duration_days,
                 'source': values.get('source', 'unknown'),
                 'base_amount_minor': amount,
                 'base_currency_iso': base_currency,
+                'conversion_applied': conversion_applied,
             }
     return data
 
@@ -405,8 +414,15 @@ class SubscriptionCheckoutView(APIView):
         duration_days = int(catalog['duration_days'])
         base_currency_iso = (catalog.get('currency_iso') or os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')).upper()
         target_currency, detected_country = _resolve_user_currency(request)
-        amount = convert_minor_amount(base_amount, base_currency_iso, target_currency)
-        currency_iso = target_currency
+        converted_amount = convert_minor_amount(base_amount, base_currency_iso, target_currency)
+        if converted_amount is None:
+            amount = base_amount
+            currency_iso = base_currency_iso
+            conversion_applied = False
+        else:
+            amount = converted_amount
+            currency_iso = target_currency
+            conversion_applied = True
 
         callback_url = os.environ.get('FEDAPAY_CALLBACK_URL') or f"{settings.FRONTEND_URL}/premium"
         first_name = request.user.first_name or request.user.profile.display_name or request.user.username
@@ -426,6 +442,7 @@ class SubscriptionCheckoutView(APIView):
                 'base_amount_minor': base_amount,
                 'base_currency_iso': base_currency_iso,
                 'target_currency_iso': currency_iso,
+                'conversion_applied': conversion_applied,
             },
             'customer': {
                 'email': request.user.email,
@@ -522,6 +539,7 @@ class SubscriptionCheckoutView(APIView):
                     'duration_days': duration_days,
                     'base_amount_minor': base_amount,
                     'base_currency_iso': base_currency_iso,
+                    'conversion_applied': conversion_applied,
                 },
             }, status=status.HTTP_201_CREATED)
         except requests.RequestException as exc:

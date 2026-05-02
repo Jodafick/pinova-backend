@@ -1,10 +1,12 @@
 import logging
+import os
 import re
 from functools import lru_cache
 
 from babel.numbers import get_currency_symbol
 from babel.numbers import get_territory_currencies
-from forex_python.converter import CurrencyRates
+import requests
+from currency_converter import CurrencyConverter
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ COUNTRY_TO_CURRENCY = {
     'AU': 'AUD', 'NZ': 'NZD', 'SG': 'SGD', 'HK': 'HKD',
 }
 
-_currency_rates = CurrencyRates(force_decimal=False)
+_offline_currency_converter = CurrencyConverter(fallback_on_missing_rate=True)
 
 
 def normalize_currency(code):
@@ -110,7 +112,34 @@ def decimals_for_currency(currency_iso):
 
 @lru_cache(maxsize=512)
 def _cached_rate(base, quote):
-    return float(_currency_rates.get_rate(base, quote))
+    base_code = (base or '').upper()
+    quote_code = (quote or '').upper()
+    if not base_code or not quote_code:
+        raise ValueError('Invalid currency pair')
+    if base_code == quote_code:
+        return 1.0
+
+    # Primary: live rates API.
+    api_url = os.environ.get('CURRENCY_RATES_API_URL', 'https://open.er-api.com/v6/latest').rstrip('/')
+    timeout = int(os.environ.get('CURRENCY_RATES_TIMEOUT_SECONDS', '8'))
+    try:
+        response = requests.get(f'{api_url}/{base_code}', timeout=timeout)
+        response.raise_for_status()
+        payload = response.json() or {}
+        rates = payload.get('rates') or {}
+        rate_value = rates.get(quote_code)
+        if isinstance(rate_value, (int, float)) and rate_value > 0:
+            return float(rate_value)
+    except Exception:
+        logger.exception('Live FX provider failed for %s/%s', base_code, quote_code)
+
+    # Fallback: offline ECB data.
+    try:
+        converted = _offline_currency_converter.convert(1, base_code, quote_code)
+        return float(converted)
+    except Exception:
+        logger.exception('Offline FX fallback failed for %s/%s', base_code, quote_code)
+        raise
 
 
 def convert_minor_amount(amount_minor, from_currency, to_currency):
@@ -130,5 +159,5 @@ def convert_minor_amount(amount_minor, from_currency, to_currency):
         return int(round(converted_major * (10 ** dst_decimals)))
     except Exception:
         logger.exception('Currency conversion failed from %s to %s', src, dst)
-        return int(amount_minor)
+        return None
 
