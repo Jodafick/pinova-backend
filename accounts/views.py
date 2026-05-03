@@ -55,8 +55,10 @@ def _fedapay_normalize_transaction_body(body):
     data = body.get('data')
     if isinstance(data, list) and data and isinstance(data[0], dict):
         data = data[0]
-    if isinstance(data, dict) and any(k in data for k in ('status', 'id', 'amount', 'approved_at')):
-        return data
+    if isinstance(data, dict):
+        transaction_markers = ('status', 'id', 'amount', 'approved_at', 'reference', 'receipt_url')
+        if any(k in data for k in transaction_markers):
+            return data
     for key in ('v1/transaction', 'transaction'):
         nested = body.get(key)
         if isinstance(nested, dict) and any(k in nested for k in ('status', 'id', 'amount', 'approved_at')):
@@ -1591,6 +1593,14 @@ class SubscriptionInvoiceReceiptView(APIView):
             'Content-Type': 'application/json',
         }
 
+    @staticmethod
+    def _no_receipt(reason: str, detail: str):
+        """Montant payé existe en base mais pas de PDF / URL téléchargeable (≠ facture inexistante)."""
+        return Response(
+            {'invoice_url': None, 'reason': reason, 'detail': detail},
+            status=status.HTTP_200_OK,
+        )
+
     def get(self, request, invoice_id):
         payment = SubscriptionPayment.objects.filter(pk=invoice_id, user=request.user).first()
         if not payment:
@@ -1605,14 +1615,25 @@ class SubscriptionInvoiceReceiptView(APIView):
 
         tid = (payment.fedapay_transaction_id or '').strip()
         if not tid or tid.startswith('seed_'):
-            return Response(
-                {'invoice_url': None, 'detail': 'No downloadable receipt'},
-                status=status.HTTP_404_NOT_FOUND,
+            return self._no_receipt(
+                'no_fedapay_transaction',
+                'Aucune transaction passerelle pour ce dossier (identifiant vide, préfixe seed_, ou paiement hors FedaPay).',
             )
 
         base = self._fedapay_base_url()
         try:
             resp = requests.get(f'{base}/transactions/{tid}', headers=headers, timeout=25)
+            if resp.status_code == 404:
+                logger.warning(
+                    'subscription_invoice_receipt: FedaPay 404 — pk=%s tx=%s vérifiez FEDAPAY_ENV (sandbox vs live)',
+                    invoice_id,
+                    tid,
+                )
+                return self._no_receipt(
+                    'gateway_transaction_not_found',
+                    'Transaction introuvable chez FedaPay — alignez FEDAPAY_SECRET_KEY et '
+                    'FEDAPAY_ENV (sandbox/live) avec l’environnement où la transaction a été créée.',
+                )
             if resp.status_code >= 400:
                 logger.warning(
                     'subscription_invoice_receipt: FedaPay GET failed pk=%s status=%s',
@@ -1620,7 +1641,7 @@ class SubscriptionInvoiceReceiptView(APIView):
                     resp.status_code,
                 )
                 return Response(
-                    {'error': 'Unable to fetch receipt from gateway'},
+                    {'error': 'Unable to fetch receipt from gateway', 'upstream_status': resp.status_code},
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
             tx = resp.json() or {}
@@ -1641,9 +1662,9 @@ class SubscriptionInvoiceReceiptView(APIView):
         payment.save(update_fields=uf)
 
         if not invoice_url:
-            return Response(
-                {'invoice_url': None, 'detail': 'No receipt URL in gateway response'},
-                status=status.HTTP_404_NOT_FOUND,
+            return self._no_receipt(
+                'receipt_missing_in_gateway',
+                'La transaction existe chez FedaPay mais aucun lien de reçu / PDF n’a été trouvé dans la réponse.',
             )
         return Response({'invoice_url': invoice_url})
 
