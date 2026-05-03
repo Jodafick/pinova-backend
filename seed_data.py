@@ -654,6 +654,17 @@ def seed_topic_translations(topics_by_name: dict[str, Topic]):
     print('TopicTranslation (échantillon) créées.')
 
 
+def refresh_seed_story_created_dates(story_pins: list[Pin]) -> None:
+    """Met à jour created_at des stories seed (bandeau « récent », libellés relatifs crédibles)."""
+    if not story_pins:
+        return
+    now = dj_tz.now()
+    for p in story_pins:
+        minutes_ago = random.randint(5, 36 * 60)
+        Pin.objects.filter(pk=p.pk).update(created_at=now - timedelta(minutes=minutes_ago))
+    print(f'Stories : {len(story_pins)} dates created_at mises à jour (aléatoire, ~5 min à 36 h).')
+
+
 def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> bool:
     stem = Path(fname).stem if fname else f'pin_{pin.pk}'
     if temp_img:
@@ -787,7 +798,7 @@ def seed_data():
         ('Photos — Afrique', False),
         ('Privé — clients', True),
         ('Moodboard UI/UX', False),
-        ('Voyages 2025', False),
+        ('Voyages 2026', False),
         ('Textures & matières', False),
         ('Food & recettes', False),
         ('Architecture', False),
@@ -1122,6 +1133,8 @@ def seed_data():
             temp_img.close()
 
     print(f'Après boost stories : {len(story_pins)} stories au total.')
+
+    refresh_seed_story_created_dates(story_pins)
 
     seed_pin_variants_square_sample(created_pins)
 
