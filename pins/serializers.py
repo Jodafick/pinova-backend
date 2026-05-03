@@ -464,8 +464,10 @@ class PinSerializer(serializers.ModelSerializer):
                 })
             raw_story = attrs.get('is_story', False)
             is_story = raw_story is True or str(raw_story).lower() in ('true', '1', 'yes')
-            if vid and not is_story:
-                raise serializers.ValidationError({'is_story': 'Story video requires is_story=true.'})
+            if vid and is_story:
+                raise serializers.ValidationError({
+                    'story_video': 'Les pins au format story ne peuvent pas inclure de vidéo (image uniquement).',
+                })
             profile = req.user.profile if req and req.user.is_authenticated else None
             if profile and (image or vid):
                 if not getattr(profile, 'birth_date', None):
@@ -503,6 +505,22 @@ class PinSerializer(serializers.ModelSerializer):
                     attrs['media_sensitive_blur'] = True
                 else:
                     attrs['media_sensitive_blur'] = False
+        if method in ('PUT', 'PATCH') and self.instance:
+            pin = self.instance
+            merged_story = attrs.get('is_story', pin.is_story)
+            merged_story = merged_story is True or str(merged_story).lower() in ('true', '1', 'yes')
+            vid_up = attrs.get('story_video', serializers.empty)
+            new_video = vid_up is not serializers.empty and bool(vid_up)
+            if merged_story and new_video:
+                raise serializers.ValidationError({
+                    'story_video': ['Les pins story ne peuvent pas inclure de vidéo.'],
+                })
+            if merged_story and pin.story_video and getattr(pin.story_video, 'name', '') and vid_up is serializers.empty:
+                raise serializers.ValidationError({
+                    'is_story': [
+                        'Ce pin contient encore une vidéo : retirez-la (remplacez le média) avant d’activer le format story.',
+                    ],
+                })
         return attrs
 
     def get_is_liked(self, obj):
@@ -680,28 +698,18 @@ class PinSerializer(serializers.ModelSerializer):
         return pin
 
 
-EPHEMERAL_STORY_VIDEO_MAX_BYTES = 48 * 1024 * 1024
-EPHEMERAL_STORY_VIDEO_CT = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
-
-
 class StandaloneStoryCreateSerializer(serializers.Serializer):
-    """POST minimal story Plus/Pro sans pin persistant en grille après 24h."""
+    """POST minimal story Plus/Pro sans pin persistant en grille après 24h (image uniquement)."""
 
     image = serializers.ImageField(required=False, allow_null=True)
-    story_video = serializers.FileField(required=False, allow_null=True)
     description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     media_sensitive_blur = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         image = attrs.get('image')
-        vid = attrs.get('story_video')
-        if image and vid:
+        if not image:
             raise serializers.ValidationError({
-                'non_field_errors': ['Une seule vue : image ou vidéo pour la story éphémère.'],
-            })
-        if not image and not vid:
-            raise serializers.ValidationError({
-                'non_field_errors': ['Ajoutez une image ou une vidéo pour la story éphémère.'],
+                'non_field_errors': ['Ajoutez une image pour la story éphémère.'],
             })
 
         request = self.context.get('request')
@@ -709,16 +717,9 @@ class StandaloneStoryCreateSerializer(serializers.Serializer):
         if not profile or not getattr(profile, 'birth_date', None):
             raise serializers.ValidationError({
                 'non_field_errors': [
-                    'La date de naissance est obligatoire pour publier une image ou une vidéo.',
+                    'La date de naissance est obligatoire pour publier une image.',
                 ],
             })
-
-        if vid:
-            ct = (getattr(vid, 'content_type', '') or '').split(';')[0].strip().lower()
-            if ct not in EPHEMERAL_STORY_VIDEO_CT:
-                raise serializers.ValidationError({'story_video': 'Formats acceptés : MP4, WebM, MOV.'})
-            if getattr(vid, 'size', 0) > EPHEMERAL_STORY_VIDEO_MAX_BYTES:
-                raise serializers.ValidationError({'story_video': 'Vidéo trop lourde (max 48 Mo).'})
 
         blur = attrs.get('media_sensitive_blur', False)
         if blur is True or str(blur).lower() in ('true', '1', 'yes'):

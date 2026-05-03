@@ -1,4 +1,6 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from asgiref.sync import async_to_sync
+from googletrans import Translator
 from .models import (
     Pin,
     PinVariant,
@@ -138,7 +140,60 @@ class PrivatePinTagAdmin(admin.ModelAdmin):
 
 @admin.register(LegalDocument)
 class LegalDocumentAdmin(admin.ModelAdmin):
-    list_display = ('slug', 'updated_at')
+    list_display = ('slug', 'title_fr', 'contact_email', 'updated_at')
+    list_filter = ('slug',)
+    search_fields = ('title_fr', 'title_en', 'body_fr', 'body_en', 'contact_email')
+    readonly_fields = ('updated_at',)
+    actions = ('action_translate_en_from_fr',)
+
+    fieldsets = (
+        (None, {'fields': ('slug',)}),
+        ('Français', {'fields': ('title_fr', 'body_fr')}),
+        ('English', {'fields': ('title_en', 'body_en')}),
+        (
+            'Contact',
+            {
+                'fields': ('contact_email',),
+                'description': 'Adresse utilisée pour le lien mailto de la page « contact » uniquement.',
+            },
+        ),
+        (
+            'Traductions automatiques',
+            {
+                'fields': ('translations_cache',),
+                'classes': ('collapse',),
+                'description': 'Cache googletrans pour es, de, it, pt, ar, ja, zh (rempli à la lecture publique ou via l’action ci-dessous).',
+            },
+        ),
+        (None, {'fields': ('updated_at',)}),
+    )
+
+    @admin.action(description='Remplir EN depuis FR (googletrans)')
+    def action_translate_en_from_fr(self, request, queryset):
+        translator = Translator()
+        from .legal_page_i18n import translate_long_text_sync
+        from .translation import translate_text_to
+
+        n = 0
+        for doc in queryset:
+            t_fr = (doc.title_fr or '').strip()
+            b_fr = (doc.body_fr or '').strip()
+            if not t_fr or not b_fr:
+                self.message_user(
+                    request,
+                    f'« {doc.slug} » : titre_fr et corps_fr requis pour traduire.',
+                    level=messages.WARNING,
+                )
+                continue
+            try:
+                doc.title_en = async_to_sync(translate_text_to)(translator, t_fr, 'en', 'fr')
+                doc.body_en = translate_long_text_sync(b_fr, 'en')
+                doc.save(update_fields=['title_en', 'body_en'])
+                n += 1
+            except Exception as exc:
+                self.message_user(request, f'« {doc.slug} » : {exc}', level=messages.ERROR)
+        if n:
+            self.message_user(request, f'{n} page(s) mise(s) à jour (EN).', level=messages.SUCCESS)
 
 
 @admin.register(BoardCollaborationInvite)

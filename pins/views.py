@@ -38,7 +38,7 @@ from .models import (
     BoardCollaborationInvite,
     LegalDocument,
 )
-from .legal_defaults import default_body
+from .legal_page_i18n import build_legal_api_response
 from .search_utils import broad_pin_q, fuzzy_score
 from .serializers import (
     PinSerializer,
@@ -538,7 +538,7 @@ class PinViewSet(viewsets.ModelViewSet):
     )
     def standalone_story(self, request):
         """
-        Story Plus/Pro hors flux « pin » classique : média + légende, vidéo ou image.
+        Story Plus/Pro hors flux « pin » classique : image + légende (pas de vidéo).
         `story_ephemeral` : purge DB + fichiers après `story_expires_at` (voir management command).
         """
         _enforce_subscription_state(request.user.profile)
@@ -578,8 +578,6 @@ class PinViewSet(viewsets.ModelViewSet):
         )
         if validated.get('image'):
             pin.image = validated['image']
-        if validated.get('story_video'):
-            pin.story_video = validated['story_video']
         pin.save()
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
@@ -1901,32 +1899,7 @@ class BoardCollaborationInviteViewSet(mixins.ListModelMixin, viewsets.GenericVie
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def legal_document_detail(request, slug):
-    if slug not in ('privacy', 'terms'):
+    if slug not in (LegalDocument.SLUG_PRIVACY, LegalDocument.SLUG_TERMS, LegalDocument.SLUG_CONTACT):
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-    lang = (request.query_params.get('lang') or 'fr').strip().lower()[:2]
-    if lang not in ('fr', 'en'):
-        lang = 'fr'
-    titles = {
-        ('privacy', 'fr'): 'Politique de confidentialité',
-        ('privacy', 'en'): 'Privacy policy',
-        ('terms', 'fr'): "Conditions générales d'utilisation",
-        ('terms', 'en'): 'Terms of service',
-    }
-    title = titles.get((slug, lang), titles[(slug, 'fr')])
-    body = default_body(slug, lang)
-    doc = LegalDocument.objects.filter(slug=slug).first()
-    updated_at = None
-    if doc:
-        updated_at = doc.updated_at
-        raw_override = (doc.body_en if lang == 'en' else doc.body_fr) or ''
-        if raw_override.strip():
-            body = raw_override
-    return Response(
-        {
-            'slug': slug,
-            'lang': lang,
-            'title': title,
-            'body': body,
-            'updated_at': updated_at.isoformat() if updated_at else None,
-        }
-    )
+    lang = request.query_params.get('lang') or 'fr'
+    return Response(build_legal_api_response(slug, lang))

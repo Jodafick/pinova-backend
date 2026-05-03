@@ -424,22 +424,40 @@ class SearchInteraction(models.Model):
 
 
 class LegalDocument(models.Model):
-    """Contenu juridique surchargeable (vide = texte par défaut du code)."""
+    """Contenu des pages publiques : confidentialité, CGU, contact (titres + corps multilingue)."""
 
     SLUG_PRIVACY = 'privacy'
     SLUG_TERMS = 'terms'
+    SLUG_CONTACT = 'contact'
     SLUG_CHOICES = [
         (SLUG_PRIVACY, 'Politique de confidentialité'),
         (SLUG_TERMS, "Conditions d'utilisation"),
+        (SLUG_CONTACT, 'Contact'),
     ]
 
     slug = models.CharField(max_length=40, choices=SLUG_CHOICES, unique=True)
+    title_fr = models.CharField('Titre (FR)', max_length=500, blank=True, default='')
+    title_en = models.CharField('Titre (EN)', max_length=500, blank=True, default='')
     body_fr = models.TextField(blank=True, default='')
     body_en = models.TextField(blank=True, default='')
+    contact_email = models.EmailField(
+        'E-mail de contact',
+        blank=True,
+        default='',
+        help_text='Utilisé pour la page « contact » (mailto).',
+    )
+    translations_cache = models.JSONField(
+        'Cache traductions',
+        default=dict,
+        blank=True,
+        help_text='Rempli automatiquement (googletrans), ex. {"es": {"title": "…", "body": "…"}}.',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['slug']
+        verbose_name = 'Page publique (légal / contact)'
+        verbose_name_plural = 'Pages publiques (légal / contact)'
 
     def __str__(self):
         return self.slug

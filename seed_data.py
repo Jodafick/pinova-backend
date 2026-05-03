@@ -465,34 +465,51 @@ def seed_pinova_subscription_config():
 
 
 def seed_legal_documents():
-    """Contenus CMS juridiques surchargeables (vides = défaut code)."""
+    """Pages légales + contact (alignées sur pins.legal_defaults)."""
+    from pins.legal_defaults import (
+        CONTACT_EN,
+        CONTACT_FR,
+        PRIVACY_EN,
+        PRIVACY_FR,
+        TERMS_EN,
+        TERMS_FR,
+        default_title,
+    )
+
     LegalDocument.objects.update_or_create(
         slug=LegalDocument.SLUG_PRIVACY,
         defaults={
-            'body_fr': (
-                '<p><strong>Politique de confidentialité (seed)</strong></p>'
-                '<p>Données de démonstration uniquement. Remplacez ce texte en production.</p>'
-            ),
-            'body_en': (
-                '<p><strong>Privacy policy (seed)</strong></p>'
-                '<p>Demo content only. Replace in production.</p>'
-            ),
+            'title_fr': default_title('privacy', 'fr'),
+            'title_en': default_title('privacy', 'en'),
+            'body_fr': PRIVACY_FR,
+            'body_en': PRIVACY_EN,
+            'contact_email': '',
+            'translations_cache': {},
         },
     )
     LegalDocument.objects.update_or_create(
         slug=LegalDocument.SLUG_TERMS,
         defaults={
-            'body_fr': (
-                '<p><strong>Conditions d’utilisation (seed)</strong></p>'
-                '<p>Ceci est un texte factice pour valider l’API et le front.</p>'
-            ),
-            'body_en': (
-                '<p><strong>Terms of use (seed)</strong></p>'
-                '<p>Placeholder for API and UI testing.</p>'
-            ),
+            'title_fr': default_title('terms', 'fr'),
+            'title_en': default_title('terms', 'en'),
+            'body_fr': TERMS_FR,
+            'body_en': TERMS_EN,
+            'contact_email': '',
+            'translations_cache': {},
         },
     )
-    print('LegalDocument (privacy / terms) à jour.')
+    LegalDocument.objects.update_or_create(
+        slug=LegalDocument.SLUG_CONTACT,
+        defaults={
+            'title_fr': default_title('contact', 'fr'),
+            'title_en': default_title('contact', 'en'),
+            'body_fr': CONTACT_FR,
+            'body_en': CONTACT_EN,
+            'contact_email': 'support@pinova.app',
+            'translations_cache': {},
+        },
+    )
+    print('LegalDocument (privacy / terms / contact) à jour.')
 
 
 def random_pin_content_flags() -> dict:

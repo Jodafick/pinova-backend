@@ -152,6 +152,29 @@ You may delete your account ; we may terminate for breach.
 10. Governing law
 Choose governing law/jurisdiction aligned with Pinova operating base and mandatory consumer protections in your region (verify with counsel)."""
 
+CONTACT_FR = """Une question sur votre compte, une idée d’amélioration ou un souci technique ? Notre équipe lit tous les messages.
+
+Indiquez si possible votre nom d’utilisateur Pinova et votre navigateur (ou appareil). Pour une demande liée aux données personnelles, précisez « données personnelles » dans l’objet de votre message.
+
+Nous répondons en général sous trois à cinq jours ouvrés."""
+
+CONTACT_EN = """Questions about your account, product feedback, or a technical issue? Our team reads every message.
+
+Please include your Pinova username and browser (or device) when relevant. For privacy-related requests, include “privacy request” in the subject line.
+
+We usually reply within three to five business days."""
+
+
+def default_title(slug: str, lang: str) -> str:
+    lang = (lang or 'fr').lower().split('-')[0]
+    if slug == 'privacy':
+        return 'Privacy policy' if lang == 'en' else 'Politique de confidentialité'
+    if slug == 'terms':
+        return 'Terms of service' if lang == 'en' else "Conditions générales d'utilisation"
+    if slug == 'contact':
+        return 'Contact us' if lang == 'en' else 'Nous contacter'
+    return 'Pinova'
+
 
 def default_body(slug: str, lang: str) -> str:
     lang = (lang or 'fr').lower().split('-')[0]
@@ -159,4 +182,6 @@ def default_body(slug: str, lang: str) -> str:
         return PRIVACY_EN if lang == 'en' else PRIVACY_FR
     if slug == 'terms':
         return TERMS_EN if lang == 'en' else TERMS_FR
+    if slug == 'contact':
+        return CONTACT_EN if lang == 'en' else CONTACT_FR
     return ''
