@@ -16,6 +16,7 @@ from .currency_utils import currency_choices_with_symbols
 
 User = get_user_model()
 
+admin.site.unregister(User)
 
 @admin.register(User)
 class UserAdmin(AuthUserAdmin):

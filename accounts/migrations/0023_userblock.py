@@ -47,7 +47,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='userblock',
             constraint=models.CheckConstraint(
-                check=~Q(blocker_id=F('blocked_id')),
+                condition=~Q(blocker_id=F('blocked_id')),
                 name='userblock_no_self',
             ),
         ),

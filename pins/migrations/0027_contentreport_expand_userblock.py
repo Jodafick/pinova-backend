@@ -66,7 +66,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='contentreport',
             constraint=models.CheckConstraint(
-                check=(
+                condition=(
                     Q(pin__isnull=False, comment__isnull=True, reported_user__isnull=True)
                     | Q(pin__isnull=True, comment__isnull=False, reported_user__isnull=True)
                     | Q(pin__isnull=True, comment__isnull=True, reported_user__isnull=False)

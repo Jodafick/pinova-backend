@@ -311,7 +311,7 @@ class ContentReport(models.Model):
         ]
         constraints = [
             models.CheckConstraint(
-                check=(
+                condition=(
                     models.Q(pin__isnull=False, comment__isnull=True, reported_user__isnull=True)
                     | models.Q(pin__isnull=True, comment__isnull=False, reported_user__isnull=True)
                     | models.Q(pin__isnull=True, comment__isnull=True, reported_user__isnull=False)

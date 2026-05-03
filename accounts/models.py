@@ -351,7 +351,7 @@ class UserBlock(models.Model):
         ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(fields=['blocker', 'blocked'], name='uniq_userblock_blocker_blocked'),
-            models.CheckConstraint(check=~Q(blocker_id=F('blocked_id')), name='userblock_no_self'),
+            models.CheckConstraint(condition=~Q(blocker_id=F('blocked_id')), name='userblock_no_self'),
         ]
         indexes = [
             models.Index(fields=['blocker', '-created_at']),
