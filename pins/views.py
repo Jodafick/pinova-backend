@@ -15,7 +15,7 @@ from pathlib import Path
 from django.conf import settings
 from PIL import Image
 from accounts.models import Profile
-from accounts.blocking import filter_pins_exclude_blocked
+from accounts.blocking import filter_pins_exclude_blocked, blocked_mutual_user_ids
 from accounts.subscription_utils import _enforce_subscription_state
 from pinova_backend.throttling import client_ip_from_request
 import re
@@ -39,6 +39,7 @@ from .models import (
     LegalDocument,
 )
 from .legal_defaults import default_body
+from .search_utils import broad_pin_q, fuzzy_score
 from .serializers import (
     PinSerializer,
     StandaloneStoryCreateSerializer,
@@ -250,6 +251,7 @@ class PinViewSet(viewsets.ModelViewSet):
         ephemeral_hide_feed_actions = frozenset({
             'list',
             'discover',
+            'header_search',
             'recommendations',
             'following',
             'home_feed',
@@ -282,7 +284,7 @@ class PinViewSet(viewsets.ModelViewSet):
         placement_q = self._story_main_feed_placement_q()
         # Ne pas exclure les stories des autres dans retrieve/save/like/etc., sinon 404 sur ces pins.
         story_placement_actions = frozenset({
-            'list', 'discover', 'recommendations', 'following', 'home_feed',
+            'list', 'discover', 'header_search', 'recommendations', 'following', 'home_feed',
         })
         apply_story_placement = (
             getattr(self, 'action', None) in story_placement_actions
@@ -1018,12 +1020,108 @@ class PinViewSet(viewsets.ModelViewSet):
             queryset = queryset.exclude(author__profile__in=following_profiles).exclude(author=request.user)
         topic = (request.query_params.get('topic') or '').strip()
         queryset = self._apply_topic_filter(queryset, topic)
+        q_disc = (request.query_params.get('q') or '').strip()
+        if q_disc:
+            queryset = queryset.filter(broad_pin_q(q_disc))
         page = self.paginate_queryset(queryset.order_by('media_sensitive_blur', '-created_at'))
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='header-search')
+    def header_search(self, request):
+        """Pins + profils (recherche floue) et branche « pour vous » (recommandations) pour le bandeau."""
+        limit_raw = (request.query_params.get('limit') or '8').strip()
+        try:
+            lim = max(1, min(int(limit_raw), 20))
+        except ValueError:
+            lim = 8
+        pin_limit = lim
+        user_limit = min(10, lim + 2)
+        rec_limit = min(8, lim)
+
+        q = (request.query_params.get('q') or '').strip()
+        base_pins = self.get_queryset()
+        if request.user.is_authenticated:
+            base_pins = base_pins.exclude(author=request.user)
+
+        ctx = {'request': request}
+        pin_ids_in_results: set[int] = set()
+
+        pins_data = []
+        if len(q) >= 1:
+            candidates = list(base_pins.filter(broad_pin_q(q))[:150])
+            candidates.sort(
+                key=lambda p: -fuzzy_score(
+                    q,
+                    p.title or '',
+                    p.description or '',
+                    p.author.username,
+                )
+            )
+            pins_trim = candidates[:pin_limit]
+            pin_ids_in_results = {p.id for p in pins_trim}
+            pins_data = self.get_serializer(pins_trim, many=True, context=ctx).data
+
+        users_data = []
+        if len(q) >= 1:
+            users_qs = (
+                User.objects.select_related('profile')
+                .filter(profile__discoverable_profile=True)
+                .filter(Q(username__icontains=q) | Q(profile__display_name__icontains=q))
+            )
+            viewer = request.user if request.user.is_authenticated else None
+            if viewer and viewer.is_authenticated:
+                users_qs = users_qs.exclude(pk=viewer.pk)
+                forb = blocked_mutual_user_ids(viewer)
+                if forb:
+                    users_qs = users_qs.exclude(pk__in=forb)
+            ul = list(users_qs[:80])
+            ul.sort(
+                key=lambda u: -fuzzy_score(
+                    q,
+                    u.username,
+                    (u.profile.display_name or '') if getattr(u, 'profile', None) else '',
+                )
+            )
+            for u in ul[:user_limit]:
+                prof = u.profile
+                users_data.append(
+                    {
+                        'username': u.username,
+                        'display_name': (prof.display_name or u.username).strip() or u.username,
+                        'avatar_color': prof.avatar_color or 'bg-neutral-400',
+                        'avatar': request.build_absolute_uri(prof.avatar.url) if prof.avatar else None,
+                    }
+                )
+
+        rec_data = []
+        if request.user.is_authenticated:
+            rec_base = self.get_queryset().exclude(author=request.user)
+            topic_scores = self._build_topic_scores(request.user)
+            ranked = self._ordered_by_topic_score(rec_base, topic_scores)
+            picked = []
+            for p in ranked:
+                if p.id in pin_ids_in_results:
+                    continue
+                if q:
+                    if fuzzy_score(q, p.title or '', p.description or '', p.author.username) < 0.22:
+                        continue
+                picked.append(p)
+                if len(picked) >= rec_limit:
+                    break
+            rec_data = self.get_serializer(picked, many=True, context=ctx).data
+
+        return Response(
+            {
+                'pins': pins_data,
+                'users': users_data,
+                'recommended_pins': rec_data,
+                'query': q,
+            }
+        )
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='home-feed')
     def home_feed(self, request):

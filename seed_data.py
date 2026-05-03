@@ -15,6 +15,12 @@ Variables d'environnement optionnelles :
   miniatures Wikimedia Commons (JPEG).
 
 Les utilisateurs de test ont le mot de passe : password123
+
+Modèles couverts (création ou nettoyage) : User ; Profile ; EmailOTP ; SubscriptionPricing ;
+PinovaSubscriptionConfig ; SubscriptionPayment ; SubscriptionSeatInvitation ; SubscriptionSeatMember ;
+SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTranslation ; LegalDocument ;
+Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save ; Like ; Comment ;
+CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction.
 """
 from __future__ import annotations
 
@@ -41,20 +47,30 @@ from django.core.files import File
 from django.core.files.base import ContentFile
 from django.core.files.temp import NamedTemporaryFile
 
+from django.db import transaction
+
 from accounts.models import (
     EmailOTP,
+    PinovaSubscriptionConfig,
     Profile,
     SubscriptionPayment,
     SubscriptionPricing,
+    SubscriptionSeatInvitation,
+    SubscriptionSeatMember,
     SupportTicket,
+    UserBlock,
 )
+from accounts.subscription_seats import generate_invite_plain_token_and_hash, grant_member_seat
 from notifications.models import Notification, PushSubscription
 from pins.serializers import extract_mentions
 from pins.models import (
     Board,
+    BoardCollaborationInvite,
     Comment,
     CommentLike,
+    ContentReport,
     Hashtag,
+    LegalDocument,
     Like,
     Pin,
     PinBoard,
@@ -120,6 +136,19 @@ USER_SPECS = [
     ('Karim', Profile.PLAN_FREE),
     ('Sofia', Profile.PLAN_PLUS),
     ('Lucas', Profile.PLAN_FREE),
+]
+
+# Couleurs avatar CSS (HEX) — complètent les classes Tailwind pour tester le front.
+HEX_AVATAR_POOL = [
+    '#6366F1',
+    '#EC4899',
+    '#14B8A6',
+    '#F97316',
+    '#8B5CF6',
+    '#0D9488',
+    '#DB2777',
+    '#CA8A04',
+    '#059669',
 ]
 
 HASHTAG_POOL = [
@@ -370,6 +399,12 @@ def cleanup_relational_data():
     SupportTicket.objects.all().delete()
     EmailOTP.objects.all().delete()
 
+    ContentReport.objects.all().delete()
+    BoardCollaborationInvite.objects.all().delete()
+    UserBlock.objects.all().delete()
+    SubscriptionSeatMember.objects.all().delete()
+    SubscriptionSeatInvitation.objects.all().delete()
+
     CommentLike.objects.all().delete()
     Comment.objects.all().delete()
     Save.objects.all().delete()
@@ -419,6 +454,164 @@ def seed_subscription_pricing():
             },
         )
     print('Tarifs SubscriptionPricing à jour.')
+
+
+def seed_pinova_subscription_config():
+    cfg = PinovaSubscriptionConfig.load()
+    if cfg.annual_discount_percent != 12:
+        cfg.annual_discount_percent = 12
+        cfg.save(update_fields=['annual_discount_percent'])
+    print('PinovaSubscriptionConfig (singleton) à jour.')
+
+
+def seed_legal_documents():
+    """Contenus CMS juridiques surchargeables (vides = défaut code)."""
+    LegalDocument.objects.update_or_create(
+        slug=LegalDocument.SLUG_PRIVACY,
+        defaults={
+            'body_fr': (
+                '<p><strong>Politique de confidentialité (seed)</strong></p>'
+                '<p>Données de démonstration uniquement. Remplacez ce texte en production.</p>'
+            ),
+            'body_en': (
+                '<p><strong>Privacy policy (seed)</strong></p>'
+                '<p>Demo content only. Replace in production.</p>'
+            ),
+        },
+    )
+    LegalDocument.objects.update_or_create(
+        slug=LegalDocument.SLUG_TERMS,
+        defaults={
+            'body_fr': (
+                '<p><strong>Conditions d’utilisation (seed)</strong></p>'
+                '<p>Ceci est un texte factice pour valider l’API et le front.</p>'
+            ),
+            'body_en': (
+                '<p><strong>Terms of use (seed)</strong></p>'
+                '<p>Placeholder for API and UI testing.</p>'
+            ),
+        },
+    )
+    print('LegalDocument (privacy / terms) à jour.')
+
+
+def random_pin_content_flags() -> dict:
+    """Politique commentaires + flags modération / sensible (échantillon)."""
+    return {
+        'comments_policy': random.choices(
+            [Pin.COMMENTS_OPEN, Pin.COMMENTS_FOLLOWERS_ONLY, Pin.COMMENTS_CLOSED],
+            weights=[0.88, 0.09, 0.03],
+            k=1,
+        )[0],
+        'media_sensitive_blur': random.random() < 0.045,
+        'moderation_hidden': random.random() < 0.008,
+    }
+
+
+def seed_board_collaboration_invite_sample(boards_by_user: dict[int, list[Board]]) -> None:
+    """Invitation collab tableau (pending), distincte du M2M direct Leo/Clara."""
+    clara = User.objects.filter(username='clara').first()
+    nina = User.objects.filter(username='nina').first()
+    if not clara or not nina or not boards_by_user.get(clara.id):
+        return
+    pub_board = next((b for b in boards_by_user[clara.id] if not b.is_private), None)
+    if not pub_board:
+        return
+    BoardCollaborationInvite.objects.get_or_create(
+        board=pub_board,
+        invitee=nina,
+        defaults={
+            'invited_by': clara,
+            'status': BoardCollaborationInvite.STATUS_PENDING,
+        },
+    )
+    print('BoardCollaborationInvite (pending) créée.')
+
+
+def seed_pin_variants_square_sample(created_pins: list[Pin]) -> None:
+    """Variantes carrées (hors story) pour tester les crops API / front."""
+    candidates = [p for p in created_pins if p.image and not p.is_story]
+    random.shuffle(candidates)
+    n = 0
+    for pin in candidates[:14]:
+        if PinVariant.objects.filter(pin=pin, kind=PinVariant.KIND_SQUARE).exists():
+            continue
+        try:
+            pin.image.open('rb')
+            raw = pin.image.read()
+            pin.image.close()
+        except Exception:
+            continue
+        suf = Path(pin.image.name).suffix.lower() if pin.image.name else '.jpg'
+        if suf not in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
+            suf = '.jpg'
+        pv = PinVariant(pin=pin, kind=PinVariant.KIND_SQUARE)
+        pv.image.save(f'variant_sq_{pin.slug}{suf}', ContentFile(raw), save=True)
+        n += 1
+    print(f'PinVariant carré (seed) : {n} fichiers.')
+
+
+def seed_content_sample_reports(public_pins: list[Pin], regular_users: list[User]) -> None:
+    """Signalements pin / profil / commentaire (contraintes uniques)."""
+    if len(public_pins) < 2 or len(regular_users) < 4:
+        print('ContentReport : ignoré (données insuffisantes).')
+        return
+    pin_a, pin_b = public_pins[0], public_pins[1]
+    r0, r1, r2 = regular_users[0], regular_users[1], regular_users[2]
+    target = next((u for u in regular_users if u.id not in (r0.id, r1.id, r2.id)), regular_users[3])
+
+    ContentReport.objects.get_or_create(
+        reporter=r0,
+        pin=pin_a,
+        defaults={'category': 'spam', 'details': 'Seed : signalement pin.', 'reason': ''},
+    )
+    ContentReport.objects.get_or_create(
+        reporter=r1,
+        reported_user=target,
+        defaults={'category': 'harassment', 'details': 'Seed : signalement profil.', 'reason': ''},
+    )
+    c = Comment.objects.filter(pin=pin_b, parent__isnull=True).exclude(user=target).first()
+    if c:
+        ContentReport.objects.get_or_create(
+            reporter=r2,
+            comment=c,
+            defaults={'category': 'other', 'details': 'Seed : signalement commentaire.', 'reason': ''},
+        )
+    print('ContentReport (échantillon) créés.')
+
+
+def seed_user_blocks_sample() -> None:
+    lucas = User.objects.filter(username='lucas').first()
+    karim = User.objects.filter(username='karim').first()
+    if lucas and karim and lucas.id != karim.id:
+        UserBlock.objects.get_or_create(blocker=lucas, blocked=karim)
+        print('UserBlock (échantillon) créé.')
+
+
+def seed_subscription_seat_hub_demo(owner: User, invitee_pending: User, sponsored_member: User) -> None:
+    """Hub famille : un siège actif + invitation en attente (+ ligne refusée)."""
+    zoe = User.objects.filter(username='zoe').first()
+    with transaction.atomic():
+        _plain, digest = generate_invite_plain_token_and_hash()
+        SubscriptionSeatInvitation.objects.create(
+            owner=owner,
+            invitee=invitee_pending,
+            token_hash=digest,
+            status=SubscriptionSeatInvitation.STATUS_PENDING,
+            expires_at=dj_tz.now() + timedelta(days=5),
+        )
+        grant_member_seat(owner, sponsored_member)
+    if zoe:
+        _p2, digest2 = generate_invite_plain_token_and_hash()
+        SubscriptionSeatInvitation.objects.create(
+            owner=owner,
+            invitee=zoe,
+            token_hash=digest2,
+            status=SubscriptionSeatInvitation.STATUS_DECLINED,
+            expires_at=dj_tz.now() + timedelta(days=3),
+            responded_at=dj_tz.now() - timedelta(hours=2),
+        )
+    print('SubscriptionSeatInvitation / SubscriptionSeatMember (seed) OK.')
 
 
 def seed_topic_translations(topics_by_name: dict[str, Topic]):
@@ -475,6 +668,8 @@ def seed_data():
     User.objects.exclude(is_superuser=True).delete()
 
     seed_subscription_pricing()
+    seed_pinova_subscription_config()
+    seed_legal_documents()
 
     users: list[User] = [admin]
     profiles_by_username: dict[str, Profile] = {}
@@ -499,7 +694,7 @@ def seed_data():
         profile.display_name = display_name
         profile.subscription_plan = plan
         profile.bio = random.choice(bios)
-        profile.avatar_color = random.choice([
+        tw_avatar_colors = [
             'bg-amber-400',
             'bg-emerald-400',
             'bg-rose-400',
@@ -511,7 +706,8 @@ def seed_data():
             'bg-violet-400',
             'bg-fuchsia-400',
             'bg-pink-400',
-        ])
+        ]
+        profile.avatar_color = random.choice(HEX_AVATAR_POOL) if idx % 2 == 0 else random.choice(tw_avatar_colors)
         profile.discoverable_profile = True
         profile.preferred_language = random.choice(['fr', 'fr', 'en'])
         profile.notifications_recommendations = idx % 3 == 0
@@ -545,7 +741,8 @@ def seed_data():
     dprof.display_name = 'David Anato'
     dprof.subscription_plan = Profile.PLAN_PRO
     dprof.bio = 'Créateur Pinova — design, photo & voyage.'
-    dprof.avatar_color = 'bg-rose-500'
+    dprof.avatar_color = '#e11d48'
+    dprof.subscription_seat_bundle = 'family'
     dprof.discoverable_profile = True
     dprof.preferred_language = 'fr'
     dprof.translation_quota_monthly = 5000
@@ -609,6 +806,8 @@ def seed_data():
         pub_board = next((b for b in boards_by_user[clara.id] if not b.is_private), None)
         if pub_board:
             pub_board.collaborators.add(leo)
+
+    seed_board_collaboration_invite_sample(boards_by_user)
 
     topic_names = [
         'Maison et déco',
@@ -755,6 +954,7 @@ def seed_data():
             link=f'https://example.com/ref/{i}' if random.random() < 0.15 else '',
             is_story=is_story,
             scheduled_publish_at=scheduled,
+            **random_pin_content_flags(),
         )
 
         if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
@@ -853,6 +1053,7 @@ def seed_data():
                 visibility=vis,
                 link=f'https://pinova.invalid/ref/david/{sid}' if random.random() < 0.12 else '',
                 is_story=is_story,
+                **random_pin_content_flags(),
             )
             if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
                 pin.refresh_from_db()
@@ -893,6 +1094,7 @@ def seed_data():
             topic=topic_obj,
             visibility=Pin.VISIBILITY_PUBLIC,
             is_story=True,
+            **random_pin_content_flags(),
         )
         attach_image_to_pin(pin, temp_img, media_fname, skip_network)
         pin.refresh_story_expiry()
@@ -903,6 +1105,8 @@ def seed_data():
             temp_img.close()
 
     print(f'Après boost stories : {len(story_pins)} stories au total.')
+
+    seed_pin_variants_square_sample(created_pins)
 
     # Likes & saves croisés
     print('Likes, saves, vues, recherches…')
@@ -1032,6 +1236,9 @@ def seed_data():
             for lc in likers_c:
                 CommentLike.objects.get_or_create(user=lc, comment=c)
 
+    seed_content_sample_reports(public_pins, regular_users)
+    seed_user_blocks_sample()
+
     # Notifications factices (variété de types)
     print('Notifications…')
     notif_specs = []
@@ -1066,6 +1273,19 @@ def seed_data():
                 message='Merci de tester Pinova (seed).',
             )
         )
+        clara_n = User.objects.filter(username='clara').first()
+        nina_n = User.objects.filter(username='nina').first()
+        if clara_n and nina_n:
+            notif_specs.append(
+                Notification(
+                    recipient=nina_n,
+                    sender=clara_n,
+                    notification_type='board_invite',
+                    title='Invitation tableau',
+                    message='Clara vous invite à collaborer sur un tableau (seed).',
+                    metadata={'seed': True},
+                )
+            )
     Notification.objects.bulk_create(notif_specs)
 
     # Abonnements push factices (endpoint unique pour les tests UI)
@@ -1135,6 +1355,20 @@ def seed_data():
         message='Les pins ne se réordonnent pas sur Safari.',
         status=SupportTicket.STATUS_IN_PROGRESS,
         priority=SupportTicket.PRIORITY_PRIORITY,
+    )
+
+    karim_u = User.objects.filter(username='karim').first()
+    lucas_u = User.objects.filter(username='lucas').first()
+    if david_user and karim_u and lucas_u:
+        try:
+            seed_subscription_seat_hub_demo(david_user, karim_u, lucas_u)
+        except Exception as exc:
+            print(f'Subscription sièges (seed) ignoré : {exc}')
+
+    exp_otp = dj_tz.now() + timedelta(minutes=10)
+    EmailOTP.objects.update_or_create(
+        user=admin,
+        defaults={'otp_code': '424242', 'expires_at': exp_otp},
     )
 
     print(
