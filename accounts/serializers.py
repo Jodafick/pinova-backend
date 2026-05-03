@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Profile, EmailOTP, SubscriptionPayment
+from .models import Profile, EmailOTP, SubscriptionPayment, UserBlock
 from dj_rest_auth.registration.serializers import RegisterSerializer as BaseRegisterSerializer
 from django.core.mail import send_mail
 from django.conf import settings
@@ -118,22 +118,60 @@ from pins.models import Board, PinBoard, Pin
 from pins.visibility import pin_is_visible_for_request, count_pins_visible_on_profile
 
 
+class UserBlockSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='blocked.username', read_only=True)
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserBlock
+        fields = ('id', 'username', 'display_name', 'created_at')
+
+    def get_display_name(self, obj):
+        p = getattr(obj.blocked, 'profile', None)
+        if p and (p.display_name or '').strip():
+            return (p.display_name or '').strip()
+        return obj.blocked.username
+
+
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
     saved_pins = serializers.SerializerMethodField()
     boards = serializers.SerializerMethodField()
     subscription = serializers.SerializerMethodField()
     pins_count = serializers.SerializerMethodField()
+    blocked_usernames = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'profile', 'saved_pins', 'boards', 'subscription', 'pins_count']
+        fields = [
+            'id',
+            'username',
+            'email',
+            'profile',
+            'saved_pins',
+            'boards',
+            'subscription',
+            'pins_count',
+            'blocked_usernames',
+        ]
 
     def get_pins_count(self, obj):
         request = self.context.get('request')
         if request is None:
             return 0
         return count_pins_visible_on_profile(obj, request)
+
+    def get_blocked_usernames(self, obj):
+        request = self.context.get('request')
+        viewer = getattr(request, 'user', None) if request else None
+        if not viewer or not viewer.is_authenticated or viewer.id != obj.id:
+            return []
+        return list(
+            UserBlock.objects.filter(blocker=viewer)
+            .select_related('blocked')
+            .order_by('-created_at')
+            .values_list('blocked__username', flat=True),
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

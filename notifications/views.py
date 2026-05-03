@@ -1,6 +1,9 @@
+from django.db.models import Q
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from accounts.blocking import blocked_mutual_user_ids
+
 from .models import Notification, PushSubscription
 from .serializers import NotificationSerializer, PushSubscriptionSerializer
 from .push import get_vapid_public_key, is_push_configured
@@ -10,7 +13,11 @@ class NotificationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Notification.objects.filter(recipient=self.request.user).select_related('sender', 'sender__profile')
+        qs = Notification.objects.filter(recipient=self.request.user).select_related('sender', 'sender__profile')
+        forb = blocked_mutual_user_ids(self.request.user)
+        if forb:
+            qs = qs.filter(Q(sender__isnull=True) | ~Q(sender_id__in=forb))
+        return qs
 
     @action(detail=False, methods=['post'])
     def mark_all_as_read(self, request):

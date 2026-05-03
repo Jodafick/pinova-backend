@@ -14,6 +14,7 @@ from pathlib import Path
 from django.conf import settings
 from PIL import Image
 from accounts.models import Profile
+from accounts.blocking import filter_pins_exclude_blocked
 from accounts.subscription_utils import _enforce_subscription_state
 from pinova_backend.throttling import client_ip_from_request
 import re
@@ -68,6 +69,18 @@ from .pagination import PinFeedPagination
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
 from .weekly_stats import pro_weekly_views_stats, pin_thumbnail_absolute_url
+from .report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
+
+
+def _parse_report_request(request, *, min_details_len: int = 10):
+    """Catégorie + texte ; accepte encore `reason` (legacy) si `details` est vide. Retourne None si invalide."""
+    category = normalize_report_category(request.data.get('category'))
+    details = str(request.data.get('details') or '').strip()[:REPORT_DETAILS_MAX_LEN]
+    if not details:
+        details = str(request.data.get('reason') or '').strip()[:REPORT_DETAILS_MAX_LEN]
+    if len(details) < min_details_len:
+        return None
+    return category, details
 
 
 def _pin_download_absolute_url(request, pin, requested_quality, apply_watermark=False):
@@ -301,6 +314,7 @@ class PinViewSet(viewsets.ModelViewSet):
         queryset = queryset.filter(core).distinct()
         queryset = queryset.filter(sensitive_pins_query_filter(self.request))
         queryset = queryset.exclude(Q(moderation_hidden=True) & ~Q(author=self.request.user))
+        queryset = filter_pins_exclude_blocked(queryset, self.request)
         if saved_by_me:
             user = self.request.user
             queryset = queryset.filter(id__in=Save.objects.filter(user=user).values('pin_id'))
@@ -779,8 +793,21 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Cannot report your own content'}, status=status.HTTP_400_BAD_REQUEST)
         if ContentReport.objects.filter(reporter=request.user, pin=pin).exists():
             return Response({'status': 'already_reported', 'report_count': pin.report_count})
-        reason = (request.data.get('reason') or '')[:500]
-        ContentReport.objects.create(reporter=request.user, pin=pin, reason=reason)
+        parsed = _parse_report_request(request)
+        if parsed is None:
+            return Response(
+                {'details': ['Merci d’ajouter une brève description (10 caractères minimum).']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        category, details = parsed
+        reason_preview = details[:500]
+        ContentReport.objects.create(
+            reporter=request.user,
+            pin=pin,
+            category=category,
+            details=details,
+            reason=reason_preview,
+        )
         increment_pin_reports(pin.id)
         pin.refresh_from_db()
         apply_pin_report_thresholds(pin)
@@ -808,8 +835,21 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Cannot report your own comment'}, status=status.HTTP_400_BAD_REQUEST)
         if ContentReport.objects.filter(reporter=request.user, comment=comment).exists():
             return Response({'status': 'already_reported', 'report_count': comment.report_count})
-        reason = (request.data.get('reason') or '')[:500]
-        ContentReport.objects.create(reporter=request.user, comment=comment, reason=reason)
+        parsed = _parse_report_request(request)
+        if parsed is None:
+            return Response(
+                {'details': ['Merci d’ajouter une brève description (10 caractères minimum).']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        category, details = parsed
+        reason_preview = details[:500]
+        ContentReport.objects.create(
+            reporter=request.user,
+            comment=comment,
+            category=category,
+            details=details,
+            reason=reason_preview,
+        )
         increment_comment_reports(comment.id)
         comment.refresh_from_db()
         apply_comment_report_thresholds(comment)

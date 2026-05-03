@@ -5,6 +5,8 @@ from datetime import date
 from django.db.models import Q
 from django.utils import timezone
 
+from accounts.blocking import blocked_mutual_user_ids
+
 from .models import Pin
 
 
@@ -80,6 +82,8 @@ def count_pins_visible_on_profile(author_user, request) -> int:
     if user is not None:
         story_q |= Q(is_story=True, author=user)
 
+    if user and user != author_user and author_user.id in blocked_mutual_user_ids(user):
+        return 0
 
     if not user:
         core = (
@@ -111,6 +115,8 @@ def count_pins_visible_on_profile(author_user, request) -> int:
 def pin_is_visible_for_request(pin: Pin, request) -> bool:
     """Aligné sur PinViewSet.get_queryset pour une instance."""
     user = request.user if request.user.is_authenticated else None
+    if user and user.id != pin.author_id and pin.author_id in blocked_mutual_user_ids(user):
+        return False
     if getattr(pin, 'moderation_hidden', False):
         if not user or user.id != pin.author_id:
             return False

@@ -31,10 +31,11 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 import uuid
-from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket
+from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket, UserBlock
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
-from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer
+from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
+from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer, UserBlockSerializer
 from allauth.account.models import EmailAddress
 from .currency_utils import (
     SUPPORTED_CURRENCIES,
@@ -427,6 +428,11 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         profile = self.get_object()
+        if request.user.is_authenticated and users_are_mutually_blocked(request.user, profile.user):
+            return Response(
+                {'error': 'This profile is unavailable.', 'code': 'user_blocked'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         share_ok = self._share_access_ok(request, profile)
         if profile.private_profile:
             is_owner = request.user.is_authenticated and request.user == profile.user
@@ -446,7 +452,10 @@ class ProfileViewSet(viewsets.ModelViewSet):
         
         if current_user_profile == profile_to_follow:
             return Response({'error': 'You cannot follow yourself'}, status=status.HTTP_400_BAD_REQUEST)
-            
+
+        if users_are_mutually_blocked(request.user, profile_to_follow.user):
+            return Response({'error': 'Interaction not allowed'}, status=status.HTTP_400_BAD_REQUEST)
+
         if current_user_profile.following.filter(id=profile_to_follow.id).exists():
             current_user_profile.following.remove(profile_to_follow)
             return Response({'status': 'unfollowed'})
@@ -462,6 +471,36 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 )
             return Response({'status': 'followed'})
 
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='report')
+    def report_profile(self, request, user__username=None):
+        from pins.models import ContentReport
+        from pins.report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
+
+        profile = self.get_object()
+        if profile.user_id == request.user.id:
+            return Response({'error': 'Cannot report yourself'}, status=status.HTTP_400_BAD_REQUEST)
+        if users_are_mutually_blocked(request.user, profile.user):
+            return Response({'error': 'Interaction not allowed'}, status=status.HTTP_400_BAD_REQUEST)
+        if ContentReport.objects.filter(reporter=request.user, reported_user=profile.user).exists():
+            return Response({'status': 'already_reported'})
+        category = normalize_report_category(request.data.get('category'))
+        details = str(request.data.get('details') or '').strip()[:REPORT_DETAILS_MAX_LEN]
+        if not details:
+            details = str(request.data.get('reason') or '').strip()[:REPORT_DETAILS_MAX_LEN]
+        if len(details) < 10:
+            return Response(
+                {'details': ['Merci d’ajouter une brève description (10 caractères minimum).']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ContentReport.objects.create(
+            reporter=request.user,
+            reported_user=profile.user,
+            category=category,
+            details=details,
+            reason=details[:500],
+        )
+        return Response({'status': 'ok'})
+
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='followers')
     def followers(self, request, user__username=None):
         profile = self.get_object()
@@ -474,16 +513,20 @@ class ProfileViewSet(viewsets.ModelViewSet):
             )
             if not is_owner and not is_follower and not share_ok:
                 return Response({'error': 'This profile is private'}, status=status.HTTP_403_FORBIDDEN)
-        data = [
-            {
-                'username': follower.user.username,
-                'display_name': follower.display_name or follower.user.username,
-                'avatar_color': follower.avatar_color or 'bg-neutral-400',
-                'avatar': request.build_absolute_uri(follower.avatar.url) if follower.avatar else None,
-                'is_pro': follower.subscription_plan == Profile.PLAN_PRO,
-            }
-            for follower in profile.followers.select_related('user').order_by('user__username')[:200]
-        ]
+        forb = blocked_mutual_user_ids(request.user) if request.user.is_authenticated else frozenset()
+        data = []
+        for follower in profile.followers.select_related('user').order_by('user__username')[:200]:
+            if forb and follower.user_id in forb:
+                continue
+            data.append(
+                {
+                    'username': follower.user.username,
+                    'display_name': follower.display_name or follower.user.username,
+                    'avatar_color': follower.avatar_color or 'bg-neutral-400',
+                    'avatar': request.build_absolute_uri(follower.avatar.url) if follower.avatar else None,
+                    'is_pro': follower.subscription_plan == Profile.PLAN_PRO,
+                }
+            )
         return Response({'results': data})
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='following')
@@ -498,17 +541,50 @@ class ProfileViewSet(viewsets.ModelViewSet):
             )
             if not is_owner and not is_follower and not share_ok:
                 return Response({'error': 'This profile is private'}, status=status.HTTP_403_FORBIDDEN)
-        data = [
-            {
-                'username': followed.user.username,
-                'display_name': followed.display_name or followed.user.username,
-                'avatar_color': followed.avatar_color or 'bg-neutral-400',
-                'avatar': request.build_absolute_uri(followed.avatar.url) if followed.avatar else None,
-                'is_pro': followed.subscription_plan == Profile.PLAN_PRO,
-            }
-            for followed in profile.following.select_related('user').order_by('user__username')[:200]
-        ]
+        forb = blocked_mutual_user_ids(request.user) if request.user.is_authenticated else frozenset()
+        data = []
+        for followed in profile.following.select_related('user').order_by('user__username')[:200]:
+            if forb and followed.user_id in forb:
+                continue
+            data.append(
+                {
+                    'username': followed.user.username,
+                    'display_name': followed.display_name or followed.user.username,
+                    'avatar_color': followed.avatar_color or 'bg-neutral-400',
+                    'avatar': request.build_absolute_uri(followed.avatar.url) if followed.avatar else None,
+                    'is_pro': followed.subscription_plan == Profile.PLAN_PRO,
+                }
+            )
         return Response({'results': data})
+
+
+class UserBlockViewSet(viewsets.ModelViewSet):
+    """Liste / création / suppression des comptes bloqués par l’utilisateur connecté."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserBlockSerializer
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        return (
+            UserBlock.objects.filter(blocker=self.request.user)
+            .select_related('blocked', 'blocked__profile')
+            .order_by('-created_at')
+        )
+
+    def create(self, request, *args, **kwargs):
+        raw = (request.data.get('username') or '').strip()
+        if not raw:
+            return Response({'username': ['Ce champ est requis.']}, status=status.HTTP_400_BAD_REQUEST)
+        target = User.objects.filter(username__iexact=raw).first()
+        if not target:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        if target.id == request.user.id:
+            return Response({'error': 'Cannot block yourself'}, status=status.HTTP_400_BAD_REQUEST)
+        obj, created = UserBlock.objects.get_or_create(blocker=request.user, blocked=target)
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = User.objects.all()
@@ -523,6 +599,9 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         viewer = getattr(request, 'user', None)
         if viewer and viewer.is_authenticated:
             users = users.exclude(pk=viewer.pk)
+            forb = blocked_mutual_user_ids(viewer)
+            if forb:
+                users = users.exclude(pk__in=forb)
 
         if query:
             users = users.filter(
@@ -611,6 +690,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         my_profile = request.user.profile
         following_ids = list(my_profile.following.values_list('user_id', flat=True))
         following_ids.append(request.user.id)
+        exclude_user_ids = set(following_ids) | set(blocked_mutual_user_ids(request.user))
 
         topic_rows = (
             request.user.likes.select_related('pin')
@@ -623,7 +703,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
 
         candidates = (
             User.objects.select_related('profile')
-            .exclude(id__in=following_ids)
+            .exclude(id__in=exclude_user_ids)
             .filter(profile__discoverable_profile=True)
             .annotate(
                 followers_total=models.Count('profile__followers', distinct=True),

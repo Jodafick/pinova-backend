@@ -5,6 +5,7 @@ from django.utils import timezone
 from datetime import timedelta
 from django.db import models
 from django.contrib.auth.models import User
+from django.db.models import F, Q
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -337,6 +338,28 @@ class SubscriptionSeatMember(models.Model):
 
     def __str__(self):
         return f'seat {self.member_id} @ {self.owner_id}'
+
+
+class UserBlock(models.Model):
+    """Le bloqueur ne voit plus le contenu du bloqué ; le bloqué ne voit plus celui du bloqueur (symétrique côté flux)."""
+
+    blocker = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_blocks_made')
+    blocked = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_blocks_received')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['blocker', 'blocked'], name='uniq_userblock_blocker_blocked'),
+            models.CheckConstraint(check=~Q(blocker_id=F('blocked_id')), name='userblock_no_self'),
+        ]
+        indexes = [
+            models.Index(fields=['blocker', '-created_at']),
+            models.Index(fields=['blocked', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.blocker_id} blocked {self.blocked_id}'
 
 
 @receiver(post_save, sender=User)

@@ -1,12 +1,12 @@
 from allauth.socialaccount.signals import social_account_added
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
 from pins.storage_media import unlink_field_file
 
-from .models import Profile
+from .models import Profile, UserBlock
 
 
 @receiver(social_account_added)
@@ -44,3 +44,14 @@ def notify_social_signup(sender, request, sociallogin, **kwargs):
 @receiver(post_delete, sender=Profile)
 def purge_profile_avatar_file(sender, instance, **kwargs):
     unlink_field_file(instance.avatar)
+
+
+@receiver(post_save, sender=UserBlock)
+def userblock_remove_mutual_follows(sender, instance, created, **kwargs):
+    """Un blocage retire les abonnements croisés (M2M following)."""
+    if not created:
+        return
+    blocker_profile = instance.blocker.profile
+    blocked_profile = instance.blocked.profile
+    blocker_profile.following.remove(blocked_profile)
+    blocked_profile.following.remove(blocker_profile)

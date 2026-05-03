@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 
+from .report_constants import REPORT_CATEGORY_CHOICES
 from .storage_media import unlink_field_file
 
 
@@ -278,7 +279,7 @@ class Comment(models.Model):
 
 
 class ContentReport(models.Model):
-    """Signalement utilisateur (pin ou commentaire)."""
+    """Signalement utilisateur (profil, pin / story, commentaire)."""
 
     reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name='content_reports')
     pin = models.ForeignKey(Pin, null=True, blank=True, on_delete=models.CASCADE, related_name='reports')
@@ -289,6 +290,15 @@ class ContentReport(models.Model):
         on_delete=models.CASCADE,
         related_name='reports',
     )
+    reported_user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='profile_reports_received',
+    )
+    category = models.CharField(max_length=32, choices=REPORT_CATEGORY_CHOICES, default='other')
+    details = models.TextField(blank=True)
     reason = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -297,12 +307,30 @@ class ContentReport(models.Model):
         indexes = [
             models.Index(fields=['pin', '-created_at']),
             models.Index(fields=['comment', '-created_at']),
+            models.Index(fields=['reported_user', '-created_at']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(pin__isnull=False, comment__isnull=True, reported_user__isnull=True)
+                    | models.Q(pin__isnull=True, comment__isnull=False, reported_user__isnull=True)
+                    | models.Q(pin__isnull=True, comment__isnull=True, reported_user__isnull=False)
+                ),
+                name='contentreport_exactly_one_target',
+            ),
+            models.UniqueConstraint(
+                fields=['reporter', 'reported_user'],
+                condition=models.Q(reported_user__isnull=False),
+                name='contentreport_unique_profile_per_reporter',
+            ),
         ]
 
     def __str__(self):
         if self.pin_id:
             return f'report pin {self.pin_id} by {self.reporter_id}'
-        return f'report comment {self.comment_id} by {self.reporter_id}'
+        if self.comment_id:
+            return f'report comment {self.comment_id} by {self.reporter_id}'
+        return f'report profile {self.reported_user_id} by {self.reporter_id}'
 
 
 class CommentLike(models.Model):

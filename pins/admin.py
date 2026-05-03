@@ -116,10 +116,10 @@ class CommentLikeAdmin(admin.ModelAdmin):
 
 @admin.register(ContentReport)
 class ContentReportAdmin(admin.ModelAdmin):
-    list_display = ('id', 'reporter', 'pin', 'comment', 'created_at')
-    list_filter = ('created_at',)
-    search_fields = ('reason', 'reporter__username')
-    raw_id_fields = ('reporter', 'pin', 'comment')
+    list_display = ('id', 'reporter', 'category', 'pin', 'comment', 'reported_user', 'created_at')
+    list_filter = ('created_at', 'category')
+    search_fields = ('reason', 'details', 'reporter__username', 'reported_user__username')
+    raw_id_fields = ('reporter', 'pin', 'comment', 'reported_user')
 
 
 @admin.register(Hashtag)
