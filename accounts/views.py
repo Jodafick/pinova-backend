@@ -195,6 +195,50 @@ def _normalized_seat_bundle(raw) -> str:
     return SUBSCRIPTION_BUNDLE_SOLO
 
 
+def _fedapay_checkout_customer_names(user):
+    """Prénom / nom pour les reçus FedaPay : priorité au nom affiché du profil, sans suffixe forcé « Pinova »."""
+    profile = getattr(user, 'profile', None)
+    display = (getattr(profile, 'display_name', None) or '').strip()
+    if display:
+        parts = display.split(None, 1)
+        first_name = parts[0][:100]
+        if len(parts) > 1:
+            last_name = parts[1][:100].strip()
+            return first_name, last_name
+        ln = (getattr(user, 'last_name', None) or '').strip()[:100]
+        if ln:
+            return first_name, ln
+        return first_name, '-'
+
+    fn = (getattr(user, 'first_name', None) or '').strip()
+    ln = (getattr(user, 'last_name', None) or '').strip()
+    combined = f'{fn} {ln}'.strip()
+    if combined and re.match(r'^pinova(\s|-|_|$)', combined, flags=re.I):
+        rest = re.sub(r'^pinova[\s_-]*', '', combined, count=1, flags=re.I).strip()
+        if rest:
+            parts = rest.split(None, 1)
+            return parts[0][:100], ((parts[1] if len(parts) > 1 else '-')[:100])
+    if fn or ln:
+        return (fn or user.username)[:100], (ln or '-')[:100]
+    return (user.username or 'client')[:100], '-'
+
+
+def _fedapay_checkout_description(plan: str, billing_cycle: str, seat_bundle: str) -> str:
+    """Libellé transaction / reçu, formulation lisible côté client (évite tout en camelCase dans la description)."""
+    plan_labels = {Profile.PLAN_PLUS: 'Pinova Plus', Profile.PLAN_PRO: 'Pinova Pro'}
+    cycle_labels = {'monthly': 'facturation mensuelle', 'yearly': 'facturation annuelle'}
+    bundle = _normalized_seat_bundle(seat_bundle)
+    bundle_chunks = []
+    if bundle == SUBSCRIPTION_BUNDLE_FAMILY:
+        bundle_chunks.append('offre famille')
+    elif bundle == SUBSCRIPTION_BUNDLE_TEAM:
+        bundle_chunks.append('offre équipe')
+    bits = ['Abonnement', plan_labels.get(plan, 'Pinova ' + plan.title())]
+    bits.append(cycle_labels.get(billing_cycle, billing_cycle))
+    bits.extend(bundle_chunks)
+    return ' · '.join(bits)
+
+
 def _plus_trial_duration_days() -> int:
     try:
         return max(1, min(90, int(os.environ.get('SUBSCRIPTION_PLUS_TRIAL_DAYS', '14'))))
@@ -845,27 +889,13 @@ class SubscriptionCheckoutView(APIView):
         callback_url = _normalize_url_path_slashes(
             os.environ.get('FEDAPAY_CALLBACK_URL') or default_callback_url
         )
-        first_name = request.user.first_name or request.user.profile.display_name or request.user.username
-        last_name = request.user.last_name or 'Pinova'
+        first_name, last_name = _fedapay_checkout_customer_names(request.user)
 
         payload = {
-            'description': f"Pinova {plan.title()} ({billing_cycle}){f' [{seat_bundle}]' if seat_bundle != SUBSCRIPTION_BUNDLE_SOLO else ''}",
+            'description': _fedapay_checkout_description(plan, billing_cycle, seat_bundle),
             'amount': amount,
             'currency': {'iso': currency_iso},
             'callback_url': callback_url,
-            'custom_metadata': {
-                'user_id': request.user.id,
-                'plan': plan,
-                'billing_cycle': billing_cycle,
-                'duration_days': duration_days,
-                'country_code': detected_country,
-                'base_amount_minor': base_amount,
-                'base_currency_iso': base_currency_iso,
-                'target_currency_iso': currency_iso,
-                'conversion_applied': conversion_applied,
-                'seat_bundle': seat_bundle,
-                'bundle_discount_fraction': 0.0,
-            },
             'customer': {
                 'email': request.user.email,
                 'firstname': first_name[:100],

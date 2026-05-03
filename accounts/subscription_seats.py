@@ -11,7 +11,6 @@ Toute tentative d’élévation doit repasser par ces gardes serveur uniquement 
 from __future__ import annotations
 
 import hashlib
-import hmac
 import os
 import secrets
 
@@ -102,13 +101,6 @@ def _hash_token(secret: str) -> str:
 def generate_invite_plain_token_and_hash() -> tuple[str, str]:
     plain = secrets.token_urlsafe(32)
     return plain, _hash_token(plain)
-
-
-def verify_invite_tokens_match(plaintext: str, stored_hash: str) -> bool:
-    if not plaintext or not stored_hash:
-        return False
-    cand = _hash_token(plaintext)
-    return hmac.compare_digest(cand.encode('ascii'), stored_hash.encode('ascii'))
 
 
 def revoke_all_seats_for_owner(owner: User):

@@ -27,7 +27,6 @@ from .subscription_seats import (
     revoke_all_seats_for_owner,
     slots_used,
     strip_member_seat_entitlement,
-    verify_invite_tokens_match,
 )
 from .models import Profile, SubscriptionSeatInvitation, SubscriptionSeatMember
 
@@ -158,7 +157,7 @@ class SubscriptionSeatInviteCreateView(APIView):
         if not invitee_eligible(ip):
             return Response({'error': GENERIC_DENY_MSG}, status=status.HTTP_400_BAD_REQUEST)
 
-        plain, digest = generate_invite_plain_token_and_hash()
+        _plain_token, digest = generate_invite_plain_token_and_hash()
         expires = timezone.now() + timedelta(hours=SUBSCRIPTION_SEAT_INVITE_EXPIRY_HOURS)
 
         try:
@@ -185,10 +184,11 @@ class SubscriptionSeatInviteCreateView(APIView):
             metadata={'seat_invite_id': str(inv.id), 'kind': 'subscription_seat_invite'},
         )
 
+        # token_hash conserve une empreinte en base pour d’éventuels audits ; l’acceptation
+        # ne repose que sur l’utilisateur authentifié (comme les invitations board collaboratif).
         return Response(
             {
                 'id': str(inv.id),
-                'invite_token': plain,
                 'expires_at': inv.expires_at.isoformat(),
                 'invitee_username': target.username,
             },
@@ -229,10 +229,6 @@ class SubscriptionSeatInviteDetailView(APIView):
             or inv.expires_at < timezone.now()
         ):
             return Response({'error': GENERIC_DENY_MSG}, status=status.HTTP_404_NOT_FOUND)
-
-        plaintext = str(request.data.get('token') or '').strip()
-        if not verify_invite_tokens_match(plaintext, inv.token_hash):
-            return Response({'error': GENERIC_DENY_MSG}, status=status.HTTP_403_FORBIDDEN)
 
         if action == 'decline':
             with transaction.atomic():
