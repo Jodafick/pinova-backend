@@ -9,13 +9,9 @@ Variables d'environnement optionnelles :
   SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420)
   SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG uniquement en local.
 
-  David Anato (david1anato) — engagement de démo (Faker + Mimesis) :
-  SEED_DAVID_ENGAGEMENT=0  — désactive la vague « fans David » (défaut sans variable : activé).
-  SEED_DAVID_MEGA=1       — volumes plus grands (sinon valeurs « raisonnables » pour dev).
-  SEED_DAVID_FOLLOWERS    — nombre de comptes fans (défaut 450 ou 12000 si MEGA).
-  SEED_DAVID_FOLLOWERS_CAP — plafond sécurité (défaut 60000 ; pas des « millions » d’Users : trop lourd).
-  SEED_DAVID_VIEW_EVENTS  — lignes PinViewEvent (défaut 22k ou 1_200_000 si MEGA ; plafond SEED_DAVID_VIEW_EVENTS_CAP défaut 8M).
-  SEED_DAVID_LIKE_PINS_PER_FAN — likes distincts / fan sur les pins David (défaut 18 ou 90 si MEGA).
+  David Anato (david1anato) : la vague « fans » (followers, likes, PinViewEvent) est toujours exécutée
+  après création des pins ; volumes modérés pour le dev (voir constantes SEED_DAVID_FAN_* en tête de
+  seed_david_fan_army dans ce fichier).
 
   Images avec réseau : picsum (seed, id, aléatoire, grayscale),
   placehold.co (.png/.jpg/.webp + couleur), dummyimage (.png/.gif),
@@ -29,6 +25,8 @@ PinovaSubscriptionConfig ; SubscriptionPayment ; SubscriptionSeatInvitation ; Su
 SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTranslation ; LegalDocument ;
 Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save ; Like ; Comment ;
 CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction.
+
+Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
 """
 from __future__ import annotations
 
@@ -673,41 +671,39 @@ def refresh_seed_story_created_dates(story_pins: list[Pin]) -> None:
     print(f'Stories : {len(story_pins)} dates created_at mises à jour (aléatoire, ~5 min à 36 h).')
 
 
+# Vague « fans » david1anato — exécutée à chaque seed (ajuster ici pour stresser l’API en local).
+SEED_DAVID_FAN_FOLLOWERS = 450
+SEED_DAVID_FAN_VIEW_EVENTS = 22000
+SEED_DAVID_FAN_LIKES_PER_FAN = 18
+SEED_DAVID_FAN_FOLLOWERS_CAP = 60000
+SEED_DAVID_FAN_VIEW_EVENTS_CAP = 8000000
+
+
 def seed_david_fan_army(david_user: User) -> None:
     """
     Followers + likes + PinViewEvent pour david1anato (compteurs API réels).
 
-    Les « millions » d’utilisateurs ou de lignes en une seule commande ne sont pas réalistes
-    (temps / disque / mémoire) : utilisez SEED_DAVID_* pour monter progressivement, ou plusieurs passes.
+    Les volumes très élevés en une seule commande restent limités par les constantes ci-dessus
+    (temps / disque / mémoire).
     """
-    if os.environ.get('SEED_DAVID_ENGAGEMENT', '1').lower() not in ('1', 'true', 'yes'):
-        print('seed_david_fan_army : désactivé (SEED_DAVID_ENGAGEMENT≠1).')
-        return
     try:
         from faker import Faker
-        from mimesis import Person
-        from mimesis.locales import Locale
     except ImportError:
-        print('seed_david_fan_army : paquets « Faker » et « mimesis » manquants — pip install -r requirements.txt')
+        print('seed_david_fan_army : paquet « Faker » manquant — pip install -r requirements.txt')
         return
 
     from django.contrib.auth.hashers import make_password
 
-    mega = os.environ.get('SEED_DAVID_MEGA', '').lower() in ('1', 'true', 'yes')
-    cap_followers = int(os.environ.get('SEED_DAVID_FOLLOWERS_CAP', '60000'))
-    cap_views = int(os.environ.get('SEED_DAVID_VIEW_EVENTS_CAP', '8000000'))
-    n_followers = int(os.environ.get('SEED_DAVID_FOLLOWERS', '12000' if mega else '450'))
-    n_followers = max(0, min(n_followers, cap_followers))
-    n_views = int(os.environ.get('SEED_DAVID_VIEW_EVENTS', '1200000' if mega else '22000'))
-    n_views = max(0, min(n_views, cap_views))
-    likes_per_fan = int(os.environ.get('SEED_DAVID_LIKE_PINS_PER_FAN', '90' if mega else '18'))
-    likes_per_fan = max(0, likes_per_fan)
+    cap_followers = SEED_DAVID_FAN_FOLLOWERS_CAP
+    cap_views = SEED_DAVID_FAN_VIEW_EVENTS_CAP
+    n_followers = max(0, min(int(SEED_DAVID_FAN_FOLLOWERS), cap_followers))
+    n_views = max(0, min(int(SEED_DAVID_FAN_VIEW_EVENTS), cap_views))
+    likes_per_fan = max(0, int(SEED_DAVID_FAN_LIKES_PER_FAN))
 
     if n_followers == 0 and n_views == 0 and likes_per_fan == 0:
         return
 
     fake = Faker('fr_FR')
-    person_fr = Person(Locale.FR)
     pw_hash = make_password('!seed_fan_inactive!')
     david_profile = Profile.objects.get(user_id=david_user.id)
     pin_ids = list(Pin.objects.filter(author=david_user).values_list('id', flat=True))
@@ -750,7 +746,7 @@ def seed_david_fan_army(david_user: User) -> None:
 
         profiles_chunk: list[Profile] = []
         for u in resolved_chunk:
-            display = str(person_fr.full_name() if random.random() < 0.55 else fake.name())[:255]
+            display = str(fake.name())[:255]
             profiles_chunk.append(
                 Profile(
                     user=u,
@@ -849,14 +845,24 @@ def seed_data():
     profiles_by_username: dict[str, Profile] = {}
 
     print('Création des utilisateurs et profils…')
-    bios = [
-        'Designer & curieux.',
-        'Photos du quotidien.',
-        'Minimalisme et voyages.',
-        'Creative coder.',
-        '',
-        'Fan de street art.',
-    ]
+    try:
+        from faker import Faker as _FakerForBios
+
+        _fb = _FakerForBios('fr_FR')
+        _fb.seed_instance(9000 + pin_target)
+        bios = [
+            (_fb.sentence(nb_words=random.randint(4, 10))).replace('.', '').strip() + '.'
+            for _ in range(10)
+        ]
+    except ImportError:
+        bios = [
+            'Designer & curieux.',
+            'Photos du quotidien.',
+            'Minimalisme et voyages.',
+            'Creative coder.',
+            '',
+            'Fan de street art.',
+        ]
     for idx, (display_name, plan) in enumerate(USER_SPECS):
         uname = display_name.lower()
         user = User.objects.create_user(

@@ -30,8 +30,8 @@ class Command(BaseCommand):
             if not email:
                 skipped += 1
                 continue
-            queryset, total_events = pro_weekly_views_stats(user, days=7)
-            top = list(queryset[:10])
+            pins_ranked, total_events = pro_weekly_views_stats(user, days=7)
+            top = pins_ranked[:10]
             if total_events <= 0 or not top:
                 skipped += 1
                 continue

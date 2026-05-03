@@ -68,11 +68,15 @@ from .moderation import (
 )
 from .translation import translate_text_to, detect_original_language
 from .topic_i18n import resolve_topic_language, ensure_topic_translation
-from .pagination import PinFeedPagination
+from .pagination import PinFeedPagination, BoardListPagination
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
-from .weekly_stats import pro_weekly_views_stats, pin_thumbnail_absolute_url
+from .creator_analytics import creator_totals_for_user, paginated_creator_top_pins
+from .weekly_stats import weekly_creator_pins_page, pin_thumbnail_absolute_url
 from .report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
+
+# Borne mémoire pour mélange following / discover (home_feed) et tri par score sujet.
+FEED_INTERLEAVE_SOURCE_CAP = 2500
 
 
 def _parse_report_request(request, *, min_details_len: int = 10):
@@ -159,10 +163,12 @@ class PinViewSet(viewsets.ModelViewSet):
             return (request.user.profile.preferred_language or 'fr').lower()
         return 'fr'
 
-    def _ordered_by_topic_score(self, queryset, topic_scores):
+    def _ordered_by_topic_score(self, queryset, topic_scores, cap=FEED_INTERLEAVE_SOURCE_CAP):
+        cap = max(100, min(int(cap), 5000))
+        base_qs = queryset.order_by('media_sensitive_blur', '-created_at')[:cap]
         if not topic_scores:
-            return list(queryset.order_by('media_sensitive_blur', '-created_at'))
-        items = list(queryset)
+            return list(base_qs)
+        items = list(base_qs)
         items.sort(
             key=lambda pin: (
                 topic_scores.get(self._pin_topic_name(pin), 0),
@@ -1141,8 +1147,12 @@ class PinViewSet(viewsets.ModelViewSet):
             discover_queryset = self._apply_topic_filter(discover_queryset, topic)
 
         topic_scores = self._build_topic_scores(request.user)
-        following_items = list(following_queryset.order_by('media_sensitive_blur', '-created_at'))
-        discover_items = self._ordered_by_topic_score(discover_queryset, topic_scores)
+        following_items = list(
+            following_queryset.order_by('media_sensitive_blur', '-created_at')[:FEED_INTERLEAVE_SOURCE_CAP]
+        )
+        discover_items = self._ordered_by_topic_score(
+            discover_queryset, topic_scores, cap=FEED_INTERLEAVE_SOURCE_CAP
+        )
 
         mixed = []
         follow_idx = 0
@@ -1361,35 +1371,32 @@ class PinViewSet(viewsets.ModelViewSet):
                 {'error': 'Advanced stats require Pro plan'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        my_pins = Pin.objects.filter(author=request.user)
-        totals = my_pins.aggregate(
-            pins=Count('id'),
-            likes=Count('likes', distinct=True),
-            saves=Count('saves', distinct=True),
-            comments=Count('comments', distinct=True),
-            views=Count('view_events', distinct=True),
-        )
-        top_pins = (
-            my_pins.annotate(
-                likes_total=Count('likes', distinct=True),
-                saves_total=Count('saves', distinct=True),
-                views_total=Count('view_events', distinct=True),
-            )
-            .order_by('-views_total', '-saves_total', '-likes_total', '-created_at')[:5]
+        user = request.user
+        try:
+            top_page = int(request.query_params.get('top_page') or 1)
+        except ValueError:
+            top_page = 1
+        try:
+            top_page_size = int(request.query_params.get('top_page_size') or 10)
+        except ValueError:
+            top_page_size = 10
+        top_page = max(1, top_page)
+
+        totals = creator_totals_for_user(user)
+        top_pins_payload, top_total, t_page, t_psize, t_pages = paginated_creator_top_pins(
+            user, page=top_page, page_size=top_page_size
         )
         return Response({
             'totals': totals,
-            'top_pins': [
-                {
-                    'id': pin.id,
-                    'slug': pin.slug,
-                    'title': pin.title,
-                    'likes': pin.likes_total,
-                    'saves': pin.saves_total,
-                    'views': pin.views_total,
-                }
-                for pin in top_pins
-            ],
+            'top_pins': top_pins_payload,
+            'top_pins_pagination': {
+                'page': t_page,
+                'page_size': t_psize,
+                'total_items': top_total,
+                'total_pages': t_pages,
+                'has_next': t_page < t_pages,
+                'has_previous': t_page > 1,
+            },
         })
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-weekly-stats')
@@ -1406,23 +1413,45 @@ class PinViewSet(viewsets.ModelViewSet):
         except ValueError:
             days = 7
         days = max(1, min(days, 31))
-        queryset, total_view_events = pro_weekly_views_stats(request.user, days=days)
+        try:
+            wpage = int(request.query_params.get('page') or 1)
+        except ValueError:
+            wpage = 1
+        try:
+            wsize = int(request.query_params.get('page_size') or 10)
+        except ValueError:
+            wsize = 10
+        wpage = max(1, wpage)
+
+        wrows, total_pins_period, total_view_events, w_p, w_ps, w_pages = weekly_creator_pins_page(
+            request.user, days=days, page=wpage, page_size=wsize
+        )
         since = timezone.now() - timedelta(days=days)
         rows = []
-        for pin in queryset[:20]:
+        for row in wrows:
+            pin = row['pin']
             thumb = pin_thumbnail_absolute_url(pin, request)
             rows.append({
                 'id': pin.id,
                 'slug': pin.slug,
                 'title': pin.title,
-                'views_week': int(getattr(pin, 'views_week', 0)),
+                'views_week': row['views_week'],
                 'thumbnail_url': thumb,
             })
         return Response({
             'period_days': days,
             'since': since.isoformat(),
             'total_view_events_period': total_view_events,
+            'pins_with_views_period': total_pins_period,
             'top_pins': rows,
+            'pagination': {
+                'page': w_p,
+                'page_size': w_ps,
+                'total_items': total_pins_period,
+                'total_pages': w_pages,
+                'has_next': w_p < w_pages,
+                'has_previous': w_p > 1,
+            },
         })
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
@@ -1479,6 +1508,7 @@ class PinViewSet(viewsets.ModelViewSet):
 class BoardViewSet(viewsets.ModelViewSet):
     serializer_class = BoardSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = BoardListPagination
 
     def get_permissions(self):
         if self.action == 'retrieve':
