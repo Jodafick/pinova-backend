@@ -10,7 +10,7 @@ import os
 import re
 import time
 import requests
-from django.db import transaction
+from django.db import transaction, IntegrityError
 import logging
 
 class GoogleLogin(SocialLoginView):
@@ -482,7 +482,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
         if users_are_mutually_blocked(request.user, profile.user):
             return Response({'error': 'Interaction not allowed'}, status=status.HTTP_400_BAD_REQUEST)
         if ContentReport.objects.filter(reporter=request.user, reported_user=profile.user).exists():
-            return Response({'status': 'already_reported'})
+            return Response({'error': 'already_reported'}, status=status.HTTP_409_CONFLICT)
         category = normalize_report_category(request.data.get('category'))
         details = str(request.data.get('details') or '').strip()[:REPORT_DETAILS_MAX_LEN]
         if not details:
@@ -492,13 +492,16 @@ class ProfileViewSet(viewsets.ModelViewSet):
                 {'details': ['Merci d’ajouter une brève description (10 caractères minimum).']},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        ContentReport.objects.create(
-            reporter=request.user,
-            reported_user=profile.user,
-            category=category,
-            details=details,
-            reason=details[:500],
-        )
+        try:
+            ContentReport.objects.create(
+                reporter=request.user,
+                reported_user=profile.user,
+                category=category,
+                details=details,
+                reason=details[:500],
+            )
+        except IntegrityError:
+            return Response({'error': 'already_reported'}, status=status.HTTP_409_CONFLICT)
         return Response({'status': 'ok'})
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny], url_path='followers')

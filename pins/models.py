@@ -323,6 +323,16 @@ class ContentReport(models.Model):
                 condition=models.Q(reported_user__isnull=False),
                 name='contentreport_unique_profile_per_reporter',
             ),
+            models.UniqueConstraint(
+                fields=['reporter', 'pin'],
+                condition=models.Q(pin__isnull=False),
+                name='contentreport_unique_pin_per_reporter',
+            ),
+            models.UniqueConstraint(
+                fields=['reporter', 'comment'],
+                condition=models.Q(comment__isnull=False),
+                name='contentreport_unique_comment_per_reporter',
+            ),
         ]
 
     def __str__(self):

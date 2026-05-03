@@ -1,6 +1,6 @@
 from rest_framework import serializers
 import re
-from django.db.models import Count, Case, When, Value, IntegerField
+from django.db.models import Count, Case, When, Value, IntegerField, Exists, OuterRef
 from django.utils import timezone
 from .models import (
     Pin,
@@ -14,6 +14,7 @@ from .models import (
     PinProvenanceEvent,
     PinBoard,
     BoardCollaborationInvite,
+    ContentReport,
 )
 
 from accounts.models import Profile
@@ -162,6 +163,7 @@ class CommentSerializer(serializers.ModelSerializer):
     hashtags = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
+    viewer_has_reported = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
@@ -183,6 +185,7 @@ class CommentSerializer(serializers.ModelSerializer):
             'created_at',
             'likes_count',
             'is_liked',
+            'viewer_has_reported',
             'hidden_by_owner',
             'moderation_hidden',
             'replies',
@@ -230,6 +233,16 @@ class CommentSerializer(serializers.ModelSerializer):
         replies_sort = (self.context.get('replies_sort') or 'recent').lower()
         highlighted_comment_id = self.context.get('highlighted_comment_id')
         replies = obj.replies.all().select_related('user', 'user__profile')
+        req = self.context.get('request')
+        if req and req.user.is_authenticated:
+            replies = replies.annotate(
+                _viewer_has_reported_comment=Exists(
+                    ContentReport.objects.filter(
+                        reporter=req.user,
+                        comment_id=OuterRef('pk'),
+                    )
+                )
+            )
         if replies_sort == 'relevant':
             replies = replies.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
         else:
@@ -268,6 +281,15 @@ class CommentSerializer(serializers.ModelSerializer):
             return obj.comment_likes.filter(user=request.user).exists()
         return False
 
+    def get_viewer_has_reported(self, obj):
+        v = getattr(obj, '_viewer_has_reported_comment', None)
+        if v is not None:
+            return bool(v)
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return ContentReport.objects.filter(reporter=request.user, comment=obj).exists()
+
     def create(self, validated_data):
         comment = super().create(validated_data)
         hashtags = extract_hashtags(comment.text)
@@ -295,6 +317,7 @@ class PinSerializer(serializers.ModelSerializer):
     can_comment = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     is_saved = serializers.SerializerMethodField()
+    viewer_has_reported = serializers.SerializerMethodField()
     hashtags = serializers.SerializerMethodField()
     private_tags = serializers.SerializerMethodField()
     private_tags_input = serializers.ListField(
@@ -349,6 +372,7 @@ class PinSerializer(serializers.ModelSerializer):
             'saves_count',
             'is_liked',
             'is_saved',
+            'viewer_has_reported',
             'media_sensitive_blur',
         ]
         read_only_fields = ['story_expires_at', 'needs_review', 'story_ephemeral']
@@ -497,6 +521,15 @@ class PinSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             return Save.objects.filter(user=request.user, pin=obj).exists()
         return False
+
+    def get_viewer_has_reported(self, obj):
+        v = getattr(obj, '_viewer_has_reported_pin', None)
+        if v is not None:
+            return bool(v)
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return ContentReport.objects.filter(reporter=request.user, pin=obj).exists()
 
     def get_hashtags(self, obj):
         return [f"#{h.name}" for h in obj.hashtags.all()]

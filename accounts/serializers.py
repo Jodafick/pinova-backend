@@ -114,7 +114,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 from django.db.models import Prefetch
 
 from pins.models import Save
-from pins.models import Board, PinBoard, Pin
+from pins.models import Board, PinBoard, Pin, ContentReport
 from pins.visibility import pin_is_visible_for_request, count_pins_visible_on_profile
 
 
@@ -140,6 +140,7 @@ class UserSerializer(serializers.ModelSerializer):
     subscription = serializers.SerializerMethodField()
     pins_count = serializers.SerializerMethodField()
     blocked_usernames = serializers.SerializerMethodField()
+    viewer_has_reported_profile = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -153,6 +154,7 @@ class UserSerializer(serializers.ModelSerializer):
             'subscription',
             'pins_count',
             'blocked_usernames',
+            'viewer_has_reported_profile',
         ]
 
     def get_pins_count(self, obj):
@@ -173,6 +175,13 @@ class UserSerializer(serializers.ModelSerializer):
             .values_list('blocked__username', flat=True),
         )
 
+    def get_viewer_has_reported_profile(self, obj):
+        request = self.context.get('request')
+        viewer = getattr(request, 'user', None) if request else None
+        if not viewer or not viewer.is_authenticated or viewer.id == obj.id:
+            return False
+        return ContentReport.objects.filter(reporter=viewer, reported_user=obj).exists()
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get('request')
@@ -180,6 +189,8 @@ class UserSerializer(serializers.ModelSerializer):
         is_owner = viewer and viewer.is_authenticated and viewer.id == instance.id
         if not is_owner:
             data.pop('email', None)
+        if is_owner:
+            data.pop('viewer_has_reported_profile', None)
         return data
 
     def get_saved_pins(self, obj):

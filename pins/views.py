@@ -4,9 +4,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery
+from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery, Exists
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.db import IntegrityError
 from datetime import timedelta
 from asgiref.sync import async_to_sync
 from googletrans import Translator
@@ -315,6 +316,15 @@ class PinViewSet(viewsets.ModelViewSet):
         queryset = queryset.filter(sensitive_pins_query_filter(self.request))
         queryset = queryset.exclude(Q(moderation_hidden=True) & ~Q(author=self.request.user))
         queryset = filter_pins_exclude_blocked(queryset, self.request)
+        if self.request.user.is_authenticated:
+            queryset = queryset.annotate(
+                _viewer_has_reported_pin=Exists(
+                    ContentReport.objects.filter(
+                        reporter_id=self.request.user.id,
+                        pin_id=OuterRef('pk'),
+                    )
+                )
+            )
         if saved_by_me:
             user = self.request.user
             queryset = queryset.filter(id__in=Save.objects.filter(user=user).values('pin_id'))
@@ -707,6 +717,15 @@ class PinViewSet(viewsets.ModelViewSet):
             .select_related('pin', 'user', 'user__profile')
             .prefetch_related('replies', 'replies__user', 'replies__user__profile', 'hashtags')
         )
+        if request.user.is_authenticated:
+            comments = comments.annotate(
+                _viewer_has_reported_comment=Exists(
+                    ContentReport.objects.filter(
+                        reporter=request.user,
+                        comment_id=OuterRef('pk'),
+                    )
+                )
+            )
         if sort == 'relevant':
             comments = comments.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
         else:
@@ -792,7 +811,10 @@ class PinViewSet(viewsets.ModelViewSet):
         if pin.author_id == request.user.id:
             return Response({'error': 'Cannot report your own content'}, status=status.HTTP_400_BAD_REQUEST)
         if ContentReport.objects.filter(reporter=request.user, pin=pin).exists():
-            return Response({'status': 'already_reported', 'report_count': pin.report_count})
+            return Response(
+                {'error': 'already_reported', 'report_count': pin.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
         parsed = _parse_report_request(request)
         if parsed is None:
             return Response(
@@ -801,13 +823,19 @@ class PinViewSet(viewsets.ModelViewSet):
             )
         category, details = parsed
         reason_preview = details[:500]
-        ContentReport.objects.create(
-            reporter=request.user,
-            pin=pin,
-            category=category,
-            details=details,
-            reason=reason_preview,
-        )
+        try:
+            ContentReport.objects.create(
+                reporter=request.user,
+                pin=pin,
+                category=category,
+                details=details,
+                reason=reason_preview,
+            )
+        except IntegrityError:
+            return Response(
+                {'error': 'already_reported', 'report_count': pin.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
         increment_pin_reports(pin.id)
         pin.refresh_from_db()
         apply_pin_report_thresholds(pin)
@@ -834,7 +862,10 @@ class PinViewSet(viewsets.ModelViewSet):
         if comment.user_id == request.user.id:
             return Response({'error': 'Cannot report your own comment'}, status=status.HTTP_400_BAD_REQUEST)
         if ContentReport.objects.filter(reporter=request.user, comment=comment).exists():
-            return Response({'status': 'already_reported', 'report_count': comment.report_count})
+            return Response(
+                {'error': 'already_reported', 'report_count': comment.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
         parsed = _parse_report_request(request)
         if parsed is None:
             return Response(
@@ -843,13 +874,19 @@ class PinViewSet(viewsets.ModelViewSet):
             )
         category, details = parsed
         reason_preview = details[:500]
-        ContentReport.objects.create(
-            reporter=request.user,
-            comment=comment,
-            category=category,
-            details=details,
-            reason=reason_preview,
-        )
+        try:
+            ContentReport.objects.create(
+                reporter=request.user,
+                comment=comment,
+                category=category,
+                details=details,
+                reason=reason_preview,
+            )
+        except IntegrityError:
+            return Response(
+                {'error': 'already_reported', 'report_count': comment.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
         increment_comment_reports(comment.id)
         comment.refresh_from_db()
         apply_comment_report_thresholds(comment)
