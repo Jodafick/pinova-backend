@@ -346,6 +346,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 message_fr=f"{request.user.username} a enregistré votre pin : {pin.title}",
                 pin_id=pin.id,
                 pin_slug=pin.slug,
+                metadata={'is_story': pin.is_story},
             )
 
         return Response({'status': 'saved', 'saves_count': pin.saves_count})
@@ -359,7 +360,7 @@ class PinViewSet(viewsets.ModelViewSet):
             like.delete()
             return Response({'status': 'unliked', 'likes_count': pin.likes_count})
 
-        if pin.author != request.user:
+        if pin.author != request.user and not pin.is_story:
             create_localized_notification(
                 recipient=pin.author,
                 sender=request.user,
@@ -448,6 +449,8 @@ class PinViewSet(viewsets.ModelViewSet):
             cover_url = ''
             if cover.image:
                 cover_url = request.build_absolute_uri(cover.image.url)
+            elif getattr(cover, 'story_video', None) and cover.story_video:
+                cover_url = request.build_absolute_uri(cover.story_video.url)
             groups.append({
                 'username': author.username,
                 'display_name': profile.display_name or author.username,
@@ -646,6 +649,7 @@ class PinViewSet(viewsets.ModelViewSet):
                             pin_id=pin.id,
                             pin_slug=pin.slug,
                             comment_id=comment.id,
+                            metadata={'is_story': pin.is_story},
                         )
 
             if parent and parent.user != request.user:
@@ -657,6 +661,7 @@ class PinViewSet(viewsets.ModelViewSet):
                     pin_id=pin.id,
                     pin_slug=pin.slug,
                     comment_id=comment.id,
+                    metadata={'is_story': pin.is_story},
                 )
 
             if pin.author != request.user and not (parent and parent.user == pin.author):
@@ -668,6 +673,7 @@ class PinViewSet(viewsets.ModelViewSet):
                     pin_id=pin.id,
                     pin_slug=pin.slug,
                     comment_id=comment.id,
+                    metadata={'is_story': pin.is_story},
                 )
 
             serializer = CommentSerializer(comment, context={'request': request})
@@ -892,6 +898,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 pin_id=comment.pin_id,
                 pin_slug=comment.pin.slug,
                 comment_id=comment.id,
+                metadata={'is_story': comment.pin.is_story},
             )
 
         return Response({'status': 'liked', 'likes_count': comment.comment_likes.count()})

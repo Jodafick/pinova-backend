@@ -1,9 +1,26 @@
 import json
 import os
+from urllib.parse import quote
 
 from pywebpush import WebPushException, webpush
 
 from .models import PushSubscription
+
+
+def _push_action_url(notification):
+    """URL de navigation lorsque notification.action_url est vide (ex. like / comment)."""
+    au = (getattr(notification, 'action_url', None) or '').strip()
+    if au:
+        return au
+    meta = getattr(notification, 'metadata', None) if notification else None
+    if not isinstance(meta, dict):
+        meta = {}
+    slug = getattr(notification, 'pin_slug', None)
+    if slug and meta.get('is_story'):
+        return f"/?story={quote(str(slug), safe='')}"
+    if slug:
+        return f'/pin/{slug}'
+    return '/'
 
 
 def get_vapid_public_key():
@@ -29,7 +46,7 @@ def send_notification_push(notification):
             'title': notification.title or 'PINOVA',
             'body': notification.message,
             'notification_type': notification.notification_type,
-            'action_url': notification.action_url,
+            'action_url': _push_action_url(notification),
             'notification_id': notification.id,
         }
     )

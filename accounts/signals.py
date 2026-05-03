@@ -1,8 +1,12 @@
 from allauth.socialaccount.signals import social_account_added
+from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
+from pins.storage_media import unlink_field_file
+
+from .models import Profile
 
 
 @receiver(social_account_added)
@@ -35,3 +39,8 @@ def notify_social_signup(sender, request, sociallogin, **kwargs):
             'provider': provider,
         },
     )
+
+
+@receiver(post_delete, sender=Profile)
+def purge_profile_avatar_file(sender, instance, **kwargs):
+    unlink_field_file(instance.avatar)

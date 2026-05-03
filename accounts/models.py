@@ -9,6 +9,8 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.validators import MaxValueValidator, MinValueValidator
 
+from pins.storage_media import unlink_named
+
 
 class Profile(models.Model):
     PLAN_FREE = 'free'
@@ -119,10 +121,7 @@ class Profile(models.Model):
             and old_avatar_name != new_name
             and old_avatar_storage is not None
         ):
-            try:
-                old_avatar_storage.delete(old_avatar_name)
-            except OSError:
-                pass
+            unlink_named(old_avatar_storage, old_avatar_name)
 
     def __str__(self):
         return f"{self.user.username}'s profile"

@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 
+from .storage_media import unlink_field_file
+
 
 class Hashtag(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -130,6 +132,21 @@ class Pin(models.Model):
         self.story_expires_at = base + timedelta(hours=24)
 
     def save(self, *args, **kwargs):
+        if self.pk:
+            try:
+                prev = Pin.objects.only('image', 'story_video').get(pk=self.pk)
+            except Pin.DoesNotExist:
+                prev = None
+            if prev is not None:
+                prev_img = prev.image.name if prev.image else ''
+                new_img = self.image.name if self.image else ''
+                if prev_img and prev_img != new_img:
+                    unlink_field_file(prev.image)
+                prev_vid = prev.story_video.name if prev.story_video else ''
+                new_vid = self.story_video.name if self.story_video else ''
+                if prev_vid and prev_vid != new_vid:
+                    unlink_field_file(prev.story_video)
+
         if not self.slug:
             self.slug = slugify(self.title)
             # Ensure unique slug
@@ -178,6 +195,19 @@ class PinVariant(models.Model):
 
     def __str__(self):
         return f'{self.pin_id}:{self.kind}'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            try:
+                old = PinVariant.objects.only('image').get(pk=self.pk)
+            except PinVariant.DoesNotExist:
+                old = None
+            if old is not None:
+                old_nm = old.image.name if old.image else ''
+                new_nm = self.image.name if self.image else ''
+                if old_nm and old_nm != new_nm:
+                    unlink_field_file(old.image)
+        super().save(*args, **kwargs)
 
 
 class PinBoard(models.Model):
@@ -228,6 +258,19 @@ class Comment(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            try:
+                old = Comment.objects.only('media').get(pk=self.pk)
+            except Comment.DoesNotExist:
+                old = None
+            if old is not None:
+                old_nm = old.media.name if old.media else ''
+                new_nm = self.media.name if self.media else ''
+                if old_nm and old_nm != new_nm:
+                    unlink_field_file(old.media)
+        super().save(*args, **kwargs)
 
     @property
     def likes_count(self):
