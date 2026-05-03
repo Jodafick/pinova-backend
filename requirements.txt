@@ -47,3 +47,7 @@ gunicorn
 # Moderation & limits
 better-profanity
 django-ratelimit
+
+# Seed data (noms / profils synthétiques)
+Faker>=24.0.0
+mimesis>=18.0.0

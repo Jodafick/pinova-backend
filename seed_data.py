@@ -9,6 +9,14 @@ Variables d'environnement optionnelles :
   SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420)
   SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG uniquement en local.
 
+  David Anato (david1anato) — engagement de démo (Faker + Mimesis) :
+  SEED_DAVID_ENGAGEMENT=0  — désactive la vague « fans David » (défaut sans variable : activé).
+  SEED_DAVID_MEGA=1       — volumes plus grands (sinon valeurs « raisonnables » pour dev).
+  SEED_DAVID_FOLLOWERS    — nombre de comptes fans (défaut 450 ou 12000 si MEGA).
+  SEED_DAVID_FOLLOWERS_CAP — plafond sécurité (défaut 60000 ; pas des « millions » d’Users : trop lourd).
+  SEED_DAVID_VIEW_EVENTS  — lignes PinViewEvent (défaut 22k ou 1_200_000 si MEGA ; plafond SEED_DAVID_VIEW_EVENTS_CAP défaut 8M).
+  SEED_DAVID_LIKE_PINS_PER_FAN — likes distincts / fan sur les pins David (défaut 18 ou 90 si MEGA).
+
   Images avec réseau : picsum (seed, id, aléatoire, grayscale),
   placehold.co (.png/.jpg/.webp + couleur), dummyimage (.png/.gif),
   placebear.com, placekitten, baconmockup, dicebear (png/webp),
@@ -665,6 +673,144 @@ def refresh_seed_story_created_dates(story_pins: list[Pin]) -> None:
     print(f'Stories : {len(story_pins)} dates created_at mises à jour (aléatoire, ~5 min à 36 h).')
 
 
+def seed_david_fan_army(david_user: User) -> None:
+    """
+    Followers + likes + PinViewEvent pour david1anato (compteurs API réels).
+
+    Les « millions » d’utilisateurs ou de lignes en une seule commande ne sont pas réalistes
+    (temps / disque / mémoire) : utilisez SEED_DAVID_* pour monter progressivement, ou plusieurs passes.
+    """
+    if os.environ.get('SEED_DAVID_ENGAGEMENT', '1').lower() not in ('1', 'true', 'yes'):
+        print('seed_david_fan_army : désactivé (SEED_DAVID_ENGAGEMENT≠1).')
+        return
+    try:
+        from faker import Faker
+        from mimesis import Person
+        from mimesis.locales import Locale
+    except ImportError:
+        print('seed_david_fan_army : paquets « Faker » et « mimesis » manquants — pip install -r requirements.txt')
+        return
+
+    from django.contrib.auth.hashers import make_password
+
+    mega = os.environ.get('SEED_DAVID_MEGA', '').lower() in ('1', 'true', 'yes')
+    cap_followers = int(os.environ.get('SEED_DAVID_FOLLOWERS_CAP', '60000'))
+    cap_views = int(os.environ.get('SEED_DAVID_VIEW_EVENTS_CAP', '8000000'))
+    n_followers = int(os.environ.get('SEED_DAVID_FOLLOWERS', '12000' if mega else '450'))
+    n_followers = max(0, min(n_followers, cap_followers))
+    n_views = int(os.environ.get('SEED_DAVID_VIEW_EVENTS', '1200000' if mega else '22000'))
+    n_views = max(0, min(n_views, cap_views))
+    likes_per_fan = int(os.environ.get('SEED_DAVID_LIKE_PINS_PER_FAN', '90' if mega else '18'))
+    likes_per_fan = max(0, likes_per_fan)
+
+    if n_followers == 0 and n_views == 0 and likes_per_fan == 0:
+        return
+
+    fake = Faker('fr_FR')
+    person_fr = Person(Locale.FR)
+    pw_hash = make_password('!seed_fan_inactive!')
+    david_profile = Profile.objects.get(user_id=david_user.id)
+    pin_ids = list(Pin.objects.filter(author=david_user).values_list('id', flat=True))
+    if not pin_ids:
+        print('seed_david_fan_army : aucun pin David — skip.')
+        return
+
+    print(
+        f'seed_david_fan_army : followers={n_followers}, vues≈{n_views}, '
+        f'likes/fan≤{likes_per_fan} (pins David={len(pin_ids)})…',
+    )
+
+    FollowingThrough = Profile.following.through
+    user_batch_size = 800
+    fan_users: list[User] = []
+
+    for batch_start in range(0, n_followers, user_batch_size):
+        batch_end = min(batch_start + user_batch_size, n_followers)
+        users_chunk: list[User] = []
+        for j in range(batch_start, batch_end):
+            uname = f'fan_dvc_{j:08d}'
+            users_chunk.append(
+                User(
+                    username=uname,
+                    email=f'{uname}@seed.pinova.invalid',
+                    password=pw_hash,
+                    is_active=True,
+                )
+            )
+        User.objects.bulk_create(users_chunk, batch_size=user_batch_size)
+        usernames = [u.username for u in users_chunk]
+        id_by_name = dict(User.objects.filter(username__in=usernames).values_list('username', 'id'))
+        resolved_chunk: list[User] = []
+        for u in users_chunk:
+            pk = id_by_name.get(u.username)
+            if pk:
+                u.pk = pk
+                resolved_chunk.append(u)
+        fan_users.extend(resolved_chunk)
+
+        profiles_chunk: list[Profile] = []
+        for u in resolved_chunk:
+            display = str(person_fr.full_name() if random.random() < 0.55 else fake.name())[:255]
+            profiles_chunk.append(
+                Profile(
+                    user=u,
+                    display_name=display,
+                    subscription_plan=Profile.PLAN_FREE,
+                    preferred_language=random.choice(['fr', 'fr', 'en']),
+                    discoverable_profile=True,
+                    private_profile=False,
+                )
+            )
+        Profile.objects.bulk_create(profiles_chunk, batch_size=user_batch_size)
+
+    if fan_users:
+        fan_profile_ids = list(
+            Profile.objects.filter(user_id__in=[u.id for u in fan_users]).values_list('id', flat=True)
+        )
+        follow_rows = [
+            FollowingThrough(from_profile_id=pid, to_profile_id=david_profile.id)
+            for pid in fan_profile_ids
+        ]
+        for i in range(0, len(follow_rows), 6000):
+            FollowingThrough.objects.bulk_create(follow_rows[i : i + 6000], ignore_conflicts=True)
+
+    fan_user_ids = [u.id for u in fan_users]
+    if fan_user_ids and likes_per_fan > 0:
+        like_objs: list[Like] = []
+        rng = random.Random(424242)
+        for uid in fan_user_ids:
+            k = min(likes_per_fan, len(pin_ids))
+            if k <= 0:
+                continue
+            for pid in rng.sample(pin_ids, k=k):
+                like_objs.append(Like(user_id=uid, pin_id=pid))
+        for i in range(0, len(like_objs), 8000):
+            Like.objects.bulk_create(like_objs[i : i + 8000], ignore_conflicts=True)
+
+    if fan_user_ids and n_views > 0:
+        view_batch: list[PinViewEvent] = []
+        n_pins = len(pin_ids)
+        n_fans = len(fan_user_ids)
+        chunk_target = 12000
+        for offset in range(0, n_views, chunk_target):
+            view_batch.clear()
+            limit = min(chunk_target, n_views - offset)
+            for k in range(limit):
+                view_batch.append(
+                    PinViewEvent(
+                        user_id=fan_user_ids[(offset + k) % n_fans],
+                        pin_id=pin_ids[(offset + k) % n_pins],
+                    )
+                )
+            PinViewEvent.objects.bulk_create(view_batch, batch_size=6000)
+
+    n_followers_david = david_profile.followers.count()
+    print(
+        f'seed_david_fan_army : terminé — {len(fan_user_ids)} comptes fans créés, '
+        f'followers David (API)≈{n_followers_david}, vues insérées≈{n_views}.',
+    )
+
+
 def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> bool:
     stem = Path(fname).stem if fname else f'pin_{pin.pk}'
     if temp_img:
@@ -1157,6 +1303,8 @@ def seed_data():
         viewers = random.sample(regular_users, k=min(random.randint(1, 5), len(regular_users)))
         for viewer in viewers:
             PinViewEvent.objects.create(user=viewer, pin=pin)
+
+    seed_david_fan_army(david_user)
 
     queries_search = ['tattoo', 'salon', 'minimal', 'cake', 'street', 'zen', 'loft']
     for u in random.sample(regular_users, min(6, len(regular_users))):
