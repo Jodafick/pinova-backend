@@ -45,6 +45,8 @@ from .currency_utils import (
     normalize_currency,
 )
 
+from notifications.notification_i18n import create_localized_notification
+
 logger = logging.getLogger(__name__)
 
 
@@ -361,12 +363,11 @@ class VerifyOTPView(APIView):
                 email_address.verified = True
                 email_address.save()
 
-            from notifications.models import Notification
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=user,
                 notification_type='welcome',
-                title='Compte valide',
-                message=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé.",
+                title_fr='Compte valide',
+                message_fr=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé.",
                 action_url='/',
                 metadata={'stage': 'account_verified'},
             )
@@ -453,12 +454,11 @@ class ProfileViewSet(viewsets.ModelViewSet):
             current_user_profile.following.add(profile_to_follow)
             # Ici on pourrait créer une notification
             if profile_to_follow.notifications_followers:
-                from notifications.models import Notification
-                Notification.objects.create(
+                create_localized_notification(
                     recipient=profile_to_follow.user,
                     sender=request.user,
                     notification_type='follow',
-                    message=f"{request.user.username} a commencé à vous suivre."
+                    message_fr=f"{request.user.username} a commencé à vous suivre.",
                 )
             return Response({'status': 'followed'})
 
@@ -1065,13 +1065,12 @@ class SubscriptionConfirmView(APIView):
         refresh_seat_hub_after_owner_change(profile, prev_bundle)
 
     def _notify_payment_events(self, user, payment, previous_plan):
-        from notifications.models import Notification
-        Notification.objects.create(
+        create_localized_notification(
             recipient=user,
             sender=None,
             notification_type='payment',
-            title='Paiement confirme',
-            message=(
+            title_fr='Paiement confirmé',
+            message_fr=(
                 f"Paiement confirmé ({payment.billing_cycle}) : "
                 f"{payment.amount} {payment.currency_iso} pour le plan {payment.plan.upper()}."
             ),
@@ -1083,12 +1082,12 @@ class SubscriptionConfirmView(APIView):
             },
         )
         if previous_plan != payment.plan:
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=user,
                 sender=None,
                 notification_type='plan_change',
-                title='Changement de plan',
-                message=f"Votre plan est passé de {previous_plan.upper()} à {payment.plan.upper()}.",
+                title_fr='Changement de plan',
+                message_fr=f"Votre plan est passé de {previous_plan.upper()} à {payment.plan.upper()}.",
                 action_url='/premium',
                 metadata={
                     'from_plan': previous_plan,
@@ -1548,13 +1547,12 @@ class SubscriptionTrialStartView(APIView):
             'translation_quota_monthly',
             'translation_used_monthly',
         ])
-        from notifications.models import Notification
-        Notification.objects.create(
+        create_localized_notification(
             recipient=request.user,
             sender=None,
             notification_type='plan_change',
-            title='Essai Plus activé',
-            message=(
+            title_fr='Essai Plus activé',
+            message_fr=(
                 f'Vous disposez de {trial_days} jours d\'essai Plus (boards collaboratifs, téléchargements, etc.). '
                 'Sans paiement avant la fin : retour automatique au plan Gratuit.'
             ),

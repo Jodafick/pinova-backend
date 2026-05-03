@@ -5,7 +5,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
-from notifications.models import Notification
+from notifications.notification_i18n import create_localized_notification
 from pins.models import Pin
 
 
@@ -36,12 +36,12 @@ def publish_due_scheduled_pins(queryset, *, limit: int = 1000) -> int:
 
         now_iso = timezone.now().isoformat()
         for pin in pins:
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=pin.author,
                 sender=None,
                 notification_type='scheduled_publish',
-                title='Pin publié',
-                message=(
+                title_fr='Pin publié',
+                message_fr=(
                     f'« {_truncate_title(pin.title)} » est maintenant en ligne après publication planifiée.'
                 ),
                 action_url='/pin/' + pin.slug,

@@ -10,7 +10,7 @@ from django.conf import settings
 
 from accounts.models import Profile
 from pins.weekly_stats import pro_weekly_views_stats
-from notifications.models import Notification
+from notifications.notification_i18n import create_localized_notification
 
 
 class Command(BaseCommand):
@@ -37,13 +37,10 @@ class Command(BaseCommand):
                 continue
             lang = (profile.preferred_language or 'fr').lower().split('-')[0]
             lines_body = []
-            title_push = ''
             if lang.startswith('fr'):
-                title_push = 'Vos pins les plus vus cette semaine'
                 lines_body.append('Voici vos contenus ayant reçu le plus de vues sur les 7 derniers jours :')
                 lines_body.append('')
             else:
-                title_push = 'Your most-viewed pins this week'
                 lines_body.append('Here are your pins with the most views in the last 7 days:')
                 lines_body.append('')
             for i, pin in enumerate(top, 1):
@@ -54,25 +51,18 @@ class Command(BaseCommand):
             body = '\n'.join(lines_body)
             pin0 = top[0]
             v0 = int(getattr(pin0, 'views_week', 0))
-            if lang.startswith('fr'):
-                digest_message = (
-                    f'Top : {pin0.title[:70]} (+{len(top)-1} autres)'
-                    if len(top) > 1
-                    else f'{pin0.title[:90]} — {v0} v.'
-                )[:255]
-            else:
-                digest_message = (
-                    f'Top: {pin0.title[:70]} (+{len(top)-1} more)'
-                    if len(top) > 1
-                    else f'{pin0.title[:90]} — {v0} views'
-                )[:255]
+            digest_message_fr = (
+                f'Top : {pin0.title[:70]} (+{len(top)-1} autres)'
+                if len(top) > 1
+                else f'{pin0.title[:90]} — {v0} v.'
+            )[:255]
 
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=user,
                 sender=None,
                 notification_type='digest',
-                title=title_push[:120],
-                message=digest_message,
+                title_fr='Vos pins les plus vus cette semaine',
+                message_fr=digest_message_fr,
                 action_url='/creator',
                 metadata={'digest': 'weekly_views', 'days': 7},
             )

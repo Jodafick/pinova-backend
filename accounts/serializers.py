@@ -7,6 +7,7 @@ from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 from .currency_utils import normalize_currency
+from notifications.notification_i18n import create_localized_notification
 
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
@@ -281,12 +282,11 @@ class RegisterSerializer(BaseRegisterSerializer):
         otp.generate_otp()
         
         # Créer une notification de création de compte en attente de validation
-        from notifications.models import Notification
-        Notification.objects.create(
+        create_localized_notification(
             recipient=user,
             notification_type='welcome',
-            title='Bienvenue sur PINOVA',
-            message="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider.",
+            title_fr='Bienvenue sur PINOVA',
+            message_fr="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider.",
             action_url='/verify-otp',
             metadata={'stage': 'account_created_pending_verification'},
         )

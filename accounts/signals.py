@@ -2,6 +2,7 @@ from allauth.socialaccount.signals import social_account_added
 from django.dispatch import receiver
 
 from notifications.models import Notification
+from notifications.notification_i18n import create_localized_notification
 
 
 @receiver(social_account_added)
@@ -22,12 +23,12 @@ def notify_social_signup(sender, request, sociallogin, **kwargs):
     ).exists():
         return
 
-    Notification.objects.create(
+    create_localized_notification(
         recipient=user,
         sender=None,
         notification_type='welcome',
-        title='Bienvenue sur PINOVA',
-        message=f"Compte créé avec {provider_label}. Bienvenue {user.username} !",
+        title_fr='Bienvenue sur PINOVA',
+        message_fr=f"Compte créé avec {provider_label}. Bienvenue {user.username} !",
         action_url='/',
         metadata={
             'stage': 'social_signup',

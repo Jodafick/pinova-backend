@@ -17,6 +17,8 @@ from rest_framework.views import APIView
 
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import (
+    SUBSCRIPTION_BUNDLE_FAMILY,
+    SUBSCRIPTION_BUNDLE_TEAM,
     SUBSCRIPTION_SEAT_INVITE_EXPIRY_HOURS,
     grant_member_seat,
     invitee_eligible,
@@ -172,18 +174,40 @@ class SubscriptionSeatInviteCreateView(APIView):
         except IntegrityError:
             return Response({'error': 'Une invitation vers ce membre existe déjà.'}, status=status.HTTP_409_CONFLICT)
 
-        from notifications.models import Notification
+        from notifications.notification_i18n import create_localized_notification
 
-        Notification.objects.create(
+        bundle_kind = str(profile.subscription_seat_bundle or '').strip().lower()
+        if bundle_kind == SUBSCRIPTION_BUNDLE_TEAM:
+            notif_title = 'Invitation abonnement Équipe'
+            notif_message = (
+                f'{owner.username} vous invite dans son abonnement Pinova Équipe '
+                f'(plusieurs sièges sur une même facturation).'
+            )
+        elif bundle_kind == SUBSCRIPTION_BUNDLE_FAMILY:
+            notif_title = 'Invitation abonnement Famille'
+            notif_message = (
+                f'{owner.username} vous invite dans son abonnement Pinova Famille '
+                f'(plusieurs sièges sur une même facturation).'
+            )
+        else:
+            notif_title = 'Invitation abonnement groupe'
+            notif_message = (
+                f'{owner.username} vous invite dans son abonnement Pinova famille ou équipe.'
+            )
+
+        create_localized_notification(
             recipient=target,
             sender=owner,
             notification_type='system',
-            title='Invitation abonnement groupe',
-            message=f'{owner.username} vous invite dans son abonnement Pinova famille/équipe.',
+            title_fr=notif_title,
+            message_fr=notif_message,
             action_url='/settings',
-            metadata={'seat_invite_id': str(inv.id), 'kind': 'subscription_seat_invite'},
+            metadata={
+                'seat_invite_id': str(inv.id),
+                'kind': 'subscription_seat_invite',
+                'seat_bundle': bundle_kind or profile.subscription_seat_bundle,
+            },
         )
-
         # token_hash conserve une empreinte en base pour d’éventuels audits ; l’acceptation
         # ne repose que sur l’utilisateur authentifié (comme les invitations board collaboratif).
         return Response(

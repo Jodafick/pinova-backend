@@ -60,6 +60,7 @@ from .translation import translate_text_to, detect_original_language
 from .topic_i18n import resolve_topic_language, ensure_topic_translation
 from .pagination import PinFeedPagination
 from notifications.models import Notification
+from notifications.notification_i18n import create_localized_notification
 from .weekly_stats import pro_weekly_views_stats, pin_thumbnail_absolute_url
 
 
@@ -314,11 +315,11 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response({'status': 'unsaved', 'saves_count': pin.saves_count})
 
         if pin.author != request.user and pin.author.profile.notifications_saves:
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=pin.author,
                 sender=request.user,
                 notification_type='save',
-                message=f"{request.user.username} a enregistré votre pin: {pin.title}",
+                message_fr=f"{request.user.username} a enregistré votre pin : {pin.title}",
                 pin_id=pin.id,
                 pin_slug=pin.slug,
             )
@@ -335,11 +336,11 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response({'status': 'unliked', 'likes_count': pin.likes_count})
 
         if pin.author != request.user:
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=pin.author,
                 sender=request.user,
                 notification_type='like',
-                message=f"{request.user.username} a aimé votre pin: {pin.title}",
+                message_fr=f"{request.user.username} a aimé votre pin : {pin.title}",
                 pin_id=pin.id,
                 pin_slug=pin.slug,
             )
@@ -521,33 +522,33 @@ class PinViewSet(viewsets.ModelViewSet):
                 mentioned_users = User.objects.filter(username__in=mentions)
                 for mentioned_user in mentioned_users:
                     if mentioned_user != request.user:
-                        Notification.objects.create(
+                        create_localized_notification(
                             recipient=mentioned_user,
                             sender=request.user,
                             notification_type='comment',
-                            message=f"{request.user.username} vous a mentionné dans un commentaire.",
+                            message_fr=f"{request.user.username} vous a mentionné dans un commentaire.",
                             pin_id=pin.id,
                             pin_slug=pin.slug,
                             comment_id=comment.id,
                         )
 
             if parent and parent.user != request.user:
-                Notification.objects.create(
+                create_localized_notification(
                     recipient=parent.user,
                     sender=request.user,
                     notification_type='comment',
-                    message=f"{request.user.username} a répondu à votre commentaire sur {pin.title}.",
+                    message_fr=f"{request.user.username} a répondu à votre commentaire sur {pin.title}.",
                     pin_id=pin.id,
                     pin_slug=pin.slug,
                     comment_id=comment.id,
                 )
 
             if pin.author != request.user and not (parent and parent.user == pin.author):
-                Notification.objects.create(
+                create_localized_notification(
                     recipient=pin.author,
                     sender=request.user,
                     notification_type='comment',
-                    message=f"{request.user.username} a commenté votre pin: {pin.title}",
+                    message_fr=f"{request.user.username} a commenté votre pin : {pin.title}",
                     pin_id=pin.id,
                     pin_slug=pin.slug,
                     comment_id=comment.id,
@@ -748,11 +749,11 @@ class PinViewSet(viewsets.ModelViewSet):
             return Response({'status': 'unliked', 'likes_count': comment.comment_likes.count()})
 
         if comment.user != request.user:
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=comment.user,
                 sender=request.user,
                 notification_type='like',
-                message=f"{request.user.username} a aimé votre commentaire.",
+                message_fr=f"{request.user.username} a aimé votre commentaire.",
                 pin_id=comment.pin_id,
                 pin_slug=comment.pin.slug,
                 comment_id=comment.id,
@@ -1373,12 +1374,12 @@ class BoardViewSet(viewsets.ModelViewSet):
                 invite.responded_at = None
                 invite.save(update_fields=['invited_by', 'status', 'responded_at'])
 
-            Notification.objects.create(
+            create_localized_notification(
                 recipient=target_user,
                 sender=request.user,
                 notification_type='board_invite',
-                title='Invitation tableau',
-                message=f"{request.user.username} vous invite à collaborer sur « {board.name} ».",
+                title_fr='Invitation tableau',
+                message_fr=f"{request.user.username} vous invite à collaborer sur « {board.name} ».",
                 action_url='/profile',
                 metadata={'invite_id': invite.id, 'board_id': board.id},
             )
