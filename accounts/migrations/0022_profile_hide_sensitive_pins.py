@@ -1,0 +1,16 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('accounts', '0021_alter_subscriptionpricing_options_and_more'),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name='profile',
+            name='hide_sensitive_pins',
+            field=models.BooleanField(default=False),
+        ),
+    ]

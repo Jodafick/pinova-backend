@@ -70,6 +70,8 @@ class Profile(models.Model):
     )
     # Plus/Pro uniquement en pratique : si False, médias signalés « sensibles » non floutés par défaut pour le spectateur majeur connecté.
     sensitive_media_blur_by_default = models.BooleanField(default=True)
+    # Majeur vérifié : masque les pins d’autrui marquées sensibles (flux, tableau, détail renvoie 404).
+    hide_sensitive_pins = models.BooleanField(default=False)
 
     @property
     def can_use_private_tags(self):

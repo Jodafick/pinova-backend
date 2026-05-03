@@ -53,6 +53,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'share_token',
             'birth_date',
             'sensitive_media_blur_by_default',
+            'hide_sensitive_pins',
         ]
         read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code', 'subscription_trial_consumed_at']
 
@@ -71,6 +72,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         'notifications_recommendations',
         'notifications_digest_creator_weekly',
         'sensitive_media_blur_by_default',
+        'hide_sensitive_pins',
         'share_token',
     })
 
@@ -237,6 +239,7 @@ class UserSerializer(serializers.ModelSerializer):
                 'sensitive_media_blur_by_default',
                 True,
             ),
+            'hide_sensitive_pins': bool(getattr(profile, 'hide_sensitive_pins', False)),
         }
         from .subscription_seats import max_invitees_for_bundle, owner_eligible_as_seat_hub
 

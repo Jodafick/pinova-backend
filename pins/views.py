@@ -13,6 +13,8 @@ from googletrans import Translator
 from pathlib import Path
 from django.conf import settings
 from PIL import Image
+from accounts.models import Profile
+from accounts.subscription_utils import _enforce_subscription_state
 from pinova_backend.throttling import client_ip_from_request
 import re
 import uuid
@@ -37,6 +39,7 @@ from .models import (
 from .legal_defaults import default_body
 from .serializers import (
     PinSerializer,
+    StandaloneStoryCreateSerializer,
     CommentSerializer,
     BoardSerializer,
     BoardDetailSerializer,
@@ -48,8 +51,11 @@ from .visibility import pin_is_visible_for_request, sensitive_pins_query_filter,
 from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
 from .moderation import (
     validate_comment_text,
+    validate_pin_text,
     apply_comment_rate_limit,
+    apply_pin_creation_rate_limits,
     comment_body_fingerprint,
+    pin_body_fingerprint,
     enforce_identical_content_flood,
     increment_pin_reports,
     increment_comment_reports,
@@ -205,10 +211,14 @@ class PinViewSet(viewsets.ModelViewSet):
         return Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
 
     def _story_feed_q(self):
-        """Stories expirées masquées sauf pour l'auteur (archivage)."""
+        """Stories éphémères expirées masquées sauf pour l'auteur. Pins story classiques toujours visibles."""
         user = self.request.user if self.request.user.is_authenticated else None
         now = timezone.now()
-        q = Q(is_story=False) | Q(is_story=True, story_expires_at__gt=now)
+        q = (
+            Q(is_story=False)
+            | Q(is_story=True, story_ephemeral=False)
+            | Q(is_story=True, story_ephemeral=True, story_expires_at__gt=now)
+        )
         if user:
             q |= Q(is_story=True, author=user)
         return q
@@ -218,10 +228,24 @@ class PinViewSet(viewsets.ModelViewSet):
         user = self.request.user if self.request.user.is_authenticated else None
         q = Q(is_story=False)
         if user:
-            q |= Q(author=user)
+            # Stories « classiques » (non éphémères) restent visibles pour l'auteur dans le fil.
+            q |= Q(author=user) & (Q(is_story=False) | Q(story_ephemeral=False))
         return q
 
     def get_queryset(self):
+        ephemeral_hide_feed_actions = frozenset({
+            'list',
+            'discover',
+            'recommendations',
+            'following',
+            'home_feed',
+        })
+
+        def exclude_ephemeral_story_only(qs):
+            if getattr(self, 'action', None) in ephemeral_hide_feed_actions:
+                return qs.exclude(Q(is_story=True, story_ephemeral=True))
+            return qs
+
         saved_by_me = (self.request.query_params.get('saved_by_me') or '').strip().lower() in ('1', 'true', 'yes')
         if saved_by_me and not self.request.user.is_authenticated:
             return Pin.objects.none()
@@ -262,7 +286,7 @@ class PinViewSet(viewsets.ModelViewSet):
             if apply_story_placement:
                 core &= placement_q
             core &= sensitive_pins_query_filter(self.request)
-            return queryset.filter(core)
+            return exclude_ephemeral_story_only(queryset.filter(core))
 
         my_profile = self.request.user.profile
         visibility_q = (
@@ -286,7 +310,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 .values('created_at')[:1]
             )
             queryset = queryset.annotate(_saved_at=Subquery(saved_at_sub)).order_by('-_saved_at')
-        return queryset
+        return exclude_ephemeral_story_only(queryset)
 
     def perform_create(self, serializer):
         pin = serializer.save(author=self.request.user)
@@ -346,6 +370,43 @@ class PinViewSet(viewsets.ModelViewSet):
             )
 
         return Response({'status': 'liked', 'likes_count': pin.likes_count})
+
+    @action(
+        detail=True,
+        methods=['get'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='likes',
+    )
+    def likers(self, request, slug=None):
+        """Liste des comptes ayant liké — réservé à l'auteur du pin."""
+        pin = self.get_object()
+        if request.user.id != pin.author_id:
+            raise PermissionDenied('Only the pin author can see likes.')
+        qs = (
+            Like.objects.filter(pin_id=pin.id)
+            .select_related('user', 'user__profile')
+            .order_by('-created_at')[:150]
+        )
+        likers = []
+        for lk in qs:
+            user = lk.user
+            profile = getattr(user, 'profile', None)
+            av = getattr(profile, 'avatar', None) if profile else None
+            avatar_url = ''
+            if av and getattr(av, 'name', '') and request:
+                avatar_url = request.build_absolute_uri(av.url)
+            likers.append(
+                {
+                    'username': user.username,
+                    'display_name': (
+                        ((profile.display_name or user.username).strip()) if profile else user.username
+                    ),
+                    'avatar_url': avatar_url,
+                    'avatar_color': getattr(profile, 'avatar_color', None) or 'bg-neutral-400',
+                    'liked_at': lk.created_at.isoformat(),
+                }
+            )
+        return Response({'count': pin.likes_count, 'likers': likers})
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='view')
     def view_event(self, request, slug=None):
@@ -438,6 +499,61 @@ class PinViewSet(viewsets.ModelViewSet):
         visible = visible[:80]
         groups = self._story_ring_groups_from_pins(visible, request)
         return Response({'pins': [], 'groups': groups})
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='standalone-story',
+    )
+    def standalone_story(self, request):
+        """
+        Story Plus/Pro hors flux « pin » classique : média + légende, vidéo ou image.
+        `story_ephemeral` : purge DB + fichiers après `story_expires_at` (voir management command).
+        """
+        _enforce_subscription_state(request.user.profile)
+        request.user.profile.refresh_from_db()
+        prof = request.user.profile
+        if prof.subscription_plan not in {Profile.PLAN_PLUS, Profile.PLAN_PRO}:
+            return Response(
+                {'error': 'Story éphémère réservée aux abonnements Plus et Pro.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        ser = StandaloneStoryCreateSerializer(data=request.data, context={'request': request})
+        ser.is_valid(raise_exception=True)
+        validated = ser.validated_data
+        title_base = f'Story · {timezone.now().strftime("%d/%m/%Y %H:%M")}'
+        try:
+            validate_pin_text(title_base, validated.get('description', '') or '', [], [])
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        apply_pin_creation_rate_limits(request.user.id, True)
+        enforce_identical_content_flood(
+            request.user.id,
+            'pin',
+            pin_body_fingerprint(title_base, validated.get('description', '') or ''),
+        )
+
+        pin = Pin(
+            author=request.user,
+            title=title_base,
+            description=validated.get('description', '') or '',
+            link='',
+            visibility=Pin.VISIBILITY_PUBLIC,
+            is_story=True,
+            story_ephemeral=True,
+            topic=None,
+            media_sensitive_blur=validated.get('media_sensitive_blur', False),
+        )
+        if validated.get('image'):
+            pin.image = validated['image']
+        if validated.get('story_video'):
+            pin.story_video = validated['story_video']
+        pin.save()
+        pin.refresh_story_expiry()
+        pin.save(update_fields=['story_expires_at'])
+        return Response(PinSerializer(pin, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
     def comments(self, request, slug=None):
@@ -630,6 +746,25 @@ class PinViewSet(viewsets.ModelViewSet):
             context={'request': request, 'include_replies': False},
         )
         return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['delete'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path=r'comments/(?P<comment_id>\d+)',
+    )
+    def delete_comment(self, request, slug=None, comment_id=None):
+        pin = self.get_object()
+        comment = Comment.objects.filter(id=comment_id, pin=pin).first()
+        if not comment:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.id != comment.user_id and pin.author_id != request.user.id:
+            return Response(
+                {'error': 'Only the comment author or the pin owner can delete this comment'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        comment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='report')
     def report_pin(self, request, slug=None):
@@ -857,7 +992,11 @@ class PinViewSet(viewsets.ModelViewSet):
 
         now = timezone.now()
         schedule_public = Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
-        story_public = Q(is_story=False) | Q(is_story=True, story_expires_at__gt=now)
+        story_public = (
+            Q(is_story=False)
+            | Q(is_story=True, story_ephemeral=False)
+            | Q(is_story=True, story_ephemeral=True, story_expires_at__gt=now)
+        )
 
         base_qs = (
             Pin.objects.exclude(topic__isnull=True)
@@ -873,7 +1012,12 @@ class PinViewSet(viewsets.ModelViewSet):
             )
             & (
                 Q(pins__is_story=False)
-                | Q(pins__is_story=True, pins__story_expires_at__gt=now)
+                | Q(pins__is_story=True, pins__story_ephemeral=False)
+                | Q(
+                    pins__is_story=True,
+                    pins__story_ephemeral=True,
+                    pins__story_expires_at__gt=now,
+                )
             )
         )
         if not viewer_is_verified_adult(request):

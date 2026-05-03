@@ -338,6 +338,7 @@ class PinSerializer(serializers.ModelSerializer):
             'board_ids_input',
             'scheduled_publish_at',
             'is_story',
+            'story_ephemeral',
             'story_expires_at',
             'created_at',
             'likes_count',
@@ -350,7 +351,7 @@ class PinSerializer(serializers.ModelSerializer):
             'is_saved',
             'media_sensitive_blur',
         ]
-        read_only_fields = ['story_expires_at', 'needs_review']
+        read_only_fields = ['story_expires_at', 'needs_review', 'story_ephemeral']
         extra_kwargs = {
             'author': {'required': False},
             'story_video': {'write_only': True},
@@ -644,6 +645,61 @@ class PinSerializer(serializers.ModelSerializer):
                 self._normalize_int_list(board_ids),
             )
         return pin
+
+
+EPHEMERAL_STORY_VIDEO_MAX_BYTES = 48 * 1024 * 1024
+EPHEMERAL_STORY_VIDEO_CT = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
+
+
+class StandaloneStoryCreateSerializer(serializers.Serializer):
+    """POST minimal story Plus/Pro sans pin persistant en grille après 24h."""
+
+    image = serializers.ImageField(required=False, allow_null=True)
+    story_video = serializers.FileField(required=False, allow_null=True)
+    description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    media_sensitive_blur = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        image = attrs.get('image')
+        vid = attrs.get('story_video')
+        if image and vid:
+            raise serializers.ValidationError({
+                'non_field_errors': ['Une seule vue : image ou vidéo pour la story éphémère.'],
+            })
+        if not image and not vid:
+            raise serializers.ValidationError({
+                'non_field_errors': ['Ajoutez une image ou une vidéo pour la story éphémère.'],
+            })
+
+        request = self.context.get('request')
+        profile = request.user.profile if request and request.user.is_authenticated else None
+        if not profile or not getattr(profile, 'birth_date', None):
+            raise serializers.ValidationError({
+                'non_field_errors': [
+                    'La date de naissance est obligatoire pour publier une image ou une vidéo.',
+                ],
+            })
+
+        if vid:
+            ct = (getattr(vid, 'content_type', '') or '').split(';')[0].strip().lower()
+            if ct not in EPHEMERAL_STORY_VIDEO_CT:
+                raise serializers.ValidationError({'story_video': 'Formats acceptés : MP4, WebM, MOV.'})
+            if getattr(vid, 'size', 0) > EPHEMERAL_STORY_VIDEO_MAX_BYTES:
+                raise serializers.ValidationError({'story_video': 'Vidéo trop lourde (max 48 Mo).'})
+
+        blur = attrs.get('media_sensitive_blur', False)
+        if blur is True or str(blur).lower() in ('true', '1', 'yes'):
+            if not profile_is_verified_adult(profile):
+                raise serializers.ValidationError({
+                    'media_sensitive_blur': [
+                        'Réservé aux comptes adultes vérifiés (≥18 ans, date renseignée).',
+                    ],
+                })
+            attrs['media_sensitive_blur'] = True
+        else:
+            attrs['media_sensitive_blur'] = False
+
+        return attrs
 
 
 class BoardDetailSerializer(BoardSerializer):

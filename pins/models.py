@@ -97,6 +97,8 @@ class Pin(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     is_story = models.BooleanField(default=False)
+    # Plus/Pro « story éphémère » : après 24h la ligne est détruite (pas d’archive en pin grille).
+    story_ephemeral = models.BooleanField(default=False, db_index=True)
     story_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     story_video = models.FileField(upload_to='story_videos/', null=True, blank=True)
     needs_review = models.BooleanField(default=False)
@@ -113,6 +115,11 @@ class Pin(models.Model):
         from django.utils import timezone
 
         if not self.is_story:
+            self.story_expires_at = None
+            return
+        # Seules les stories « éphémères » (standalone Plus/Pro) ont une date d’expiration.
+        # Un pin classique en format story reste archivé comme un pin normal (pas de 24h).
+        if not self.story_ephemeral:
             self.story_expires_at = None
             return
         now = timezone.now()

@@ -728,6 +728,16 @@ class UserMeView(APIView):
                 str(mutable_data.get('sensitive_media_blur_by_default')).lower() == 'true'
             )
 
+        if 'hide_sensitive_pins' in mutable_data:
+            from pins.visibility import profile_is_verified_adult as _profile_verified_adult
+
+            if _profile_verified_adult(profile):
+                mutable_data['hide_sensitive_pins'] = (
+                    str(mutable_data.get('hide_sensitive_pins')).lower() == 'true'
+                )
+            else:
+                mutable_data.pop('hide_sensitive_pins', None)
+
         # Search visibility maps to discoverable_profile.
         if 'discoverable_profile' in mutable_data:
             mutable_data['discoverable_profile'] = str(mutable_data.get('discoverable_profile')).lower() == 'true'
