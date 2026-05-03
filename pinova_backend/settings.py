@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 import dj_database_url
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 from datetime import timedelta
 
@@ -26,13 +27,55 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-$-!eo)@fp592g#e)kc(bqer5isvw8uke+5#oq7&l8%il+8=k_f'
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['*']
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY') or os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = 'django-insecure-dev-only-change-me-not-for-production'
+    else:
+        raise ImproperlyConfigured(
+            'Set DJANGO_SECRET_KEY or SECRET_KEY in the environment when DEBUG=False.'
+        )
+
+_allowed_raw = os.environ.get('ALLOWED_HOSTS', '').strip()
+if _allowed_raw:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed_raw.split(',') if h.strip()]
+elif DEBUG:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]', '*']
+else:
+    raise ImproperlyConfigured(
+        'ALLOWED_HOSTS must be set (comma-separated hostnames) when DEBUG=False, '
+        'e.g. ALLOWED_HOSTS=api.example.com'
+    )
+
+_cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '').strip()
+if _cors_origins:
+    CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
+    CORS_ALLOW_ALL_ORIGINS = False
+elif DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    raise ImproperlyConfigured(
+        'CORS_ALLOWED_ORIGINS must be set when DEBUG=False (comma-separated origins, '
+        'e.g. https://app.example.com). Wildcard CORS with credentials is disabled.'
+    )
+
+CORS_ALLOW_CREDENTIALS = True
+
+_csrf_origins = os.environ.get('CSRF_TRUSTED_ORIGINS', '').strip()
+if _csrf_origins:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_origins.split(',') if o.strip()]
+elif not DEBUG:
+    CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+else:
+    CSRF_TRUSTED_ORIGINS = []
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'True') == 'True'
 
 
 # Application definition
@@ -200,10 +243,6 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-# CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
-
 # Social Auth Settings
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
@@ -279,6 +318,7 @@ REST_FRAMEWORK = {
 
 REST_AUTH = {
     'USE_JWT': True,
+    'SESSION_LOGIN': False,
     'JWT_AUTH_COOKIE': 'pinova-auth',
     'JWT_AUTH_REFRESH_COOKIE': 'pinova-refresh-token',
     'JWT_AUTH_COOKIE_USE_CSRF': False,
@@ -287,12 +327,17 @@ REST_AUTH = {
     'REGISTER_SERIALIZER': 'accounts.serializers.RegisterSerializer',
 }
 
+# Accès court (rafraîchissement via refresh) + refresh long ≈ « session » d’un an.
+_jwt_access_minutes = int(os.environ.get('JWT_ACCESS_MINUTES', '60'))
+_jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS', '365'))
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=365),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=365),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=_jwt_access_minutes),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=_jwt_refresh_days),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 365  # 1 an

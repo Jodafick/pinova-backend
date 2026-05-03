@@ -53,6 +53,7 @@ from .comment_media import compress_comment_media_upload
 from .visibility import pin_is_visible_for_request, sensitive_pins_query_filter, viewer_is_verified_adult
 from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
 from .moderation import (
+    sanitize_comment_plain_text,
     validate_comment_text,
     validate_pin_text,
     apply_comment_rate_limit,
@@ -596,7 +597,7 @@ class PinViewSet(viewsets.ModelViewSet):
                     {'error': 'Comments are closed or restricted on this pin'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            text = (request.data.get('text', '') or '').strip()
+            text = sanitize_comment_plain_text((request.data.get('text', '') or '').strip())
             gif_url = request.data.get('gif')
             media_file = request.FILES.get('media')
             parent_id = request.data.get('parentId') or request.data.get('parent')

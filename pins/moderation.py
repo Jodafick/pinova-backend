@@ -152,6 +152,15 @@ def validate_pin_text(
         raise serializers.ValidationError(errors)
 
 
+def sanitize_comment_plain_text(text: str) -> str:
+    """Supprime tout balisage HTML ; le rendu riche (mentions) est fait côté client sur texte échappé."""
+    from django.utils.html import strip_tags
+
+    if not text:
+        return ''
+    return strip_tags(text).strip()
+
+
 def validate_comment_text(text: str) -> None:
     if not profanity:
         return
