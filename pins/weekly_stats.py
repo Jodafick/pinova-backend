@@ -7,7 +7,37 @@ from datetime import timedelta
 from django.db.models import Count
 from django.utils import timezone
 
-from .models import Pin, PinViewEvent
+from .models import Comment, Like, Pin, PinViewEvent, Save
+
+
+def creator_period_engagement_totals(user, since):
+    """Likes / saves / commentaires sur les pins de l’auteur pendant [since, now]."""
+    likes = Like.objects.filter(pin__author=user, created_at__gte=since).count()
+    saves = Save.objects.filter(pin__author=user, created_at__gte=since).count()
+    comments = Comment.objects.filter(pin__author=user, created_at__gte=since).count()
+    distinct_viewers = (
+        PinViewEvent.objects.filter(pin__author=user, created_at__gte=since).aggregate(
+            n=Count('user_id', distinct=True)
+        )['n']
+        or 0
+    )
+    return {
+        'likes_period': likes,
+        'saves_period': saves,
+        'comments_period': comments,
+        'distinct_viewers_period': int(distinct_viewers),
+    }
+
+
+def _pin_counts_in_period(model, pin_ids, user, since):
+    if not pin_ids:
+        return {}
+    return dict(
+        model.objects.filter(pin_id__in=pin_ids, pin__author=user, created_at__gte=since)
+        .values('pin_id')
+        .annotate(c=Count('id'))
+        .values_list('pin_id', 'c')
+    )
 
 
 def weekly_creator_pins_page(user, days: int = 7, *, page: int = 1, page_size: int = 20):
@@ -45,6 +75,9 @@ def weekly_creator_pins_page(user, days: int = 7, *, page: int = 1, page_size: i
     pin_ids = [r['pin_id'] for r in slice_rows]
     views_map = {r['pin_id']: int(r['views_week']) for r in slice_rows}
     pins_by_id = {p.id: p for p in Pin.objects.filter(id__in=pin_ids).select_related('author')}
+    likes_map = _pin_counts_in_period(Like, pin_ids, user, since)
+    saves_map = _pin_counts_in_period(Save, pin_ids, user, since)
+    comments_map = _pin_counts_in_period(Comment, pin_ids, user, since)
 
     rows = []
     for r in slice_rows:
@@ -52,7 +85,15 @@ def weekly_creator_pins_page(user, days: int = 7, *, page: int = 1, page_size: i
         pin = pins_by_id.get(pid)
         if pin is None:
             continue
-        rows.append({'pin': pin, 'views_week': views_map[pid]})
+        rows.append(
+            {
+                'pin': pin,
+                'views_week': views_map[pid],
+                'likes_week': int(likes_map.get(pid, 0)),
+                'saves_week': int(saves_map.get(pid, 0)),
+                'comments_week': int(comments_map.get(pid, 0)),
+            }
+        )
 
     return rows, total_pins, total_events, page, page_size, total_pages
 

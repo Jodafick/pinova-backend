@@ -64,6 +64,8 @@ else:
     )
 
 CORS_ALLOW_CREDENTIALS = True
+# Permet au navigateur de lire l’en-tête du compteur notifications (axios / fetch).
+CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications']
 
 _csrf_origins = os.environ.get('CSRF_TRUSTED_ORIGINS', '').strip()
 if _csrf_origins:
@@ -119,6 +121,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
+    'pinova_backend.unread_notifications_middleware.UnreadNotificationsHeaderMiddleware',
 ]
 
 ROOT_URLCONF = 'pinova_backend.urls'
@@ -160,6 +163,14 @@ if not DATABASES['default']:
         }
     }
 
+# Cache court (stats créateur, etc.). LocMem par processus ; pour plusieurs workers, brancher Redis côté infra.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'pinova-locmem',
+        'TIMEOUT': 120,
+    }
+}
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',

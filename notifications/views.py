@@ -4,16 +4,39 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from accounts.blocking import blocked_mutual_user_ids
 
+from pinova_backend.unread_notifications_middleware import invalidate_unread_notifications_header_cache
+
 from .models import Notification, PushSubscription
 from .serializers import NotificationSerializer, PushSubscriptionSerializer
 from .push import get_vapid_public_key, is_push_configured
+from .pagination import NotificationPagination
+
 
 class NotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = NotificationPagination
 
     def get_queryset(self):
-        qs = Notification.objects.filter(recipient=self.request.user).select_related('sender', 'sender__profile')
+        qs = (
+            Notification.objects.filter(recipient=self.request.user)
+            .select_related('sender', 'sender__profile')
+            .only(
+                'id',
+                'notification_type',
+                'title',
+                'message',
+                'action_url',
+                'metadata',
+                'pin_id',
+                'pin_slug',
+                'comment_id',
+                'is_read',
+                'created_at',
+                'sender_id',
+                'recipient_id',
+            )
+        )
         forb = blocked_mutual_user_ids(self.request.user)
         if forb:
             qs = qs.filter(Q(sender__isnull=True) | ~Q(sender_id__in=forb))
@@ -22,6 +45,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def mark_all_as_read(self, request):
         self.get_queryset().update(is_read=True)
+        invalidate_unread_notifications_header_cache(request.user.pk)
         return Response({'status': 'all notifications marked as read'})
 
     @action(detail=False, methods=['get'])

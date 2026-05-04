@@ -36,12 +36,21 @@ import random
 import secrets
 import base64
 import uuid
+import logging
 from datetime import timedelta, date
 from pathlib import Path
 import re
 from urllib.parse import quote
 
 import django
+
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pinova_backend.settings')
 django.setup()
@@ -215,7 +224,7 @@ def ensure_superuser():
         superuser.is_superuser = True
         superuser.set_password(password)
         superuser.save()
-        print(f"Superuser '{username}' créé.")
+        logger.info(f"Superuser '{username}' créé.")
         return superuser
 
     if superuser.email != email:
@@ -227,7 +236,7 @@ def ensure_superuser():
 
     superuser.set_password(password)
     superuser.save()
-    print(f"Superuser '{username}' mis à jour.")
+    logger.info(f"Superuser '{username}' mis à jour.")
     return superuser
 
 
@@ -372,7 +381,7 @@ def placeholder_png_bytes(seed: str = 'pinova') -> bytes:
 
 
 def cleanup_existing_pin_media():
-    print('Suppression des médias pins / variants / commentaires…')
+    logger.info('Suppression des médias pins / variants / commentaires…')
     for v in PinVariant.objects.iterator():
         if v.image:
             v.image.delete(save=False)
@@ -398,7 +407,7 @@ def cleanup_existing_pin_media():
 
 def cleanup_relational_data():
     """Notifications, interactions, boards (orphelins), etc."""
-    print('Nettoyage des données relationnelles…')
+    logger.info('Nettoyage des données relationnelles…')
     Notification.objects.all().delete()
     PushSubscription.objects.all().delete()
     SubscriptionPayment.objects.all().delete()
@@ -459,7 +468,7 @@ def seed_subscription_pricing():
                 'is_active': True,
             },
         )
-    print('Tarifs SubscriptionPricing à jour.')
+    logger.info('Tarifs SubscriptionPricing à jour.')
 
 
 def seed_pinova_subscription_config():
@@ -467,7 +476,7 @@ def seed_pinova_subscription_config():
     if cfg.annual_discount_percent != 12:
         cfg.annual_discount_percent = 12
         cfg.save(update_fields=['annual_discount_percent'])
-    print('PinovaSubscriptionConfig (singleton) à jour.')
+    logger.info('PinovaSubscriptionConfig (singleton) à jour.')
 
 
 def seed_legal_documents():
@@ -515,7 +524,7 @@ def seed_legal_documents():
             'translations_cache': {},
         },
     )
-    print('LegalDocument (privacy / terms / contact) à jour.')
+    logger.info('LegalDocument (privacy / terms / contact) à jour.')
 
 
 def random_pin_content_flags() -> dict:
@@ -548,7 +557,7 @@ def seed_board_collaboration_invite_sample(boards_by_user: dict[int, list[Board]
             'status': BoardCollaborationInvite.STATUS_PENDING,
         },
     )
-    print('BoardCollaborationInvite (pending) créée.')
+    logger.info('BoardCollaborationInvite (pending) créée.')
 
 
 def seed_pin_variants_square_sample(created_pins: list[Pin]) -> None:
@@ -571,13 +580,13 @@ def seed_pin_variants_square_sample(created_pins: list[Pin]) -> None:
         pv = PinVariant(pin=pin, kind=PinVariant.KIND_SQUARE)
         pv.image.save(f'variant_sq_{pin.slug}{suf}', ContentFile(raw), save=True)
         n += 1
-    print(f'PinVariant carré (seed) : {n} fichiers.')
+    logger.info(f'PinVariant carré (seed) : {n} fichiers.')
 
 
 def seed_content_sample_reports(public_pins: list[Pin], regular_users: list[User]) -> None:
     """Signalements pin / profil / commentaire (contraintes uniques)."""
     if len(public_pins) < 2 or len(regular_users) < 4:
-        print('ContentReport : ignoré (données insuffisantes).')
+        logger.info('ContentReport : ignoré (données insuffisantes).')
         return
     pin_a, pin_b = public_pins[0], public_pins[1]
     r0, r1, r2 = regular_users[0], regular_users[1], regular_users[2]
@@ -600,7 +609,7 @@ def seed_content_sample_reports(public_pins: list[Pin], regular_users: list[User
             comment=c,
             defaults={'category': 'other', 'details': 'Seed : signalement commentaire.', 'reason': ''},
         )
-    print('ContentReport (échantillon) créés.')
+    logger.info('ContentReport (échantillon) créés.')
 
 
 def seed_user_blocks_sample() -> None:
@@ -672,11 +681,11 @@ def refresh_seed_story_created_dates(story_pins: list[Pin]) -> None:
 
 
 # Vague « fans » david1anato — exécutée à chaque seed (ajuster ici pour stresser l’API en local).
-SEED_DAVID_FAN_FOLLOWERS = 450
-SEED_DAVID_FAN_VIEW_EVENTS = 22000
-SEED_DAVID_FAN_LIKES_PER_FAN = 18
-SEED_DAVID_FAN_FOLLOWERS_CAP = 60000
-SEED_DAVID_FAN_VIEW_EVENTS_CAP = 8000000
+SEED_DAVID_FAN_FOLLOWERS = 2000  # Augmenté pour tester la notation K/M
+SEED_DAVID_FAN_VIEW_EVENTS = 1500000  # 1.5M vues pour tester la notation M
+SEED_DAVID_FAN_LIKES_PER_FAN = 50
+SEED_DAVID_FAN_FOLLOWERS_CAP = 1000000
+SEED_DAVID_FAN_VIEW_EVENTS_CAP = 1000000000
 
 
 def seed_david_fan_army(david_user: User) -> None:
@@ -688,8 +697,10 @@ def seed_david_fan_army(david_user: User) -> None:
     """
     try:
         from faker import Faker
+        from mimesis import Person
+        from mimesis.locales import Locale
     except ImportError:
-        print('seed_david_fan_army : paquet « Faker » manquant — pip install -r requirements.txt')
+        logger.warning('seed_david_fan_army : Faker ou Mimesis manquant — pip install faker mimesis')
         return
 
     from django.contrib.auth.hashers import make_password
@@ -704,30 +715,31 @@ def seed_david_fan_army(david_user: User) -> None:
         return
 
     fake = Faker('fr_FR')
+    person = Person(Locale.FR)
     pw_hash = make_password('!seed_fan_inactive!')
     david_profile = Profile.objects.get(user_id=david_user.id)
     pin_ids = list(Pin.objects.filter(author=david_user).values_list('id', flat=True))
     if not pin_ids:
-        print('seed_david_fan_army : aucun pin David — skip.')
+        logger.info('seed_david_fan_army : aucun pin David — skip.')
         return
 
-    print(
+    logger.info(
         f'seed_david_fan_army : followers={n_followers}, vues≈{n_views}, '
         f'likes/fan≤{likes_per_fan} (pins David={len(pin_ids)})…',
     )
 
     FollowingThrough = Profile.following.through
-    user_batch_size = 800
+    user_batch_size = 1000
     fan_users: list[User] = []
 
     for batch_start in range(0, n_followers, user_batch_size):
         batch_end = min(batch_start + user_batch_size, n_followers)
         users_chunk: list[User] = []
         for j in range(batch_start, batch_end):
-            uname = f'fan_dvc_{j:08d}'
+            uname = f'fan_{person.username(mask="l_l_d")}_{j:04d}_{secrets.token_hex(2)}'
             users_chunk.append(
                 User(
-                    username=uname,
+                    username=uname[:150],
                     email=f'{uname}@seed.pinova.invalid',
                     password=pw_hash,
                     is_active=True,
@@ -746,7 +758,7 @@ def seed_david_fan_army(david_user: User) -> None:
 
         profiles_chunk: list[Profile] = []
         for u in resolved_chunk:
-            display = str(fake.name())[:255]
+            display = person.full_name()[:255]
             profiles_chunk.append(
                 Profile(
                     user=u,
@@ -758,8 +770,10 @@ def seed_david_fan_army(david_user: User) -> None:
                 )
             )
         Profile.objects.bulk_create(profiles_chunk, batch_size=user_batch_size)
+        logger.info(f'  -> Créé {len(resolved_chunk)} utilisateurs/profils fans ({batch_end}/{n_followers})')
 
     if fan_users:
+        logger.info('  -> Création des liens de follow...')
         fan_profile_ids = list(
             Profile.objects.filter(user_id__in=[u.id for u in fan_users]).values_list('id', flat=True)
         )
@@ -769,9 +783,11 @@ def seed_david_fan_army(david_user: User) -> None:
         ]
         for i in range(0, len(follow_rows), 6000):
             FollowingThrough.objects.bulk_create(follow_rows[i : i + 6000], ignore_conflicts=True)
+        logger.info(f'  -> {len(follow_rows)} follows créés.')
 
     fan_user_ids = [u.id for u in fan_users]
     if fan_user_ids and likes_per_fan > 0:
+        logger.info('  -> Création des likes...')
         like_objs: list[Like] = []
         rng = random.Random(424242)
         for uid in fan_user_ids:
@@ -782,12 +798,15 @@ def seed_david_fan_army(david_user: User) -> None:
                 like_objs.append(Like(user_id=uid, pin_id=pid))
         for i in range(0, len(like_objs), 8000):
             Like.objects.bulk_create(like_objs[i : i + 8000], ignore_conflicts=True)
+        logger.info(f'  -> {len(like_objs)} likes créés.')
 
     if fan_user_ids and n_views > 0:
+        logger.info(f'  -> Génération de {n_views} vues (simulées via bulk)...')
         view_batch: list[PinViewEvent] = []
         n_pins = len(pin_ids)
         n_fans = len(fan_user_ids)
-        chunk_target = 12000
+        chunk_target = 25000
+        total_views_created = 0
         for offset in range(0, n_views, chunk_target):
             view_batch.clear()
             limit = min(chunk_target, n_views - offset)
@@ -798,10 +817,14 @@ def seed_david_fan_army(david_user: User) -> None:
                         pin_id=pin_ids[(offset + k) % n_pins],
                     )
                 )
-            PinViewEvent.objects.bulk_create(view_batch, batch_size=6000)
+            PinViewEvent.objects.bulk_create(view_batch, batch_size=8000)
+            total_views_created += limit
+            if total_views_created % 100000 == 0 or total_views_created == n_views:
+                logger.info(f'     - {total_views_created}/{n_views} vues...')
 
+    david_profile.refresh_from_db()
     n_followers_david = david_profile.followers.count()
-    print(
+    logger.info(
         f'seed_david_fan_army : terminé — {len(fan_user_ids)} comptes fans créés, '
         f'followers David (API)≈{n_followers_david}, vues insérées≈{n_views}.',
     )
@@ -828,7 +851,7 @@ def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> b
 
 
 def seed_data():
-    print('Mise à jour complète de la base de données (seed)…')
+    logger.info('Mise à jour complète de la base de données (seed)…')
     skip_network = os.environ.get('SEED_SKIP_NETWORK', '').lower() in ('1', 'true', 'yes')
     pin_target = int(os.environ.get('SEED_PIN_COUNT', '420'))
 
@@ -844,7 +867,7 @@ def seed_data():
     users: list[User] = [admin]
     profiles_by_username: dict[str, Profile] = {}
 
-    print('Création des utilisateurs et profils…')
+    logger.info('Création des utilisateurs et profils…')
     try:
         from faker import Faker as _FakerForBios
 
@@ -958,7 +981,7 @@ def seed_data():
         ('Références perso', True),
     ]
 
-    print('Création des boards…')
+    logger.info('Création des boards…')
     boards_by_user: dict[int, list[Board]] = {}
     board_names = [
         ('Inspirations 2026', False),
@@ -1094,7 +1117,7 @@ def seed_data():
     created_pins: list[Pin] = []
     story_pins: list[Pin] = []
 
-    print(f'Création de ~{pin_target} pins — multi-sources JPG/PNG/WebP/GIF, dimensions variées (stories free/plus/pro)…')
+    logger.info(f'Création de ~{pin_target} pins — multi-sources JPG/PNG/WebP/GIF, dimensions variées (stories free/plus/pro)…')
 
     def maybe_visibility(u: User, topic_obj: Topic) -> str:
         pr = profiles_by_username[u.username]
@@ -1207,16 +1230,16 @@ def seed_data():
             temp_img.close()
 
         if (i - 99) % 80 == 0:
-            print(f'  … {i - 99}/{pin_target} pins')
+            logger.info(f'  … {i - 99}/{pin_target} pins')
 
-    print(f'Pins créés : {len(created_pins)} dont {len(story_pins)} stories.')
+    logger.info(f'Pins créés : {len(created_pins)} dont {len(story_pins)} stories.')
 
     david_u = User.objects.filter(username='david1anato').first()
     if david_u and topics_by_name:
         d_boards = boards_by_user.get(david_u.id, [])
         topic_keys = list(topics_by_name.keys())
         david_queries = ['portrait', 'studio', 'benin', 'lagos', 'texture', 'gradient', 'sunset', 'grid']
-        print('Pins additionnels pour david1anato…')
+        logger.info('Pins additionnels pour david1anato…')
         for di in range(180):
             q = david_queries[di % len(david_queries)]
             topic = random.choice(topic_keys)
@@ -1252,7 +1275,7 @@ def seed_data():
                 story_pins.append(pin)
             if temp_img:
                 temp_img.close()
-        print(f'Pins David : +180 (boards remplis).')
+        logger.info(f'Pins David : +180 (boards remplis).')
 
 
     # Stories additionnelles pour garantir plusieurs stories par utilisateur « créatif »
@@ -1284,17 +1307,17 @@ def seed_data():
         if temp_img:
             temp_img.close()
 
-    print(f'Après boost stories : {len(story_pins)} stories au total.')
+    logger.info(f'Après boost stories : {len(story_pins)} stories au total.')
 
     refresh_seed_story_created_dates(story_pins)
 
     seed_pin_variants_square_sample(created_pins)
 
-    # Likes & saves croisés
-    print('Likes, saves, vues, recherches…')
+    # Interactions aléatoires (likes/saves/views) pour les pins publics
     public_pins = [p for p in created_pins if p.visibility == Pin.VISIBILITY_PUBLIC]
     sample_pins = random.sample(public_pins, min(160, len(public_pins)))
 
+    logger.info('Likes, saves, vues, recherches…')
     for pin in sample_pins:
         likers = random.sample(regular_users, k=min(random.randint(1, 7), len(regular_users)))
         for liker in likers:
@@ -1321,7 +1344,7 @@ def seed_data():
             )
 
     # Commentaires & réponses (couverture élargie + mentions @)
-    print('Commentaires…')
+    logger.info('Commentaires…')
     if not public_pins:
         comment_pins = []
     else:
@@ -1424,7 +1447,7 @@ def seed_data():
     seed_user_blocks_sample()
 
     # Notifications factices (variété de types)
-    print('Notifications…')
+    logger.info('Notifications…')
     notif_specs = []
     if len(regular_users) >= 2:
         u1, u2 = regular_users[0], regular_users[1]
@@ -1473,7 +1496,7 @@ def seed_data():
     Notification.objects.bulk_create(notif_specs)
 
     # Abonnements push factices (endpoint unique pour les tests UI)
-    print('Push subscriptions (factices)…')
+    logger.info('Push subscriptions (factices)…')
 
     for u in regular_users[: min(3, len(regular_users))]:
         PushSubscription.objects.create(
@@ -1489,7 +1512,7 @@ def seed_data():
         )
 
     # Paiements & tickets support (références factices uniques)
-    print('Paiements & tickets…')
+    logger.info('Paiements & tickets…')
     pay_rows = []
     for idx, u in enumerate(regular_users[:5]):
         if u.profile.subscription_plan == Profile.PLAN_FREE:
@@ -1547,7 +1570,7 @@ def seed_data():
         try:
             seed_subscription_seat_hub_demo(david_user, karim_u, lucas_u)
         except Exception as exc:
-            print(f'Subscription sièges (seed) ignoré : {exc}')
+            logger.error(f'Subscription sièges (seed) ignoré : {exc}')
 
     exp_otp = dj_tz.now() + timedelta(minutes=10)
     EmailOTP.objects.update_or_create(
@@ -1555,7 +1578,7 @@ def seed_data():
         defaults={'otp_code': '424242', 'expires_at': exp_otp},
     )
 
-    print(
+    logger.info(
         'Seed terminé — connexion test : password123 — '
         f'réseau images seed={"off" if skip_network else "on"} — '
         f'{len(regular_users)} utilisateurs.'

@@ -7,6 +7,7 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery, Exists
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.core.cache import cache
 from django.db import IntegrityError
 from datetime import timedelta
 from asgiref.sync import async_to_sync
@@ -72,7 +73,11 @@ from .pagination import PinFeedPagination, BoardListPagination
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
 from .creator_analytics import creator_totals_for_user, paginated_creator_top_pins
-from .weekly_stats import weekly_creator_pins_page, pin_thumbnail_absolute_url
+from .weekly_stats import (
+    weekly_creator_pins_page,
+    pin_thumbnail_absolute_url,
+    creator_period_engagement_totals,
+)
 from .report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
 
 # Borne mémoire pour mélange following / discover (home_feed) et tri par score sujet.
@@ -1166,10 +1171,14 @@ class PinViewSet(viewsets.ModelViewSet):
                 discover_idx += 1
         if not following_items:
             mixed = discover_items
+
+        # Correction : Pagination directe sur le QuerySet ou la liste
         page = self.paginate_queryset(mixed)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
+
+        # Fallback (si pagination désactivée ou échouée sur la liste)
         serializer = self.get_serializer(mixed, many=True)
         return Response(serializer.data)
 
@@ -1372,6 +1381,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         user = request.user
+        totals_only = str(request.query_params.get('totals_only') or '').lower() in ('1', 'true', 'yes')
         try:
             top_page = int(request.query_params.get('top_page') or 1)
         except ValueError:
@@ -1382,11 +1392,35 @@ class PinViewSet(viewsets.ModelViewSet):
             top_page_size = 10
         top_page = max(1, top_page)
 
+        skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
+        cache_key = f'pinova:creator_stats:v1:{user.id}:{totals_only}:{top_page}:{top_page_size}'
+        if not skip_cache:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached)
+
         totals = creator_totals_for_user(user)
+        if totals_only:
+            payload = {
+                'totals': totals,
+                'top_pins': [],
+                'top_pins_pagination': {
+                    'page': 1,
+                    'page_size': top_page_size,
+                    'total_items': 0,
+                    'total_pages': 1,
+                    'has_next': False,
+                    'has_previous': False,
+                },
+            }
+            if not skip_cache:
+                cache.set(cache_key, payload, 90)
+            return Response(payload)
+
         top_pins_payload, top_total, t_page, t_psize, t_pages = paginated_creator_top_pins(
             user, page=top_page, page_size=top_page_size
         )
-        return Response({
+        payload = {
             'totals': totals,
             'top_pins': top_pins_payload,
             'top_pins_pagination': {
@@ -1397,7 +1431,10 @@ class PinViewSet(viewsets.ModelViewSet):
                 'has_next': t_page < t_pages,
                 'has_previous': t_page > 1,
             },
-        })
+        }
+        if not skip_cache:
+            cache.set(cache_key, payload, 75)
+        return Response(payload)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-weekly-stats')
     def creator_weekly_stats(self, request):
@@ -1423,10 +1460,18 @@ class PinViewSet(viewsets.ModelViewSet):
             wsize = 10
         wpage = max(1, wpage)
 
+        skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
+        since = timezone.now() - timedelta(days=days)
+        wcache_key = f'pinova:creator_weekly:v1:{request.user.id}:{days}:{wsize}:{wpage}'
+        if wpage == 1 and not skip_cache:
+            hit = cache.get(wcache_key)
+            if hit is not None:
+                return Response(hit)
+
         wrows, total_pins_period, total_view_events, w_p, w_ps, w_pages = weekly_creator_pins_page(
             request.user, days=days, page=wpage, page_size=wsize
         )
-        since = timezone.now() - timedelta(days=days)
+        period_engagement = creator_period_engagement_totals(request.user, since)
         rows = []
         for row in wrows:
             pin = row['pin']
@@ -1436,13 +1481,17 @@ class PinViewSet(viewsets.ModelViewSet):
                 'slug': pin.slug,
                 'title': pin.title,
                 'views_week': row['views_week'],
+                'likes_week': row.get('likes_week', 0),
+                'saves_week': row.get('saves_week', 0),
+                'comments_week': row.get('comments_week', 0),
                 'thumbnail_url': thumb,
             })
-        return Response({
+        body = {
             'period_days': days,
             'since': since.isoformat(),
             'total_view_events_period': total_view_events,
             'pins_with_views_period': total_pins_period,
+            'period_engagement': period_engagement,
             'top_pins': rows,
             'pagination': {
                 'page': w_p,
@@ -1452,7 +1501,10 @@ class PinViewSet(viewsets.ModelViewSet):
                 'has_next': w_p < w_pages,
                 'has_previous': w_p > 1,
             },
-        })
+        }
+        if wpage == 1 and not skip_cache:
+            cache.set(wcache_key, body, 50)
+        return Response(body)
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
     def provenance(self, request, slug=None):
