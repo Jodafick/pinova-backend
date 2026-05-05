@@ -197,14 +197,21 @@ FEDAPAY_SECRET_KEY = os.environ.get('FEDAPAY_SECRET_KEY', '')
 FEDAPAY_CURRENCY_ISO = os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
 FEDAPAY_CALLBACK_URL = os.environ.get('FEDAPAY_CALLBACK_URL', FRONTEND_URL + '/premium')
 
-# Email Settings (SMTP)
-EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# E-mail : Resend (API) si RESEND_API_KEY est défini, sinon SMTP classique (sauf EMAIL_BACKEND explicite).
+RESEND_API_KEY = (os.environ.get('RESEND_API_KEY') or '').strip()
+if os.environ.get('EMAIL_BACKEND'):
+    EMAIL_BACKEND = os.environ['EMAIL_BACKEND']
+elif RESEND_API_KEY:
+    EMAIL_BACKEND = 'pinova_backend.email_backends.resend.ResendBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
 EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators

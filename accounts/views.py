@@ -36,6 +36,12 @@ from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer, UserBlockSerializer
+from .mail_delivery import (
+    EMAIL_DELIVERY_ERROR_CODE,
+    EMAIL_DELIVERY_USER_MESSAGE,
+    EmailDeliveryUnavailable,
+    send_pinova_mail,
+)
 from allauth.account.models import EmailAddress
 from .currency_utils import (
     SUPPORTED_CURRENCIES,
@@ -396,16 +402,22 @@ class ResendOTPView(APIView):
             
             otp, created = EmailOTP.objects.get_or_create(user=user, defaults={'expires_at': timezone.now() + timedelta(minutes=10)})
             otp.generate_otp()
-            
-            from django.core.mail import send_mail
-            from django.conf import settings
-            send_mail(
-                'Nouveau code de validation PINOVA',
-                f'Votre nouveau code de validation est : {otp.otp_code}. Il expire dans 10 minutes.',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
-            )
+
+            try:
+                send_pinova_mail(
+                    'Nouveau code de validation PINOVA',
+                    f'Votre nouveau code de validation est : {otp.otp_code}. Il expire dans 10 minutes.',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                )
+            except EmailDeliveryUnavailable:
+                return Response(
+                    {
+                        'error': EMAIL_DELIVERY_USER_MESSAGE,
+                        'code': EMAIL_DELIVERY_ERROR_CODE,
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             return Response({'message': 'Nouveau code envoyé'}, status=status.HTTP_200_OK)
         except User.DoesNotExist:
             return Response({'error': 'Utilisateur introuvable'}, status=status.HTTP_404_NOT_FOUND)

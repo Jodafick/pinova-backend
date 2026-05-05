@@ -37,6 +37,7 @@ class Notification(models.Model):
 
 
 class PushSubscription(models.Model):
+    """Abonnement Web Push (Navigateur/PWA — clés VAPID + endpoint FCM/Google pour le web)."""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='push_subscriptions')
     endpoint = models.CharField(max_length=500, unique=True)
     p256dh = models.CharField(max_length=255)
@@ -51,3 +52,23 @@ class PushSubscription(models.Model):
 
     def __str__(self):
         return f"PushSubscription({self.user.username})"
+
+
+class ExpoPushToken(models.Model):
+    """
+    Jeton Expo Push (applications React Native via expo-notifications).
+    Distinct de PushSubscription : l’API Expo envoie vers FCM/APNs pour le mobile.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='expo_push_tokens')
+    token = models.CharField(max_length=400, unique=True, db_index=True)
+    platform = models.CharField(max_length=24, blank=True, default='')
+    user_agent = models.CharField(max_length=255, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"ExpoPushToken({self.user.username})"

@@ -46,3 +46,14 @@ class PushSubscriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PushSubscription
         fields = ['endpoint', 'p256dh', 'auth']
+
+
+class ExpoPushRegisterSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=400, trim_whitespace=True)
+    platform = serializers.CharField(max_length=24, required=False, allow_blank=True, default='')
+
+    def validate_token(self, value):
+        s = value.strip()
+        if len(s) < 24 or len(s) > 390:
+            raise serializers.ValidationError('Invalid push token length.')
+        return s

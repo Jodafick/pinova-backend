@@ -31,6 +31,23 @@ class NoEmailConfirmationAdapter(DefaultAccountAdapter):
 
 
 class MySocialAccountAdapter(DefaultSocialAccountAdapter):
+    def _ensure_social_login_email_verified(self, user: User, sociallogin) -> None:
+        """
+        Google / Facebook attestent l’e-mail : la marquer vérifiée dans allauth (connexion existante ou liaison).
+        Les nouveaux comptes passent aussi par ici via ``save_user``.
+        """
+        provider = (getattr(sociallogin.account, 'provider', None) or '').strip().lower()
+        if provider not in ('google', 'facebook'):
+            return
+        email = (getattr(user, 'email', None) or self._get_social_email(sociallogin) or '').strip()
+        if not email:
+            return
+        EmailAddress.objects.update_or_create(
+            user=user,
+            email=email,
+            defaults={'verified': True, 'primary': True},
+        )
+
     def _google_picture_url(self, sociallogin) -> str:
         """URL photo profil Google depuis les données renvoyées par le provider (scope profile)."""
         if sociallogin.account.provider != 'google':
@@ -87,6 +104,7 @@ class MySocialAccountAdapter(DefaultSocialAccountAdapter):
         # Si le compte social est déjà lié, allauth gère la connexion directement.
         if sociallogin.is_existing:
             self._sync_google_profile_fields(sociallogin.user, sociallogin)
+            self._ensure_social_login_email_verified(sociallogin.user, sociallogin)
             return
 
         # Comportement voulu:
@@ -100,6 +118,7 @@ class MySocialAccountAdapter(DefaultSocialAccountAdapter):
         if existing_user:
             sociallogin.connect(request, existing_user)
             self._sync_google_profile_fields(existing_user, sociallogin)
+            self._ensure_social_login_email_verified(existing_user, sociallogin)
             return
 
         # Nouveau compte: normaliser l'email avant création automatique.
@@ -107,11 +126,6 @@ class MySocialAccountAdapter(DefaultSocialAccountAdapter):
 
     def save_user(self, request, sociallogin, form=None):
         user = super().save_user(request, sociallogin, form=form)
-        if user.email:
-            EmailAddress.objects.update_or_create(
-                user=user,
-                email=user.email,
-                defaults={'verified': True, 'primary': True},
-            )
+        self._ensure_social_login_email_verified(user, sociallogin)
         self._sync_google_profile_fields(user, sociallogin)
         return user

@@ -6,8 +6,12 @@ from accounts.blocking import blocked_mutual_user_ids
 
 from pinova_backend.unread_notifications_middleware import invalidate_unread_notifications_header_cache
 
-from .models import Notification, PushSubscription
-from .serializers import NotificationSerializer, PushSubscriptionSerializer
+from .models import ExpoPushToken, Notification, PushSubscription
+from .serializers import (
+    ExpoPushRegisterSerializer,
+    NotificationSerializer,
+    PushSubscriptionSerializer,
+)
 from .push import get_vapid_public_key, is_push_configured
 from .pagination import NotificationPagination
 
@@ -98,3 +102,30 @@ class NotificationViewSet(viewsets.ModelViewSet):
             return Response({'error': 'endpoint is required'}, status=status.HTTP_400_BAD_REQUEST)
         PushSubscription.objects.filter(user=request.user, endpoint=endpoint).update(is_active=False)
         return Response({'status': 'unsubscribed'})
+
+    @action(detail=False, methods=['post'])
+    def expo_push_register(self, request):
+        serializer = ExpoPushRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+        token = payload['token']
+        ua = (request.META.get('HTTP_USER_AGENT') or '')[:255]
+        plat = (payload.get('platform') or '')[:24]
+        row, _ = ExpoPushToken.objects.update_or_create(
+            token=token,
+            defaults={
+                'user': request.user,
+                'platform': plat,
+                'is_active': True,
+                'user_agent': ua,
+            },
+        )
+        return Response({'status': 'registered', 'id': row.id}, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'])
+    def expo_push_unregister(self, request):
+        token = str(request.data.get('token') or '').strip()
+        if not token:
+            return Response({'error': 'token is required'}, status=status.HTTP_400_BAD_REQUEST)
+        ExpoPushToken.objects.filter(user=request.user, token=token).update(is_active=False)
+        return Response({'status': 'unregistered'})

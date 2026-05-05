@@ -1,9 +1,16 @@
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 from django.contrib.auth.models import User
+from django.db import transaction
 from .models import Profile, EmailOTP, SubscriptionPayment, UserBlock
 from dj_rest_auth.registration.serializers import RegisterSerializer as BaseRegisterSerializer
-from django.core.mail import send_mail
 from django.conf import settings
+from .mail_delivery import (
+    EMAIL_DELIVERY_ERROR_CODE,
+    EMAIL_DELIVERY_USER_MESSAGE,
+    EmailDeliveryUnavailable,
+    send_pinova_mail,
+)
 from django.utils import timezone
 from datetime import timedelta
 from .currency_utils import normalize_currency
@@ -322,32 +329,42 @@ class RegisterSerializer(BaseRegisterSerializer):
         return data
 
     def save(self, request):
-        user = super().save(request)
-        display_name = self.cleaned_data.get('display_name')
-        if display_name:
-            profile = user.profile
-            profile.display_name = display_name
-            profile.save()
-        
-        # Générer et envoyer l'OTP
-        otp, created = EmailOTP.objects.get_or_create(user=user, defaults={'expires_at': timezone.now() + timedelta(minutes=10)})
-        otp.generate_otp()
-        
-        # Créer une notification de création de compte en attente de validation
-        create_localized_notification(
-            recipient=user,
-            notification_type='welcome',
-            title_fr='Bienvenue sur PINOVA',
-            message_fr="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider.",
-            action_url='/verify-otp',
-            metadata={'stage': 'account_created_pending_verification'},
-        )
+        with transaction.atomic():
+            user = super().save(request)
+            display_name = self.cleaned_data.get('display_name')
+            if display_name:
+                profile = user.profile
+                profile.display_name = display_name
+                profile.save()
 
-        send_mail(
-            'Code de validation PINOVA',
-            f'Votre code de validation est : {otp.otp_code}. Il expire dans 10 minutes.',
-            settings.DEFAULT_FROM_EMAIL,
-            [user.email],
-            fail_silently=False,
-        )
+            # Générer et envoyer l'OTP
+            otp, created = EmailOTP.objects.get_or_create(
+                user=user, defaults={'expires_at': timezone.now() + timedelta(minutes=10)}
+            )
+            otp.generate_otp()
+
+            # Créer une notification de création de compte en attente de validation
+            create_localized_notification(
+                recipient=user,
+                notification_type='welcome',
+                title_fr='Bienvenue sur PINOVA',
+                message_fr="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider.",
+                action_url='/verify-otp',
+                metadata={'stage': 'account_created_pending_verification'},
+            )
+
+            try:
+                send_pinova_mail(
+                    'Code de validation PINOVA',
+                    f'Votre code de validation est : {otp.otp_code}. Il expire dans 10 minutes.',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                )
+            except EmailDeliveryUnavailable:
+                raise ValidationError(
+                    {
+                        'non_field_errors': [EMAIL_DELIVERY_USER_MESSAGE],
+                        'code': [EMAIL_DELIVERY_ERROR_CODE],
+                    }
+                ) from None
         return user
