@@ -280,7 +280,7 @@ class PinViewSet(viewsets.ModelViewSet):
 
         queryset = (
             Pin.objects.select_related('author', 'author__profile', 'topic')
-            .prefetch_related('hashtags', 'boards')
+            .prefetch_related('hashtags', 'boards', 'variant_assets')
             .all()
             .order_by('media_sensitive_blur', '-created_at')
         )
@@ -509,7 +509,7 @@ class PinViewSet(viewsets.ModelViewSet):
             .exclude(story_expires_at__isnull=True)
             .exclude(story_expires_at__lte=timezone.now())
             .select_related('author', 'author__profile', 'topic')
-            .prefetch_related('hashtags', 'boards')
+            .prefetch_related('hashtags', 'boards', 'variant_assets')
         )
 
         if username:

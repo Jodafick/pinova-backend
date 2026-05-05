@@ -4,6 +4,7 @@ from django.db.models import Count, Case, When, Value, IntegerField, Exists, Out
 from django.utils import timezone
 from .models import (
     Pin,
+    PinVariant,
     Topic,
     Comment,
     Like,
@@ -311,6 +312,7 @@ class PinSerializer(serializers.ModelSerializer):
     boards = serializers.SerializerMethodField()
     description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     story_video_url = serializers.SerializerMethodField(read_only=True)
+    story_display_image_url = serializers.SerializerMethodField(read_only=True)
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
     saves_count = serializers.IntegerField(read_only=True)
@@ -346,6 +348,7 @@ class PinSerializer(serializers.ModelSerializer):
             'description',
             'link',
             'image',
+            'story_display_image_url',
             'story_video',
             'story_video_url',
             'author',
@@ -387,6 +390,27 @@ class PinSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         url = obj.story_video.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_story_display_image_url(self, obj):
+        """URL absolue du visuel story : variante 9:16 si présente, sinon image principale."""
+        if not getattr(obj, 'is_story', False):
+            return None
+        request = self.context.get('request')
+
+        def abs_uri(rel_url: str) -> str:
+            if not rel_url:
+                return ''
+            return request.build_absolute_uri(rel_url) if request else rel_url
+
+        try:
+            for pv in obj.variant_assets.all():
+                if pv.kind == PinVariant.KIND_STORY and pv.image and getattr(pv.image, 'name', ''):
+                    return abs_uri(pv.image.url)
+        except Exception:
+            pass
+        if obj.image and getattr(obj.image, 'name', ''):
+            return abs_uri(obj.image.url)
+        return None
 
     def validate_story_video(self, value):
         if not value:
