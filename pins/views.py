@@ -34,6 +34,7 @@ from .models import (
     CommentLike,
     PinViewEvent,
     SearchInteraction,
+    UserInteraction,
     PinBoard,
     ContentReport,
     BoardCollaborationInvite,
@@ -42,6 +43,7 @@ from .models import (
 from .legal_page_i18n import build_legal_api_response
 from .faq_api import build_faq_overview_response
 from .search_utils import broad_pin_q, fuzzy_score
+from .recommendation_engine import rank_recommendations_for_user, update_pin_ai_metadata, update_user_embedding
 from .serializers import (
     PinSerializer,
     StandaloneStoryCreateSerializer,
@@ -359,6 +361,7 @@ class PinViewSet(viewsets.ModelViewSet):
         pin = serializer.save(author=self.request.user)
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
+        update_pin_ai_metadata(pin)
 
     def perform_update(self, serializer):
         if serializer.instance.author_id != self.request.user.id:
@@ -366,6 +369,7 @@ class PinViewSet(viewsets.ModelViewSet):
         pin = serializer.save()
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
+        update_pin_ai_metadata(pin)
 
     def perform_destroy(self, instance):
         if instance.author_id != self.request.user.id:
@@ -379,6 +383,14 @@ class PinViewSet(viewsets.ModelViewSet):
 
         if not created:
             save.delete()
+            UserInteraction.objects.create(
+                user=request.user,
+                pin=pin,
+                creator=pin.author,
+                event_type=UserInteraction.TYPE_SAVE,
+                metadata={'action': 'unsave'},
+            )
+            update_user_embedding(request.user)
             return Response({'status': 'unsaved', 'saves_count': pin.saves_count})
 
         if pin.author != request.user and pin.author.profile.notifications_saves:
@@ -391,6 +403,14 @@ class PinViewSet(viewsets.ModelViewSet):
                 pin_slug=pin.slug,
                 metadata={'is_story': pin.is_story},
             )
+        UserInteraction.objects.create(
+            user=request.user,
+            pin=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_SAVE,
+            metadata={'action': 'save'},
+        )
+        update_user_embedding(request.user)
 
         return Response({'status': 'saved', 'saves_count': pin.saves_count})
 
@@ -401,6 +421,14 @@ class PinViewSet(viewsets.ModelViewSet):
 
         if not created:
             like.delete()
+            UserInteraction.objects.create(
+                user=request.user,
+                pin=pin,
+                creator=pin.author,
+                event_type=UserInteraction.TYPE_LIKE,
+                metadata={'action': 'unlike'},
+            )
+            update_user_embedding(request.user)
             return Response({'status': 'unliked', 'likes_count': pin.likes_count})
 
         if pin.author != request.user and not pin.is_story:
@@ -412,6 +440,14 @@ class PinViewSet(viewsets.ModelViewSet):
                 pin_id=pin.id,
                 pin_slug=pin.slug,
             )
+        UserInteraction.objects.create(
+            user=request.user,
+            pin=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_LIKE,
+            metadata={'action': 'like'},
+        )
+        update_user_embedding(request.user)
 
         return Response({'status': 'liked', 'likes_count': pin.likes_count})
 
@@ -455,7 +491,20 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='view')
     def view_event(self, request, slug=None):
         pin = self.get_object()
+        try:
+            dwell_seconds = int(request.data.get('dwell_seconds') or 0)
+        except (TypeError, ValueError):
+            dwell_seconds = 0
         PinViewEvent.objects.create(user=request.user, pin=pin)
+        UserInteraction.objects.create(
+            user=request.user,
+            pin=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_VIEW,
+            dwell_seconds=max(0, dwell_seconds),
+            metadata={'source': request.data.get('source') or ''},
+        )
+        update_user_embedding(request.user)
         return Response({'status': 'recorded'})
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='search-interactions')
@@ -1000,8 +1049,7 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):
         base_queryset = self.get_queryset().exclude(author=request.user)
-        topic_scores = self._build_topic_scores(request.user)
-        recommendations = self._ordered_by_topic_score(base_queryset, topic_scores)
+        recommendations = rank_recommendations_for_user(request.user, base_queryset)
         page = self.paginate_queryset(recommendations)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -1056,6 +1104,7 @@ class PinViewSet(viewsets.ModelViewSet):
         pin_limit = lim
         user_limit = min(10, lim + 2)
         rec_limit = min(8, lim)
+        board_limit = min(10, lim + 2)
 
         q = (request.query_params.get('q') or '').strip()
         base_pins = self.get_queryset()
@@ -1112,6 +1161,37 @@ class PinViewSet(viewsets.ModelViewSet):
                     }
                 )
 
+        boards_qs = Board.objects.select_related('user').prefetch_related('collaborators')
+        if request.user.is_authenticated:
+            boards_qs = boards_qs.filter(
+                Q(is_private=False) | Q(user=request.user) | Q(collaborators=request.user)
+            )
+        else:
+            boards_qs = boards_qs.filter(is_private=False)
+        if q:
+            boards_qs = boards_qs.filter(
+                Q(name__icontains=q) | Q(description__icontains=q) | Q(user__username__icontains=q)
+            ).distinct()
+            board_candidates = list(boards_qs[:80])
+            board_candidates.sort(
+                key=lambda b: -fuzzy_score(
+                    q,
+                    b.name or '',
+                    b.description or '',
+                    b.user.username if getattr(b, 'user', None) else '',
+                )
+            )
+        else:
+            board_candidates = list(
+                boards_qs.annotate(pins_total=Count('pins')).order_by('-pins_total', '-created_at')[:board_limit]
+            )
+        boards_data = []
+        for b in board_candidates[:board_limit]:
+            payload = BoardSerializer(b, context=ctx).data
+            previews = payload.get('preview_images') or []
+            payload['cover_image_url'] = previews[0] if previews else ''
+            boards_data.append(payload)
+
         rec_data = []
         if request.user.is_authenticated:
             rec_base = self.get_queryset().exclude(author=request.user)
@@ -1133,6 +1213,7 @@ class PinViewSet(viewsets.ModelViewSet):
             {
                 'pins': pins_data,
                 'users': users_data,
+                'boards': boards_data,
                 'recommended_pins': rec_data,
                 'query': q,
             }

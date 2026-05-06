@@ -36,5 +36,7 @@ def broad_pin_q(search: str) -> Q:
             Q(title__icontains=tok)
             | Q(description__icontains=tok)
             | Q(author__username__icontains=tok)
+            | Q(hashtags__name__icontains=tok)
+            | Q(invisible_tags__tag__icontains=tok)
         )
     return combined

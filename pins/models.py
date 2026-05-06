@@ -98,6 +98,8 @@ class Pin(models.Model):
     boards = models.ManyToManyField(Board, blank=True, related_name='pins', through='PinBoard')
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='pins')
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    version = models.PositiveIntegerField(default=1)
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     is_story = models.BooleanField(default=False)
     # Plus/Pro « story éphémère » : après 24h la ligne est détruite (pas d’archive en pin grille).
@@ -253,6 +255,8 @@ class Comment(models.Model):
     translated_text = models.TextField(blank=True)
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='comments')
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    version = models.PositiveIntegerField(default=1)
     needs_review = models.BooleanField(default=False)
     report_count = models.PositiveIntegerField(default=0)
     moderation_hidden = models.BooleanField(default=False)
@@ -272,6 +276,23 @@ class Comment(models.Model):
                 if old_nm and old_nm != new_nm:
                     unlink_field_file(old.media)
         super().save(*args, **kwargs)
+
+
+class ProcessedAction(models.Model):
+    """Idempotence des actions de sync offline-first côté backend."""
+
+    id = models.CharField(max_length=64, primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='processed_actions')
+    client_id = models.CharField(max_length=100, db_index=True)
+    action_type = models.CharField(max_length=40)
+    processed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-processed_at']
+        indexes = [
+            models.Index(fields=['user', '-processed_at']),
+            models.Index(fields=['client_id', '-processed_at']),
+        ]
 
     @property
     def likes_count(self):
@@ -421,6 +442,70 @@ class SearchInteraction(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class PinEmbedding(models.Model):
+    pin = models.OneToOneField(Pin, on_delete=models.CASCADE, related_name='embedding_profile')
+    embedding = models.JSONField(default=list, blank=True)
+    embedding_dim = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+
+class UserEmbedding(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='embedding_profile')
+    embedding = models.JSONField(default=list, blank=True)
+    embedding_dim = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+
+class UserInteraction(models.Model):
+    TYPE_VIEW = 'view'
+    TYPE_LIKE = 'like'
+    TYPE_CLICK = 'click'
+    TYPE_SAVE = 'save'
+    TYPE_CREATOR_VISIT = 'creator_visit'
+    EVENT_TYPE_CHOICES = [
+        (TYPE_VIEW, 'View'),
+        (TYPE_LIKE, 'Like'),
+        (TYPE_CLICK, 'Click'),
+        (TYPE_SAVE, 'Save'),
+        (TYPE_CREATOR_VISIT, 'Creator Visit'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_interactions')
+    pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='user_interactions', null=True, blank=True)
+    creator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='creator_interactions')
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES)
+    dwell_seconds = models.PositiveIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['event_type', '-created_at']),
+        ]
+
+
+class TagInvisible(models.Model):
+    pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='invisible_tags')
+    tag = models.CharField(max_length=100)
+    confidence = models.FloatField(default=0.0)
+    source = models.CharField(max_length=30, default='auto')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('pin', 'tag')
+        ordering = ['-confidence', 'tag']
 
 
 class LegalDocument(models.Model):
