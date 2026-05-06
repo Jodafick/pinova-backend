@@ -250,9 +250,9 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
-]
+# Évite W004 si le dossier n’existe pas (ex. déploiement Render sans dossier ``static`` versionné).
+_static_app_dir = BASE_DIR / 'static'
+STATICFILES_DIRS = [_static_app_dir] if _static_app_dir.is_dir() else []
 
 # WhiteNoise storage for production
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
