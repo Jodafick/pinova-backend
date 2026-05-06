@@ -257,6 +257,7 @@ class Comment(models.Model):
     translated_text = models.TextField(blank=True)
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='comments')
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     needs_review = models.BooleanField(default=False)
     report_count = models.PositiveIntegerField(default=0)
     moderation_hidden = models.BooleanField(default=False)

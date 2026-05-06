@@ -185,6 +185,7 @@ class CommentSerializer(serializers.ModelSerializer):
             'original_language',
             'translated_text',
             'created_at',
+            'updated_at',
             'likes_count',
             'is_liked',
             'viewer_has_reported',
