@@ -99,6 +99,7 @@ class Pin(models.Model):
     boards = models.ManyToManyField(Board, blank=True, related_name='pins', through='PinBoard')
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='pins')
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     is_story = models.BooleanField(default=False)
     # Plus/Pro « story éphémère » : après 24h la ligne est détruite (pas d’archive en pin grille).

@@ -24,7 +24,9 @@ Modèles couverts (création ou nettoyage) : User ; Profile ; EmailOTP ; Subscri
 PinovaSubscriptionConfig ; SubscriptionPayment ; SubscriptionSeatInvitation ; SubscriptionSeatMember ;
 SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTranslation ; LegalDocument ; FaqItem ;
 Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save ; Like ; Comment ;
-CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction.
+CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction ;
+ExpoPushToken (jeton factice mobile, idempotent par user id).
+Stories : finalisation alignée sur `pins/active-stories` (éphémères + `story_expires_at` futur).
 
 Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
 """
@@ -76,7 +78,7 @@ from accounts.models import (
     UserBlock,
 )
 from accounts.subscription_seats import generate_invite_plain_token_and_hash, grant_member_seat
-from notifications.models import Notification, PushSubscription
+from notifications.models import ExpoPushToken, Notification, PushSubscription
 from pins.serializers import extract_mentions
 from pins.models import (
     Board,
@@ -746,15 +748,42 @@ def seed_topic_translations(topics_by_name: dict[str, Topic]):
     print('TopicTranslation (échantillon) créées.')
 
 
-def refresh_seed_story_created_dates(story_pins: list[Pin]) -> None:
-    """Met à jour created_at des stories seed (bandeau « récent », libellés relatifs crédibles)."""
+def finalize_seed_stories_for_active_ring(story_pins: list[Pin]) -> None:
+    """
+    Aligne les stories seed avec l’API GET `pins/active-stories` :
+    - filtres : is_story, publication non planifiée dans le futur, story_expires_at non nul et > now ;
+    - les stories « grille » (story_ephemeral=False) ont story_expires_at=None côté save() → exclues du bandeau ;
+    - on force story_ephemeral=True + une expiration dans le futur, un created_at récent (UX),
+      et on annule toute planification future qui masquerait encore le pin.
+
+    (Sans ceci, expires tombe à NULL pour non-éphémère, ou avec des dates passées après recul de created_at.)
+    """
     if not story_pins:
         return
     now = dj_tz.now()
+    n = 0
     for p in story_pins:
-        minutes_ago = random.randint(5, 36 * 60)
-        Pin.objects.filter(pk=p.pk).update(created_at=now - timedelta(minutes=minutes_ago))
-    print(f'Stories : {len(story_pins)} dates created_at mises à jour (aléatoire, ~5 min à 36 h).')
+        p.refresh_from_db()
+        minutes_ago = random.randint(3, 220)
+        created_at = now - timedelta(minutes=minutes_ago)
+        expires = now + timedelta(hours=random.randint(10, 22))
+
+        upd = {
+            'created_at': created_at,
+            'updated_at': now,
+            'story_ephemeral': True,
+            'story_expires_at': expires,
+        }
+        if p.scheduled_publish_at and p.scheduled_publish_at > now:
+            upd['scheduled_publish_at'] = None
+
+        Pin.objects.filter(pk=p.pk).update(**upd)
+        n += 1
+    logger.info(
+        'Stories seed (%s) : story_ephemeral=True, story_expires_at dans 10–22 h, '
+        'created_at récent, planif future retirée pour le bandeau active-stories.',
+        n,
+    )
 
 
 # Vague « fans » david1anato — exécutée à chaque seed (ajuster ici pour stresser l’API en local).
@@ -1222,8 +1251,13 @@ def seed_data():
         story_weight = {'free': 0.06, 'plus': 0.16, 'pro': 0.22}[pr.subscription_plan]
         is_story = random.random() < story_weight
 
+        # Pas de publication planifiée pour les stories : sinon exclues du bandeau active-stories.
         scheduled = None
-        if pr.subscription_plan == Profile.PLAN_PRO and random.random() < 0.04:
+        if (
+            (not is_story)
+            and pr.subscription_plan == Profile.PLAN_PRO
+            and random.random() < 0.04
+        ):
             scheduled = dj_tz.now() + timedelta(days=random.randint(1, 14))
 
         pin = Pin.objects.create(
@@ -1240,10 +1274,6 @@ def seed_data():
 
         if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
             pin.refresh_from_db()
-
-        if is_story:
-            pin.refresh_story_expiry()
-            pin.save(update_fields=['story_expires_at'])
 
         # Hashtags (sous-ensemble)
         if random.random() < 0.35:
@@ -1338,9 +1368,6 @@ def seed_data():
             )
             if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
                 pin.refresh_from_db()
-            if is_story:
-                pin.refresh_story_expiry()
-                pin.save(update_fields=['story_expires_at'])
             if d_boards and random.random() < 0.78:
                 b = random.choice(d_boards)
                 PinBoard.objects.update_or_create(
@@ -1378,8 +1405,6 @@ def seed_data():
             **random_pin_content_flags(),
         )
         attach_image_to_pin(pin, temp_img, media_fname, skip_network)
-        pin.refresh_story_expiry()
-        pin.save(update_fields=['story_expires_at'])
         story_pins.append(pin)
         created_pins.append(pin)
         if temp_img:
@@ -1387,7 +1412,7 @@ def seed_data():
 
     logger.info(f'Après boost stories : {len(story_pins)} stories au total.')
 
-    refresh_seed_story_created_dates(story_pins)
+    finalize_seed_stories_for_active_ring(story_pins)
 
     seed_pin_variants_square_sample(created_pins)
 
@@ -1587,6 +1612,17 @@ def seed_data():
                 :255
             ],
             user_agent='SeedScript/1.0',
+        )
+
+    for u in regular_users[: min(2, len(regular_users))]:
+        ExpoPushToken.objects.get_or_create(
+            token=f'expo-seed-pinova-{u.id}',
+            defaults={
+                'user': u,
+                'platform': 'seed',
+                'user_agent': 'PinovaSeed/Expo',
+                'is_active': True,
+            },
         )
 
     # Paiements & tickets support (références factices uniques)
