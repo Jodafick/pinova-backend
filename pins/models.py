@@ -463,6 +463,40 @@ class LegalDocument(models.Model):
         return self.slug
 
 
+class FaqItem(models.Model):
+    """Questions / réponses affichées sur la page FAQ (FR/EN), avec lien optionnel vers une page légale."""
+
+    RELATED_NONE = ''
+    RELATED_SLUG_CHOICES = [
+        (RELATED_NONE, 'Aucun lien'),
+        (LegalDocument.SLUG_PRIVACY, 'Confidentialité'),
+        (LegalDocument.SLUG_TERMS, "Conditions d'utilisation"),
+        (LegalDocument.SLUG_CONTACT, 'Contact'),
+    ]
+
+    question_fr = models.CharField('Question (FR)', max_length=500)
+    question_en = models.CharField('Question (EN)', max_length=500, blank=True, default='')
+    answer_fr = models.TextField('Réponse (FR)')
+    answer_en = models.TextField('Réponse (EN)', blank=True, default='')
+    sort_order = models.PositiveSmallIntegerField('Ordre', default=0)
+    is_published = models.BooleanField('Publié', default=True, db_index=True)
+    related_legal_slug = models.CharField(
+        'Lien « en savoir plus »',
+        max_length=40,
+        blank=True,
+        default='',
+        choices=RELATED_SLUG_CHOICES,
+    )
+
+    class Meta:
+        ordering = ['sort_order', 'id']
+        verbose_name = 'Entrée FAQ'
+        verbose_name_plural = 'FAQ'
+
+    def __str__(self):
+        return (self.question_fr or self.question_en or '')[:80]
+
+
 class BoardCollaborationInvite(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_ACCEPTED = 'accepted'

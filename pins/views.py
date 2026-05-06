@@ -40,6 +40,7 @@ from .models import (
     LegalDocument,
 )
 from .legal_page_i18n import build_legal_api_response
+from .faq_api import build_faq_overview_response
 from .search_utils import broad_pin_q, fuzzy_score
 from .serializers import (
     PinSerializer,
@@ -73,6 +74,7 @@ from .pagination import PinFeedPagination, BoardListPagination
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
 from .creator_analytics import creator_totals_for_user, paginated_creator_top_pins
+from .creator_audience import VALID_ACTIONS, creator_engagement_breakdown
 from .weekly_stats import (
     weekly_creator_pins_page,
     pin_thumbnail_absolute_url,
@@ -1506,6 +1508,42 @@ class PinViewSet(viewsets.ModelViewSet):
             cache.set(wcache_key, body, 50)
         return Response(body)
 
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-engagement')
+    def creator_engagement(self, request):
+        """Acteurs les plus actifs par type d’interaction (likes, saves, comments, views) sur une période."""
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Creator engagement requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        action = str(request.query_params.get('action') or '').strip().lower()
+        if not action:
+            return Response({'error': 'action is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if action not in VALID_ACTIONS:
+            return Response(
+                {'error': 'invalid action', 'allowed': sorted(VALID_ACTIONS)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            days = int(request.query_params.get('days') or 30)
+        except ValueError:
+            days = 30
+        try:
+            limit = int(request.query_params.get('limit') or 25)
+        except ValueError:
+            limit = 25
+        skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
+        e_key = f'pinova:creator_engagement:v1:{request.user.id}:{action}:{days}:{limit}'
+        if not skip_cache:
+            hit = cache.get(e_key)
+            if hit is not None:
+                return Response(hit)
+        body = creator_engagement_breakdown(request, request.user, action=action, days=days, limit=limit)
+        if not skip_cache:
+            cache.set(e_key, body, 45)
+        return Response(body)
+
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
     def provenance(self, request, slug=None):
         self.get_object()
@@ -1985,3 +2023,10 @@ def legal_document_detail(request, slug):
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
     lang = request.query_params.get('lang') or 'fr'
     return Response(build_legal_api_response(slug, lang))
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def faq_overview(request):
+    lang = request.query_params.get('lang') or 'fr'
+    return Response(build_faq_overview_response(lang))

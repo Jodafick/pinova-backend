@@ -17,6 +17,7 @@ from .models import (
     Topic,
     TopicTranslation,
     LegalDocument,
+    FaqItem,
     BoardCollaborationInvite,
     PinViewEvent,
     SearchInteraction,
@@ -194,6 +195,15 @@ class LegalDocumentAdmin(admin.ModelAdmin):
                 self.message_user(request, f'« {doc.slug} » : {exc}', level=messages.ERROR)
         if n:
             self.message_user(request, f'{n} page(s) mise(s) à jour (EN).', level=messages.SUCCESS)
+
+
+@admin.register(FaqItem)
+class FaqItemAdmin(admin.ModelAdmin):
+    list_display = ('question_fr', 'sort_order', 'is_published', 'related_legal_slug')
+    list_filter = ('is_published', 'related_legal_slug')
+    list_editable = ('sort_order', 'is_published')
+    search_fields = ('question_fr', 'question_en', 'answer_fr', 'answer_en')
+    ordering = ('sort_order', 'id')
 
 
 @admin.register(BoardCollaborationInvite)

@@ -22,7 +22,7 @@ Les utilisateurs de test ont le mot de passe : password123
 
 Modèles couverts (création ou nettoyage) : User ; Profile ; EmailOTP ; SubscriptionPricing ;
 PinovaSubscriptionConfig ; SubscriptionPayment ; SubscriptionSeatInvitation ; SubscriptionSeatMember ;
-SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTranslation ; LegalDocument ;
+SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTranslation ; LegalDocument ; FaqItem ;
 Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save ; Like ; Comment ;
 CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction.
 
@@ -86,6 +86,7 @@ from pins.models import (
     ContentReport,
     Hashtag,
     LegalDocument,
+    FaqItem,
     Like,
     Pin,
     PinBoard,
@@ -527,6 +528,82 @@ def seed_legal_documents():
     logger.info('LegalDocument (privacy / terms / contact) à jour.')
 
 
+def seed_faq_items():
+    """Entrées FAQ par défaut (FR/EN), liées aux pages légales."""
+    seeds = [
+        {
+            'sort_order': 10,
+            'question_fr': 'Comment gérer la confidentialité de mon compte ?',
+            'question_en': 'How do I manage my account privacy?',
+            'answer_fr': (
+                'Paramétrez la visibilité de vos pins, la politique de commentaires et les informations '
+                'affichées sur votre profil. Pour savoir quelles données nous traitons, consultez la '
+                'politique de confidentialité.'
+            ),
+            'answer_en': (
+                'Adjust pin visibility, comments policy, and profile information. '
+                'See our Privacy Policy for details on data processing.'
+            ),
+            'related_legal_slug': LegalDocument.SLUG_PRIVACY,
+        },
+        {
+            'sort_order': 20,
+            'question_fr': 'Quelles sont les règles d’utilisation de la plateforme ?',
+            'question_en': 'What are the platform rules?',
+            'answer_fr': (
+                'Pinova attend un comportement respectueux des lois et de la communauté. Contenus interdits, '
+                'comptes et responsabilités sont décrits dans les conditions d’utilisation.'
+            ),
+            'answer_en': (
+                'Pinova requires lawful, respectful behaviour. Prohibited content and account rules are '
+                'described in our Terms of Service.'
+            ),
+            'related_legal_slug': LegalDocument.SLUG_TERMS,
+        },
+        {
+            'sort_order': 30,
+            'question_fr': 'Comment vous contacter ?',
+            'question_en': 'How can I contact you?',
+            'answer_fr': (
+                'Pour une question commerciale, technique ou un signalement, écrivez-nous à l’adresse indiquée '
+                'sur la page contact. Nous répondons en général sous quelques jours ouvrés.'
+            ),
+            'answer_en': (
+                'For business, technical questions or reports, use the email shown on our contact page. '
+                'We usually reply within a few business days.'
+            ),
+            'related_legal_slug': LegalDocument.SLUG_CONTACT,
+        },
+        {
+            'sort_order': 40,
+            'question_fr': 'Comment passer à Premium ou au dashboard créateur ?',
+            'question_en': 'How do I upgrade to Premium or use the creator dashboard?',
+            'answer_fr': (
+                'Les offres Premium et les outils créateur sont disponibles depuis l’application ou le site. '
+                'Les modalités d’abonnement et d’utilisation sont précisées dans les conditions d’utilisation.'
+            ),
+            'answer_en': (
+                'Premium plans and creator tools are available in the app or on the website. '
+                'Subscription terms are set out in our Terms of Service.'
+            ),
+            'related_legal_slug': LegalDocument.SLUG_TERMS,
+        },
+    ]
+    for row in seeds:
+        FaqItem.objects.update_or_create(
+            question_fr=row['question_fr'],
+            defaults={
+                'question_en': row['question_en'],
+                'answer_fr': row['answer_fr'],
+                'answer_en': row['answer_en'],
+                'sort_order': row['sort_order'],
+                'is_published': True,
+                'related_legal_slug': row['related_legal_slug'],
+            },
+        )
+    logger.info('FaqItem (seed) à jour.')
+
+
 def random_pin_content_flags() -> dict:
     """Politique commentaires + flags modération / sensible (échantillon)."""
     return {
@@ -863,6 +940,7 @@ def seed_data():
     seed_subscription_pricing()
     seed_pinova_subscription_config()
     seed_legal_documents()
+    seed_faq_items()
 
     users: list[User] = [admin]
     profiles_by_username: dict[str, Profile] = {}
