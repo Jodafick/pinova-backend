@@ -291,6 +291,9 @@ class PinViewSet(viewsets.ModelViewSet):
             profile_author = ''
         if profile_author:
             queryset = queryset.filter(author__username=profile_author)
+            # Sur une vue profil (author=...), ne jamais renvoyer un contenu bloqué par modération,
+            # y compris pour le propriétaire du profil.
+            queryset = queryset.exclude(moderation_hidden=True)
         topic = self.request.query_params.get('topic')
         queryset = self._apply_topic_filter(queryset, topic)
         sched = self._scheduled_publish_ok_q()
@@ -330,7 +333,7 @@ class PinViewSet(viewsets.ModelViewSet):
             core &= placement_q
         queryset = queryset.filter(core).distinct()
         queryset = queryset.filter(sensitive_pins_query_filter(self.request))
-        queryset = queryset.exclude(Q(moderation_hidden=True) & ~Q(author=self.request.user))
+        queryset = queryset.exclude(moderation_hidden=True)
         queryset = filter_pins_exclude_blocked(queryset, self.request)
         if self.request.user.is_authenticated:
             queryset = queryset.annotate(
