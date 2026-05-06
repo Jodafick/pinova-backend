@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import User
 from django.db import transaction
 from .models import Profile, EmailOTP, SubscriptionPayment, UserBlock
@@ -313,6 +316,23 @@ class UserSerializer(serializers.ModelSerializer):
         )
         sub['active_billing_cycle'] = last_pay_cycle or None
         return sub
+
+
+class SetInitialPasswordSerializer(serializers.Serializer):
+    """Mot de passe initial pour comptes créés via réseau social (sans mot de passe Django)."""
+
+    new_password1 = serializers.CharField(write_only=True)
+    new_password2 = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs['new_password1'] != attrs['new_password2']:
+            raise serializers.ValidationError({'new_password2': _('Les mots de passe ne correspondent pas.')})
+        user = self.context['request'].user
+        try:
+            validate_password(attrs['new_password1'], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'new_password1': list(exc.messages)})
+        return attrs
 
 
 class RegisterSerializer(BaseRegisterSerializer):

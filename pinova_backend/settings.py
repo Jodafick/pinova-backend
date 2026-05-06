@@ -342,6 +342,9 @@ REST_FRAMEWORK = {
 REST_AUTH = {
     'USE_JWT': True,
     'SESSION_LOGIN': False,
+    # False : le refresh est inclus dans le JSON (login + social), comme attendu par le web / mobile
+    # qui stockent `pinova_refresh_token` en localStorage. True = refresh uniquement cookie HttpOnly.
+    'JWT_AUTH_HTTPONLY': False,
     'JWT_AUTH_COOKIE': 'pinova-auth',
     'JWT_AUTH_REFRESH_COOKIE': 'pinova-refresh-token',
     'JWT_AUTH_COOKIE_USE_CSRF': False,

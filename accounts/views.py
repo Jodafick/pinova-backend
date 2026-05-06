@@ -37,7 +37,13 @@ from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_T
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
 from pinova_backend.media_cache import build_versioned_media_url
 
-from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer, UserBlockSerializer
+from .serializers import (
+    ProfileSerializer,
+    UserSerializer,
+    RegisterSerializer,
+    UserBlockSerializer,
+    SetInitialPasswordSerializer,
+)
 from .mail_delivery import (
     EMAIL_DELIVERY_ERROR_CODE,
     EMAIL_DELIVERY_USER_MESSAGE,
@@ -784,6 +790,7 @@ class UserMeView(APIView):
             request.user, context={'request': request, 'omit_full_board_list': True},
         ).data
         data.update(build_me_hydration_bundle(request))
+        data['has_usable_password'] = request.user.has_usable_password()
         return Response(data)
 
     def patch(self, request):
@@ -872,8 +879,29 @@ class UserMeView(APIView):
                 user, context={'request': request, 'omit_full_board_list': True},
             ).data
             payload.update(build_me_hydration_bundle(request))
+            payload['has_usable_password'] = request.user.has_usable_password()
             return Response(payload)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SetInitialPasswordView(APIView):
+    """Définit un mot de passe pour les comptes sans mot de passe utilisable (ex. Google uniquement)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if request.user.has_usable_password():
+            return Response(
+                {
+                    'detail': 'Un mot de passe est déjà défini. Utilisez la modification de mot de passe.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ser = SetInitialPasswordSerializer(data=request.data, context={'request': request})
+        ser.is_valid(raise_exception=True)
+        request.user.set_password(ser.validated_data['new_password1'])
+        request.user.save(update_fields=['password'])
+        return Response({'ok': True, 'has_usable_password': True})
 
 
 class ProfileShareTokenView(APIView):
