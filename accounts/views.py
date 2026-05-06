@@ -35,6 +35,8 @@ from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing,
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
+from pinova_backend.media_cache import build_versioned_media_url
+
 from .serializers import ProfileSerializer, UserSerializer, RegisterSerializer, UserBlockSerializer
 from .mail_delivery import (
     EMAIL_DELIVERY_ERROR_CODE,
@@ -538,7 +540,9 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     'username': follower.user.username,
                     'display_name': follower.display_name or follower.user.username,
                     'avatar_color': follower.avatar_color or 'bg-neutral-400',
-                    'avatar': request.build_absolute_uri(follower.avatar.url) if follower.avatar else None,
+                    'avatar': build_versioned_media_url(request, follower.avatar)
+                    if follower.avatar and getattr(follower.avatar, 'name', '')
+                    else None,
                     'is_pro': follower.subscription_plan == Profile.PLAN_PRO,
                 }
             )
@@ -566,7 +570,9 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     'username': followed.user.username,
                     'display_name': followed.display_name or followed.user.username,
                     'avatar_color': followed.avatar_color or 'bg-neutral-400',
-                    'avatar': request.build_absolute_uri(followed.avatar.url) if followed.avatar else None,
+                    'avatar': build_versioned_media_url(request, followed.avatar)
+                    if followed.avatar and getattr(followed.avatar, 'name', '')
+                    else None,
                     'is_pro': followed.subscription_plan == Profile.PLAN_PRO,
                 }
             )
@@ -680,7 +686,9 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                         'username': user.username,
                         'display_name': user.profile.display_name or user.username,
                         'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
-                        'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
+                        'avatar': build_versioned_media_url(request, user.profile.avatar)
+                        if user.profile.avatar and getattr(user.profile.avatar, 'name', '')
+                        else None,
                         'relation': rel,
                     }
                 )
@@ -693,7 +701,9 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 'username': user.username,
                 'display_name': user.profile.display_name or user.username,
                 'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
-                'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
+                'avatar': build_versioned_media_url(request, user.profile.avatar)
+                if user.profile.avatar and getattr(user.profile.avatar, 'name', '')
+                else None,
                 'relation': '',
             }
             for user in page
@@ -736,7 +746,9 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 'username': user.username,
                 'display_name': user.profile.display_name or user.username,
                 'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
-                'avatar': request.build_absolute_uri(user.profile.avatar.url) if user.profile.avatar else None,
+                'avatar': build_versioned_media_url(request, user.profile.avatar)
+                if user.profile.avatar and getattr(user.profile.avatar, 'name', '')
+                else None,
                 'is_pro': user.profile.subscription_plan == Profile.PLAN_PRO,
                 'reason': 'preferred_topic' if user.preferred_topic_pins > 0 else 'popular',
             }
@@ -766,8 +778,13 @@ class UserMeView(APIView):
         from pins.scheduled_publish_utils import publish_user_due_scheduled_pins
 
         publish_user_due_scheduled_pins(request.user, limit=50)
-        serializer = UserSerializer(request.user, context={'request': request})
-        return Response(serializer.data)
+        from pins.me_hydration import build_me_hydration_bundle
+
+        data = UserSerializer(
+            request.user, context={'request': request, 'omit_full_board_list': True},
+        ).data
+        data.update(build_me_hydration_bundle(request))
+        return Response(data)
 
     def patch(self, request):
         user = request.user
@@ -849,7 +866,13 @@ class UserMeView(APIView):
         if profile_serializer.is_valid():
             profile_serializer.save()
             _resolve_user_currency(request)
-            return Response(UserSerializer(user, context={'request': request}).data)
+            from pins.me_hydration import build_me_hydration_bundle
+
+            payload = UserSerializer(
+                user, context={'request': request, 'omit_full_board_list': True},
+            ).data
+            payload.update(build_me_hydration_bundle(request))
+            return Response(payload)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 

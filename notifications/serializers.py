@@ -1,4 +1,7 @@
 from rest_framework import serializers
+
+from pinova_backend.media_cache import build_versioned_media_url
+
 from .models import Notification, PushSubscription
 
 class NotificationSerializer(serializers.ModelSerializer):
@@ -38,8 +41,9 @@ class NotificationSerializer(serializers.ModelSerializer):
         avatar = getattr(getattr(obj.sender, 'profile', None), 'avatar', None)
         if not obj.sender_id or not avatar or not getattr(avatar, 'name', None):
             return None
-        url = avatar.url
-        return request.build_absolute_uri(url) if request else url
+        if request:
+            return build_versioned_media_url(request, avatar)
+        return avatar.url
 
 
 class PushSubscriptionSerializer(serializers.ModelSerializer):

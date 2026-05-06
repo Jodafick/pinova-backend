@@ -15,16 +15,17 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
-from django.conf.urls.static import static
+
+from .media_views import serve_media
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('pins.urls')),
     path('api/', include('accounts.urls')),
     path('api/notifications/', include('notifications.urls')),
+    # Médias utilisateurs : Cache-Control long (+ version cv= côté serializers).
+    # En production, si nginx sert /media/ directement, aligner les mêmes en-têtes là-bas.
+    re_path(r'^media/(?P<path>.*)$', serve_media),
 ]
-
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

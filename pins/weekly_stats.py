@@ -7,6 +7,8 @@ from datetime import timedelta
 from django.db.models import Count
 from django.utils import timezone
 
+from pinova_backend.media_cache import build_versioned_media_url
+
 from .models import Comment, Like, Pin, PinViewEvent, Save
 
 
@@ -119,4 +121,4 @@ def pin_thumbnail_absolute_url(pin, request):
     img = getattr(pin, 'image', None)
     if not img or not getattr(img, 'name', ''):
         return None
-    return request.build_absolute_uri(img.url)
+    return build_versioned_media_url(request, img)

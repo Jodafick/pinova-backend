@@ -15,6 +15,7 @@ from django.utils import timezone
 from datetime import timedelta
 from .currency_utils import normalize_currency
 from notifications.notification_i18n import create_localized_notification
+from pinova_backend.media_cache import build_versioned_media_url
 
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
@@ -115,6 +116,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         if not is_owner:
             for key in self._PUBLIC_PROFILE_HIDDEN_FIELDS:
                 data.pop(key, None)
+        if request and getattr(instance, 'avatar', None) and getattr(instance.avatar, 'name', None):
+            data['avatar'] = build_versioned_media_url(request, instance.avatar)
         return data
 
 
@@ -209,6 +212,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_boards(self, obj):
         request = self.context.get('request')
+        if self.context.get('omit_full_board_list'):
+            return []
         owner_view = bool(request and request.user.is_authenticated and request.user == obj)
         boards = Board.objects.filter(user=obj)
         if not owner_view:
@@ -237,8 +242,7 @@ class UserSerializer(serializers.ModelSerializer):
                 img = getattr(row.pin, 'image', None)
                 if not img or not getattr(img, 'name', None):
                     continue
-                url = img.url
-                urls.append(request.build_absolute_uri(url) if request else url)
+                urls.append(build_versioned_media_url(request, img) if request else img.url)
                 if len(urls) >= 6:
                     break
             return urls

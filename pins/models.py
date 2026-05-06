@@ -40,6 +40,7 @@ class Topic(models.Model):
     slug = models.SlugField(max_length=140, unique=True, blank=True)
     color = models.CharField(max_length=80, default='#6B7280')
     icon = models.CharField(max_length=50, default='category')
+    cover_image = models.ImageField(upload_to='topic_covers/', null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -98,8 +99,6 @@ class Pin(models.Model):
     boards = models.ManyToManyField(Board, blank=True, related_name='pins', through='PinBoard')
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='pins')
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True, db_index=True)
-    version = models.PositiveIntegerField(default=1)
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     is_story = models.BooleanField(default=False)
     # Plus/Pro « story éphémère » : après 24h la ligne est détruite (pas d’archive en pin grille).
@@ -255,8 +254,6 @@ class Comment(models.Model):
     translated_text = models.TextField(blank=True)
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='comments')
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True, db_index=True)
-    version = models.PositiveIntegerField(default=1)
     needs_review = models.BooleanField(default=False)
     report_count = models.PositiveIntegerField(default=0)
     moderation_hidden = models.BooleanField(default=False)
@@ -276,23 +273,6 @@ class Comment(models.Model):
                 if old_nm and old_nm != new_nm:
                     unlink_field_file(old.media)
         super().save(*args, **kwargs)
-
-
-class ProcessedAction(models.Model):
-    """Idempotence des actions de sync offline-first côté backend."""
-
-    id = models.CharField(max_length=64, primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='processed_actions')
-    client_id = models.CharField(max_length=100, db_index=True)
-    action_type = models.CharField(max_length=40)
-    processed_at = models.DateTimeField(auto_now_add=True, db_index=True)
-
-    class Meta:
-        ordering = ['-processed_at']
-        indexes = [
-            models.Index(fields=['user', '-processed_at']),
-            models.Index(fields=['client_id', '-processed_at']),
-        ]
 
     @property
     def likes_count(self):

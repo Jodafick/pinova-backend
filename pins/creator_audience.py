@@ -7,6 +7,8 @@ from django.contrib.auth.models import User
 from django.db.models import Count
 from django.utils import timezone
 
+from pinova_backend.media_cache import build_versioned_media_url
+
 from .models import Comment, Like, PinViewEvent, Save
 
 ACTION_LIKES = 'likes'
@@ -25,7 +27,7 @@ def _avatar_absolute(request, user: User) -> str:
     if not av or not getattr(av, 'name', ''):
         return ''
     try:
-        return request.build_absolute_uri(av.url)
+        return build_versioned_media_url(request, av)
     except Exception:
         return ''
 

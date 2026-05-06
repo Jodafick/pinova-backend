@@ -13,11 +13,14 @@ from datetime import timedelta
 from asgiref.sync import async_to_sync
 from googletrans import Translator
 from pathlib import Path
+from urllib.parse import urlencode
 from django.conf import settings
+from django.core.files.storage import default_storage
 from PIL import Image
 from accounts.models import Profile
 from accounts.blocking import filter_pins_exclude_blocked, blocked_mutual_user_ids
 from accounts.subscription_utils import _enforce_subscription_state
+from pinova_backend.media_cache import append_version_using_media_path, build_versioned_media_url
 from pinova_backend.throttling import client_ip_from_request
 import re
 import uuid
@@ -104,7 +107,7 @@ def _pin_download_absolute_url(request, pin, requested_quality, apply_watermark=
     if not pin.image:
         raise ValueError('Pin has no image')
     if requested_quality == 'standard' and not apply_watermark:
-        return request.build_absolute_uri(pin.image.url)
+        return build_versioned_media_url(request, pin.image)
 
     variants_dir = Path(settings.MEDIA_ROOT) / 'pin_download_variants'
     variants_dir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +145,8 @@ def _pin_download_absolute_url(request, pin, requested_quality, apply_watermark=
     if not str(media).endswith('/'):
         media = f'{media}/'
     rel_url = f'{media}pin_download_variants/{filename}'
-    return request.build_absolute_uri(rel_url)
+    base = request.build_absolute_uri(rel_url)
+    return append_version_using_media_path(base, relative_under_media=f'pin_download_variants/{filename}')
 
 
 class CommentPagination(PageNumberPagination):
@@ -474,7 +478,7 @@ class PinViewSet(viewsets.ModelViewSet):
             av = getattr(profile, 'avatar', None) if profile else None
             avatar_url = ''
             if av and getattr(av, 'name', '') and request:
-                avatar_url = request.build_absolute_uri(av.url)
+                avatar_url = build_versioned_media_url(request, av)
             likers.append(
                 {
                     'username': user.username,
@@ -536,13 +540,15 @@ class PinViewSet(viewsets.ModelViewSet):
             profile = author.profile
             avatar_url = ''
             av = getattr(profile, 'avatar', None)
-            if av:
-                avatar_url = request.build_absolute_uri(av.url)
+            if av and getattr(av, 'name', ''):
+                avatar_url = build_versioned_media_url(request, av)
             cover_url = ''
-            if cover.image:
-                cover_url = request.build_absolute_uri(cover.image.url)
-            elif getattr(cover, 'story_video', None) and cover.story_video:
-                cover_url = request.build_absolute_uri(cover.story_video.url)
+            if cover.image and getattr(cover.image, 'name', ''):
+                cover_url = build_versioned_media_url(request, cover.image)
+            elif getattr(cover, 'story_video', None) and cover.story_video and getattr(
+                cover.story_video, 'name', ''
+            ):
+                cover_url = build_versioned_media_url(request, cover.story_video)
             groups.append({
                 'username': author.username,
                 'display_name': profile.display_name or author.username,
@@ -1157,7 +1163,9 @@ class PinViewSet(viewsets.ModelViewSet):
                         'username': u.username,
                         'display_name': (prof.display_name or u.username).strip() or u.username,
                         'avatar_color': prof.avatar_color or 'bg-neutral-400',
-                        'avatar': request.build_absolute_uri(prof.avatar.url) if prof.avatar else None,
+                        'avatar': build_versioned_media_url(request, prof.avatar)
+                        if prof.avatar and getattr(prof.avatar, 'name', '')
+                        else None,
                     }
                 )
 
@@ -1216,6 +1224,84 @@ class PinViewSet(viewsets.ModelViewSet):
                 'boards': boards_data,
                 'recommended_pins': rec_data,
                 'query': q,
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='explore-boards')
+    def explore_boards(self, request):
+        """Tableaux publics (découverte) paginés — même filtres que le bandeau header-search."""
+        page_raw = (request.query_params.get('page') or '1').strip()
+        ps_raw = (request.query_params.get('page_size') or '24').strip()
+        try:
+            page = max(1, int(page_raw))
+        except ValueError:
+            page = 1
+        try:
+            page_size = max(1, min(int(ps_raw), 48))
+        except ValueError:
+            page_size = 24
+
+        q = (request.query_params.get('q') or '').strip()
+        boards_qs = Board.objects.select_related('user').prefetch_related('collaborators')
+        if request.user.is_authenticated:
+            boards_qs = boards_qs.filter(
+                Q(is_private=False) | Q(user=request.user) | Q(collaborators=request.user)
+            ).distinct()
+        else:
+            boards_qs = boards_qs.filter(is_private=False)
+        if q:
+            boards_qs = boards_qs.filter(
+                Q(name__icontains=q) | Q(description__icontains=q) | Q(user__username__icontains=q)
+            ).distinct()
+            board_candidates = list(boards_qs[:400])
+            board_candidates.sort(
+                key=lambda b: -fuzzy_score(
+                    q,
+                    b.name or '',
+                    b.description or '',
+                    b.user.username if getattr(b, 'user', None) else '',
+                )
+            )
+            ordered_ids = [b.id for b in board_candidates]
+            order = Case(
+                *[When(pk=pk, then=Value(pos)) for pos, pk in enumerate(ordered_ids)],
+                output_field=IntegerField(),
+            )
+            qs = Board.objects.filter(pk__in=ordered_ids).select_related('user').prefetch_related('collaborators')
+            qs = qs.annotate(_sort_order=order).order_by('_sort_order', '-created_at')
+        else:
+            qs = (
+                boards_qs.annotate(pins_total=Count('pins'))
+                .order_by('-pins_total', '-created_at')
+            )
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        chunk = list(qs[start : start + page_size])
+
+        ctx = {'request': request}
+        boards_data = []
+        for b in chunk:
+            payload = BoardSerializer(b, context=ctx).data
+            previews = payload.get('preview_images') or []
+            payload['cover_image_url'] = previews[0] if previews else ''
+            boards_data.append(payload)
+
+        def _page_url(p: int):
+            qd = {'page': p, 'page_size': page_size}
+            if q:
+                qd['q'] = q
+            return request.build_absolute_uri(f"{request.path}?{urlencode(qd)}")
+
+        next_url = _page_url(page + 1) if start + page_size < total else None
+        previous_url = _page_url(page - 1) if page > 1 else None
+
+        return Response(
+            {
+                'count': total,
+                'next': next_url,
+                'previous': previous_url,
+                'results': boards_data,
             }
         )
 
@@ -1319,7 +1405,7 @@ class PinViewSet(viewsets.ModelViewSet):
             )
             .filter(pin_count__gt=0)
             .order_by('-pin_count', 'name')
-            .values('id', 'name', 'slug', 'icon', 'color', 'pin_count')
+            .values('id', 'name', 'slug', 'icon', 'color', 'cover_image', 'pin_count')
         )
 
         # Suggestions personnalisées pour l'utilisateur connecté.
@@ -1368,12 +1454,23 @@ class PinViewSet(viewsets.ModelViewSet):
                     or any(search_query_lower in str(value).lower() for value in translations.values())
                 ):
                     continue
+            cover_rel = item.get('cover_image') or ''
+            cover_image_url = None
+            if cover_rel:
+                try:
+                    base = request.build_absolute_uri(default_storage.url(cover_rel))
+                    cover_image_url = append_version_using_media_path(
+                        base, relative_under_media=cover_rel
+                    )
+                except Exception:
+                    cover_image_url = None
             items.append({
                 'name': display_name,
                 'originalName': topic_name,
                 'slug': item['slug'],
                 'icon': item['icon'],
                 'color': item['color'],
+                'coverImage': cover_image_url,
                 'pinCount': item['pin_count'],
                 'translations': translations,
             })
@@ -1452,7 +1549,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 request, pin, requested_quality, apply_watermark=apply_wm
             )
         except Exception:
-            download_url = request.build_absolute_uri(pin.image.url)
+            download_url = build_versioned_media_url(request, pin.image)
         return Response({
             'download_url': download_url,
             'quality': requested_quality,
@@ -1992,12 +2089,14 @@ class BoardViewSet(viewsets.ModelViewSet):
         pins_payload = []
         for link in links:
             pin = link.pin
-            img = pin.image.url if pin.image else ''
+            img_url = ''
+            if pin.image and getattr(pin.image, 'name', ''):
+                img_url = build_versioned_media_url(request, pin.image)
             pins_payload.append({
                 'id': pin.id,
                 'slug': pin.slug,
                 'title': pin.title,
-                'image': request.build_absolute_uri(img) if img else '',
+                'image': img_url,
                 'position': link.position,
                 'scheduled_publish_at': pin.scheduled_publish_at.isoformat() if pin.scheduled_publish_at else None,
             })

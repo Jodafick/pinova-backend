@@ -260,6 +260,11 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# En-tête appliqué par ``media_views.serve_media`` ; dupliquer pour /media/ derrière nginx/CDN.
+MEDIA_CACHE_CONTROL = os.environ.get(
+    'PINNOVA_MEDIA_CACHE_CONTROL',
+    'public, max-age=31536000, immutable',
+)
 
 # Social Auth Settings
 SOCIALACCOUNT_PROVIDERS = {

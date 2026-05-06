@@ -68,6 +68,7 @@ class TopicAdmin(admin.ModelAdmin):
     list_display = ('name', 'slug', 'icon', 'color', 'is_active', 'created_at')
     list_filter = ('is_active', 'created_at')
     search_fields = ('name', 'slug')
+    fields = ('name', 'slug', 'color', 'icon', 'cover_image', 'is_active')
 
 
 @admin.register(Board)

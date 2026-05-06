@@ -18,6 +18,8 @@ from .models import (
     ContentReport,
 )
 
+from pinova_backend.media_cache import build_versioned_media_url
+
 from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
 from .comment_access import viewer_sees_comment_content, user_can_comment_on_pin
@@ -87,8 +89,7 @@ class BoardSerializer(serializers.ModelSerializer):
             img = getattr(pin, 'image', None)
             if not img:
                 continue
-            url = img.url
-            urls.append(request.build_absolute_uri(url))
+            urls.append(build_versioned_media_url(request, img))
             if len(urls) >= 6:
                 break
         return urls
@@ -203,10 +204,9 @@ class CommentSerializer(serializers.ModelSerializer):
         avatar = getattr(profile, 'avatar', None)
         if not avatar or not getattr(avatar, 'name', ''):
             return ''
-        url = avatar.url
         if request:
-            return request.build_absolute_uri(url)
-        return url
+            return build_versioned_media_url(request, avatar)
+        return avatar.url
 
     def to_representation(self, instance):
         request = self.context.get('request')
@@ -225,6 +225,14 @@ class CommentSerializer(serializers.ModelSerializer):
             data['content_masked'] = False
         data['hidden_by_owner'] = instance.hidden_by_owner
         data['moderation_hidden'] = getattr(instance, 'moderation_hidden', False)
+        if (
+            full
+            and request
+            and getattr(instance, 'media', None)
+            and getattr(instance.media, 'name', None)
+            and data.get('media')
+        ):
+            data['media'] = build_versioned_media_url(request, instance.media)
         return data
 
     def get_replies(self, obj):
@@ -388,28 +396,26 @@ class PinSerializer(serializers.ModelSerializer):
         if not getattr(obj, 'story_video', None) or not obj.story_video.name:
             return None
         request = self.context.get('request')
-        url = obj.story_video.url
-        return request.build_absolute_uri(url) if request else url
+        if request:
+            return build_versioned_media_url(request, obj.story_video)
+        return obj.story_video.url
 
     def get_story_display_image_url(self, obj):
         """URL absolue du visuel story : variante 9:16 si présente, sinon image principale."""
         if not getattr(obj, 'is_story', False):
             return None
         request = self.context.get('request')
-
-        def abs_uri(rel_url: str) -> str:
-            if not rel_url:
-                return ''
-            return request.build_absolute_uri(rel_url) if request else rel_url
+        if not request:
+            return None
 
         try:
             for pv in obj.variant_assets.all():
                 if pv.kind == PinVariant.KIND_STORY and pv.image and getattr(pv.image, 'name', ''):
-                    return abs_uri(pv.image.url)
+                    return build_versioned_media_url(request, pv.image)
         except Exception:
             pass
         if obj.image and getattr(obj.image, 'name', ''):
-            return abs_uri(obj.image.url)
+            return build_versioned_media_url(request, obj.image)
         return None
 
     def validate_story_video(self, value):
@@ -452,6 +458,8 @@ class PinSerializer(serializers.ModelSerializer):
         # Toujours exposer le nom canonique du topic (filtres API / topic=...)
         if instance.topic_id:
             data['topic'] = instance.topic.name
+        if request and getattr(instance, 'image', None) and getattr(instance.image, 'name', None):
+            data['image'] = build_versioned_media_url(request, instance.image)
         return data
 
     def validate(self, attrs):
