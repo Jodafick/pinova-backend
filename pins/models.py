@@ -100,6 +100,8 @@ class Pin(models.Model):
     hashtags = models.ManyToManyField(Hashtag, blank=True, related_name='pins')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Incrément / contrôle de fraîcheur (sync client, cache) — défaut 1 si la colonne existe déjà en BDD.
+    version = models.PositiveIntegerField(default=1)
     scheduled_publish_at = models.DateTimeField(null=True, blank=True)
     is_story = models.BooleanField(default=False)
     # Plus/Pro « story éphémère » : après 24h la ligne est détruite (pas d’archive en pin grille).
