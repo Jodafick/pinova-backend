@@ -58,6 +58,7 @@ class ExpoPushRegisterSerializer(serializers.Serializer):
 
     def validate_token(self, value):
         s = value.strip()
-        if len(s) < 24 or len(s) > 390:
+        # Longueur max : alignée sur le CharField (400). L’ancienne borne 390 rejetait à tort des jetons valides.
+        if len(s) < 24:
             raise serializers.ValidationError('Invalid push token length.')
         return s

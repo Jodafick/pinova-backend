@@ -100,7 +100,9 @@ class NotificationViewSet(viewsets.ModelViewSet):
         endpoint = str(request.data.get('endpoint') or '').strip()
         if not endpoint:
             return Response({'error': 'endpoint is required'}, status=status.HTTP_400_BAD_REQUEST)
-        PushSubscription.objects.filter(user=request.user, endpoint=endpoint).update(is_active=False)
+        # L’endpoint est propre au navigateur / installation PWA, pas au compte : on désactive
+        # toute ligne correspondante (évite un ancien rattachement si le JWT était déjà celui d’un autre user).
+        PushSubscription.objects.filter(endpoint=endpoint).update(is_active=False)
         return Response({'status': 'unsubscribed'})
 
     @action(detail=False, methods=['post'])
@@ -127,5 +129,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
         token = str(request.data.get('token') or '').strip()
         if not token:
             return Response({'error': 'token is required'}, status=status.HTTP_400_BAD_REQUEST)
-        ExpoPushToken.objects.filter(user=request.user, token=token).update(is_active=False)
+        # Le jeton est propre à l’appareil / installation : on désactive sans filtrer sur user
+        # (déconnexion propre au même device après changement de compte sur le serveur).
+        ExpoPushToken.objects.filter(token=token).update(is_active=False)
         return Response({'status': 'unregistered'})
