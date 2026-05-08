@@ -61,4 +61,6 @@ class ExpoPushRegisterSerializer(serializers.Serializer):
         # Longueur max : alignée sur le CharField (400). L’ancienne borne 390 rejetait à tort des jetons valides.
         if len(s) < 24:
             raise serializers.ValidationError('Invalid push token length.')
+        if not s.startswith('ExponentPushToken['):
+            raise serializers.ValidationError('Invalid Expo push token format.')
         return s
