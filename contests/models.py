@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -25,6 +26,11 @@ class ContestSettings(models.Model):
     end_at = models.DateTimeField(db_index=True)
 
     max_winners = models.PositiveSmallIntegerField(default=3)
+    leaderboard_display_pins = models.PositiveSmallIntegerField(
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(500)],
+        help_text='Pins shown on the live leaderboard (one row per creator, best pin). Caps the public pins API.',
+    )
     distribution_mode = models.CharField(
         max_length=20,
         choices=DISTRIBUTION_CHOICES,
@@ -56,6 +62,10 @@ class ContestSettings(models.Model):
     notify_top_100 = models.BooleanField(default=True)
     notify_top_10 = models.BooleanField(default=True)
     notify_winner = models.BooleanField(default=True)
+    notify_leaderboard_rank_changes = models.BooleanField(
+        default=True,
+        help_text='Notify creators when their displayed contest rank (best pin) changes; uses anti-spam throttling.',
+    )
     notify_rank_change_threshold = models.PositiveIntegerField(default=5)
 
     leaderboard_refresh_interval = models.PositiveIntegerField(default=3, help_text='seconds')

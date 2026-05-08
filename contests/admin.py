@@ -13,16 +13,52 @@ from .models import (
 
 @admin.register(ContestSettings)
 class ContestSettingsAdmin(admin.ModelAdmin):
-    list_display = ('contest_key', 'is_active', 'is_locked', 'start_at', 'end_at', 'max_winners', 'updated_at')
+    list_display = (
+        'contest_key',
+        'is_active',
+        'is_locked',
+        'start_at',
+        'end_at',
+        'max_winners',
+        'leaderboard_display_pins',
+        'updated_at',
+    )
     list_filter = ('is_active', 'is_locked', 'distribution_mode', 'auto_reset_enabled')
     search_fields = ('contest_key',)
     readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
         ('Contest Window', {'fields': ('contest_key', 'is_active', 'is_locked', 'timezone', 'start_at', 'end_at', 'auto_reset_enabled')}),
-        ('Rewards', {'classes': ('collapse',), 'fields': ('max_winners', 'distribution_mode', 'total_prize_pool', 'winner_1_amount', 'winner_2_amount', 'winner_3_amount', 'distribution_weights_json')}),
+        (
+            'Rewards',
+            {
+                'classes': ('collapse',),
+                'fields': (
+                    'max_winners',
+                    'leaderboard_display_pins',
+                    'distribution_mode',
+                    'total_prize_pool',
+                    'winner_1_amount',
+                    'winner_2_amount',
+                    'winner_3_amount',
+                    'distribution_weights_json',
+                ),
+            },
+        ),
         ('Ranking Rules', {'classes': ('collapse',), 'fields': ('weight_likes', 'weight_views', 'weight_shares', 'weight_saves', 'weight_comments', 'recency_decay_enabled', 'decay_rate', 'virality_multiplier', 'share_boost_factor', 'max_actions_per_user_weight')}),
         ('Anti-fraud', {'classes': ('collapse',), 'fields': ('min_view_duration_seconds', 'valid_view_time_threshold', 'max_likes_per_user_per_pin', 'comment_min_length', 'trust_score_threshold')}),
-        ('Notifications', {'classes': ('collapse',), 'fields': ('notify_top_100', 'notify_top_10', 'notify_winner', 'notify_rank_change_threshold')}),
+        (
+            'Notifications',
+            {
+                'classes': ('collapse',),
+                'fields': (
+                    'notify_top_100',
+                    'notify_top_10',
+                    'notify_winner',
+                    'notify_leaderboard_rank_changes',
+                    'notify_rank_change_threshold',
+                ),
+            },
+        ),
         ('Realtime', {'classes': ('collapse',), 'fields': ('leaderboard_refresh_interval', 'websocket_broadcast_threshold')}),
         ('Debug / Test', {'classes': ('collapse',), 'fields': ('test_mode_enabled', 'simulate_random_engagement', 'version', 'created_by')}),
         ('Audit', {'fields': ('created_at', 'updated_at')}),

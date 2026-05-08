@@ -1,6 +1,12 @@
 """
 Textes canoniques français pour les notifications, puis traduction (googletrans)
 vers la langue préférée du destinataire — même stratégie que pins.topic_i18n.
+
+À l’écriture : `create_localized_notification` enregistre dans `metadata['i18n']` les chaînes
+FR + `display_lang` (langue utilisée pour `title` / `message` en base).
+
+À la lecture : le serializer peut recalculer titre/message si la langue du profil a changé,
+sans nouveau couple FR (évite notifications figées après changement de langue).
 """
 
 from __future__ import annotations
@@ -59,9 +65,33 @@ def localized_pairs_for_recipient(title_fr: str, body_fr: str, recipient: User) 
 
 
 def create_localized_notification(*, recipient: User, title_fr: str = '', message_fr: str, **notification_fields):
-    """Notification.objects.create avec title/message adaptés au profil (preferred_language)."""
+    """Notification avec title/message pour `recipient_language`; FR canonique conservé dans metadata."""
     from notifications.models import Notification
 
-    tit, msg = localized_pairs_for_recipient(title_fr, message_fr, recipient)
-    return Notification.objects.create(recipient=recipient, title=tit or '', message=msg, **notification_fields)
+    md = notification_fields.pop('metadata', None) or {}
+    if not isinstance(md, dict):
+        md = {}
+
+    tit_fr_raw = (title_fr or '')[:NOTIFICATION_TITLE_MAX]
+    msg_fr_raw = (message_fr or '')[:NOTIFICATION_MESSAGE_MAX]
+    lang0 = recipient_language(recipient)
+    tit, msg = localize_notification_strings(tit_fr_raw, msg_fr_raw, lang0)
+
+    prev_i18n = md.get('i18n')
+    if not isinstance(prev_i18n, dict):
+        prev_i18n = {}
+    md['i18n'] = {
+        **prev_i18n,
+        'title_fr': tit_fr_raw,
+        'message_fr': msg_fr_raw,
+        'display_lang': lang0,
+    }
+
+    return Notification.objects.create(
+        recipient=recipient,
+        title=tit or '',
+        message=msg,
+        metadata=md,
+        **notification_fields,
+    )
 

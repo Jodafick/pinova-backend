@@ -22,10 +22,36 @@ class CurrentContestView(APIView):
                 'end_at': contest.end_at,
                 'timezone': contest.timezone,
                 'max_winners': contest.max_winners,
+                'leaderboard_display_pins': max(1, min(int(contest.leaderboard_display_pins or 10), 500)),
                 'refresh_interval': max(1, min(300, int(contest.leaderboard_refresh_interval or 3))),
                 'now': timezone.now(),
             }
         )
+
+
+def _serialize_pin_contest_row(request, row, rank_one_based):
+    likes = int(row.total_likes or 0)
+    views = int(row.total_views or 0)
+    shares = int(row.total_shares or 0)
+    saves = int(row.total_saves or 0)
+    comments = int(row.total_comments or 0)
+    return {
+        'pin_id': row.pin_id,
+        'pin_slug': row.pin.slug,
+        'pin_title': row.pin.title,
+        'pin_image_url': build_versioned_media_url(request, row.pin.image),
+        'creator_id': row.creator_id,
+        'creator_username': row.creator.username,
+        'rank': rank_one_based,
+        'previous_rank': row.previous_rank,
+        'score': row.adjusted_score,
+        'likes': likes,
+        'views': views,
+        'shares': shares,
+        'saves': saves,
+        'comments': comments,
+        'engagement_total': likes + views + shares + saves + comments,
+    }
 
 
 class LeaderboardPinsView(APIView):
@@ -34,8 +60,17 @@ class LeaderboardPinsView(APIView):
     def get(self, request):
         contest = get_active_contest_settings()
         if not contest:
-            return Response({'results': []})
-        limit = min(max(int(request.query_params.get('limit', 100) or 100), 1), 200)
+            return Response({'contest_key': None, 'results': [], 'viewer': None})
+        contest_cap = max(1, min(int(contest.leaderboard_display_pins or 10), 500))
+        raw_limit = request.query_params.get('limit')
+        if raw_limit is None or str(raw_limit).strip() == '':
+            limit = contest_cap
+        else:
+            try:
+                requested = int(raw_limit)
+            except (TypeError, ValueError):
+                requested = contest_cap
+            limit = min(max(requested, 1), contest_cap)
         ordered = list(
             PinContestScore.objects.filter(contest=contest, pin__is_story=False)
             .select_related('pin', 'creator')
@@ -46,40 +81,38 @@ class LeaderboardPinsView(APIView):
             if row.creator_id in best_by_creator:
                 continue
             best_by_creator[row.creator_id] = row
-            if len(best_by_creator) >= limit:
-                break
-        selected_rows = sorted(
+
+        selected_full = sorted(
             best_by_creator.values(),
             key=lambda r: (-float(r.adjusted_score), r.rank or 999_999, r.pin_id),
         )
 
-        results = []
-        for idx, row in enumerate(selected_rows):
-            likes = int(row.total_likes or 0)
-            views = int(row.total_views or 0)
-            shares = int(row.total_shares or 0)
-            saves = int(row.total_saves or 0)
-            comments = int(row.total_comments or 0)
-            results.append(
-                {
-                    'pin_id': row.pin_id,
-                    'pin_slug': row.pin.slug,
-                    'pin_title': row.pin.title,
-                    'pin_image_url': build_versioned_media_url(request, row.pin.image),
-                    'creator_id': row.creator_id,
-                    'creator_username': row.creator.username,
-                    'rank': idx + 1,
-                    'previous_rank': row.previous_rank,
-                    'score': row.adjusted_score,
-                    'likes': likes,
-                    'views': views,
-                    'shares': shares,
-                    'saves': saves,
-                    'comments': comments,
-                    'engagement_total': likes + views + shares + saves + comments,
+        results = [
+            _serialize_pin_contest_row(request, row, idx + 1) for idx, row in enumerate(selected_full[:limit])
+        ]
+
+        viewer_payload = None
+        user = getattr(request, 'user', None)
+        if user and user.is_authenticated:
+            uid = user.pk
+            viewer_rank = None
+            viewer_row = None
+            for idx, row in enumerate(selected_full):
+                if row.creator_id == uid:
+                    viewer_row = row
+                    viewer_rank = idx + 1
+                    break
+            if viewer_row is not None and viewer_rank is not None:
+                viewer_payload = {
+                    'ranked': True,
+                    'rank': viewer_rank,
+                    'in_displayed_top': viewer_rank <= limit,
+                    'pin': _serialize_pin_contest_row(request, viewer_row, viewer_rank),
                 }
-            )
-        return Response({'contest_key': contest.contest_key, 'results': results})
+            else:
+                viewer_payload = {'ranked': False, 'rank': None, 'in_displayed_top': False, 'pin': None}
+
+        return Response({'contest_key': contest.contest_key, 'results': results, 'viewer': viewer_payload})
 
 
 class ContestArchiveIndexView(APIView):

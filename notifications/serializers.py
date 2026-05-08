@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from pins.topic_i18n import SUPPORTED_TOPIC_LANGS
+
 from pinova_backend.media_cache import build_versioned_media_url
 
 from .models import Notification, PushSubscription
@@ -44,6 +46,46 @@ class NotificationSerializer(serializers.ModelSerializer):
         if request:
             return build_versioned_media_url(request, avatar)
         return avatar.url
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if not request:
+            return data
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return data
+
+        from .notification_i18n import localize_notification_strings, recipient_language
+
+        md = instance.metadata if isinstance(instance.metadata, dict) else {}
+        canon = md.get('i18n')
+        if not isinstance(canon, dict):
+            return data
+        msg_fr = canon.get('message_fr')
+        if not msg_fr:
+            return data
+
+        qp = (request.query_params.get('lang') or '').strip().lower().split('-')[0]
+        if qp in SUPPORTED_TOPIC_LANGS:
+            lang1 = qp
+        else:
+            lang1 = recipient_language(user)
+
+        lang0_raw = canon.get('display_lang')
+        lang0 = (
+            lang0_raw.strip().lower().split('-')[0]
+            if isinstance(lang0_raw, str) and lang0_raw.strip()
+            else None
+        )
+        if lang0 == lang1:
+            return data
+
+        tit_fr = str(canon.get('title_fr') or '')
+        tit, msg = localize_notification_strings(tit_fr, str(msg_fr), lang1)
+        data['title'] = tit or data.get('title') or ''
+        data['message'] = msg or data.get('message') or ''
+        return data
 
 
 class PushSubscriptionSerializer(serializers.ModelSerializer):

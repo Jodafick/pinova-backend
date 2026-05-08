@@ -11,6 +11,9 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from .contest_rank_notification_copy import build_contest_display_rank_notification_fr
+from .contest_rank_notify_throttle import allow_contest_rank_notification
+from .leaderboard_display_rank import display_rank_and_row_for_creator
 from .models import (
     ContestInteractionEvent,
     ContestSettings,
@@ -142,41 +145,58 @@ def _emit_leaderboard_event(*, contest: ContestSettings, event_type: str, entity
     )
 
 
-def _maybe_send_rank_notifications(*, settings: ContestSettings, pin_score: PinContestScore):
-    if pin_score.rank <= 0:
+def _maybe_send_contest_display_rank_notifications(
+    *,
+    settings: ContestSettings,
+    recipient,
+    prev_display_rank: int | None,
+    new_display_rank: int | None,
+    representative_row: PinContestScore | None,
+) -> None:
+    """
+    In-app Notification (+ push Web/Expo via signal). Rang = leaderboard affiché (meilleur pin / créateur).
+    Anti-spam : cache + priorités plus courtes au podium / top 10.
+    """
+    if not getattr(settings, 'notify_leaderboard_rank_changes', True):
+        return
+    if representative_row is None or new_display_rank is None:
+        return
+    if prev_display_rank == new_display_rank:
+        return
+    if not allow_contest_rank_notification(
+        recipient_id=recipient.id,
+        contest_key=settings.contest_key,
+        prev_rank=prev_display_rank,
+        new_rank=new_display_rank,
+    ):
         return
     from notifications.notification_i18n import create_localized_notification
 
-    recipient = pin_score.creator
-    metadata = {
-        'kind': 'contest_rank_update',
+    tit_fr, msg_fr = build_contest_display_rank_notification_fr(
+        recipient=recipient,
+        pin_title=representative_row.pin.title,
+        prev_rank=prev_display_rank,
+        new_rank=new_display_rank,
+    )
+    md = {
+        'kind': 'contest_display_rank_change',
         'contest_key': settings.contest_key,
-        'pin_id': pin_score.pin_id,
-        'pin_slug': pin_score.pin.slug,
-        'rank': pin_score.rank,
+        'pin_id': representative_row.pin_id,
+        'pin_slug': representative_row.pin.slug,
+        'display_rank': new_display_rank,
+        'previous_display_rank': prev_display_rank,
+        'creator_id': recipient.id,
     }
-    if settings.notify_top_10 and pin_score.rank <= 10 and (pin_score.previous_rank > 10 or pin_score.previous_rank == 0):
-        create_localized_notification(
-            recipient=recipient,
-            notification_type='system',
-            title_fr='Concours mensuel',
-            message_fr=f"Ton pin « {pin_score.pin.title} » entre dans le top 10 (#{pin_score.rank}).",
-            action_url='/contest/live',
-            pin_id=pin_score.pin_id,
-            pin_slug=pin_score.pin.slug,
-            metadata=metadata,
-        )
-    elif settings.notify_top_100 and pin_score.rank <= 100 and (pin_score.previous_rank > 100 or pin_score.previous_rank == 0):
-        create_localized_notification(
-            recipient=recipient,
-            notification_type='system',
-            title_fr='Concours mensuel',
-            message_fr=f"Ton pin « {pin_score.pin.title} » entre dans le top 100 (#{pin_score.rank}).",
-            action_url='/contest/live',
-            pin_id=pin_score.pin_id,
-            pin_slug=pin_score.pin.slug,
-            metadata=metadata,
-        )
+    create_localized_notification(
+        recipient=recipient,
+        notification_type='system',
+        title_fr=tit_fr,
+        message_fr=msg_fr,
+        action_url='/contest/live',
+        pin_id=representative_row.pin_id,
+        pin_slug=representative_row.pin.slug,
+        metadata=md,
+    )
 
 
 def get_pin_contest_display_counts(pin) -> dict[str, int]:
@@ -272,6 +292,8 @@ def track_contest_interaction(
             )
             return
 
+        prev_display_rank, _ = display_rank_and_row_for_creator(settings, pin.author_id)
+
         pin_score, _ = PinContestScore.objects.select_for_update().get_or_create(
             contest=settings,
             pin=pin,
@@ -311,6 +333,9 @@ def track_contest_interaction(
         shares = int(pin_score.total_shares or 0)
         saves = int(pin_score.total_saves or 0)
         comments = int(pin_score.total_comments or 0)
+
+        new_display_rank, representative_row = display_rank_and_row_for_creator(settings, pin.author_id)
+
         _emit_leaderboard_event(
             contest=settings,
             event_type='pin_rank_updated',
@@ -333,6 +358,8 @@ def track_contest_interaction(
                 'saves': saves,
                 'comments': comments,
                 'engagement_total': likes + views + shares + saves + comments,
+                'display_rank': new_display_rank,
+                'previous_display_rank': prev_display_rank,
             },
         )
         _emit_leaderboard_event(
@@ -346,9 +373,17 @@ def track_contest_interaction(
                 'score': round(creator_score.adjusted_score, 4),
                 'rank': creator_score.rank,
                 'previous_rank': creator_score.previous_rank,
+                'display_rank': new_display_rank,
+                'previous_display_rank': prev_display_rank,
             },
         )
-        _maybe_send_rank_notifications(settings=settings, pin_score=pin_score)
+        _maybe_send_contest_display_rank_notifications(
+            settings=settings,
+            recipient=pin.author,
+            prev_display_rank=prev_display_rank,
+            new_display_rank=new_display_rank,
+            representative_row=representative_row,
+        )
 
 
 def finalize_contest(contest: ContestSettings) -> None:
