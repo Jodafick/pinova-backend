@@ -105,7 +105,7 @@ def _decay_multiplier(settings: ContestSettings, pin_created_at: datetime, now: 
 
 
 def _rank_for_pin(contest: ContestSettings, score: float) -> int:
-    higher = PinContestScore.objects.filter(contest=contest, adjusted_score__gt=score).count()
+    higher = PinContestScore.objects.filter(contest=contest, adjusted_score__gt=score, pin__is_story=False).count()
     return higher + 1
 
 
@@ -179,6 +179,46 @@ def _maybe_send_rank_notifications(*, settings: ContestSettings, pin_score: PinC
         )
 
 
+def get_pin_contest_display_counts(pin) -> dict[str, int]:
+    """Compteurs classement concours alignés sur les tables métier (pas de valeurs inventées)."""
+    return {
+        ContestInteractionEvent.TYPE_LIKE: pin.likes.count(),
+        ContestInteractionEvent.TYPE_VIEW: pin.view_events.count(),
+        ContestInteractionEvent.TYPE_SAVE: pin.saves.count(),
+        ContestInteractionEvent.TYPE_COMMENT: pin.comments.count(),
+        ContestInteractionEvent.TYPE_SHARE: ContestInteractionEvent.objects.filter(
+            pin_id=pin.id,
+            interaction_type=ContestInteractionEvent.TYPE_SHARE,
+            is_valid=True,
+        ).count(),
+    }
+
+
+def estimate_contest_adjusted_score_from_counts(settings: ContestSettings, pin, counts: dict[str, int]) -> float:
+    """Score agrégé théorique (même pondération que les deltas live), pour seed / backfills."""
+    now = timezone.now()
+    decay = _decay_multiplier(settings, pin.created_at, now)
+    trust = 1.0
+    mult = settings.virality_multiplier
+    total = 0.0
+    mapping = (
+        ContestInteractionEvent.TYPE_LIKE,
+        ContestInteractionEvent.TYPE_VIEW,
+        ContestInteractionEvent.TYPE_SAVE,
+        ContestInteractionEvent.TYPE_SHARE,
+        ContestInteractionEvent.TYPE_COMMENT,
+    )
+    for itype in mapping:
+        cnt = int(counts.get(itype, 0) or 0)
+        if cnt <= 0:
+            continue
+        base = _base_weight(settings, itype)
+        if base <= 0:
+            continue
+        total += cnt * base * decay * trust * mult
+    return round(total, 4)
+
+
 def track_contest_interaction(
     *,
     pin,
@@ -190,6 +230,8 @@ def track_contest_interaction(
 ) -> None:
     settings = get_active_contest_settings()
     if not settings:
+        return
+    if getattr(pin, 'is_story', False):
         return
     if pin.created_at < settings.start_at or pin.created_at >= settings.end_at:
         return
@@ -264,6 +306,11 @@ def track_contest_interaction(
         creator_score.rank = _rank_for_creator(settings, creator_score.adjusted_score)
         creator_score.save(update_fields=['rank', 'updated_at'])
 
+        likes = int(pin_score.total_likes or 0)
+        views = int(pin_score.total_views or 0)
+        shares = int(pin_score.total_shares or 0)
+        saves = int(pin_score.total_saves or 0)
+        comments = int(pin_score.total_comments or 0)
         _emit_leaderboard_event(
             contest=settings,
             event_type='pin_rank_updated',
@@ -280,6 +327,12 @@ def track_contest_interaction(
                 'rank': pin_score.rank,
                 'previous_rank': prev_rank,
                 'delta_score': round(delta, 4),
+                'likes': likes,
+                'views': views,
+                'shares': shares,
+                'saves': saves,
+                'comments': comments,
+                'engagement_total': likes + views + shares + saves + comments,
             },
         )
         _emit_leaderboard_event(
@@ -301,11 +354,22 @@ def track_contest_interaction(
 def finalize_contest(contest: ContestSettings) -> None:
     if contest.end_at > timezone.now():
         return
-    top = list(PinContestScore.objects.filter(contest=contest).select_related('pin', 'creator').order_by('rank', '-adjusted_score')[: contest.max_winners])
-    winners = [
-        {'rank': idx + 1, 'pin_id': row.pin_id, 'creator_id': row.creator_id, 'score': row.adjusted_score}
-        for idx, row in enumerate(top)
-    ]
+    ordered = list(
+        PinContestScore.objects.filter(contest=contest, pin__is_story=False)
+        .select_related('pin', 'creator')
+        .order_by('-adjusted_score', 'rank', 'pin_id')
+    )
+    winners = []
+    seen_creators = set()
+    for row in ordered:
+        if row.creator_id in seen_creators:
+            continue
+        seen_creators.add(row.creator_id)
+        winners.append(
+            {'rank': len(winners) + 1, 'pin_id': row.pin_id, 'creator_id': row.creator_id, 'score': row.adjusted_score}
+        )
+        if len(winners) >= contest.max_winners:
+            break
     from .models import ContestResult
     ContestResult.objects.update_or_create(
         contest=contest,

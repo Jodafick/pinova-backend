@@ -1,11 +1,10 @@
 from django.utils import timezone
-from django.db.models import Count, Q
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from pinova_backend.media_cache import build_versioned_media_url
-from .models import ContestInteractionEvent, ContestResult, ContestSettings, CreatorContestScore, LeaderboardEvent, PinContestScore
+from .models import ContestResult, ContestSettings, CreatorContestScore, LeaderboardEvent, PinContestScore
 from .services import get_active_contest_settings
 
 
@@ -23,7 +22,7 @@ class CurrentContestView(APIView):
                 'end_at': contest.end_at,
                 'timezone': contest.timezone,
                 'max_winners': contest.max_winners,
-                'refresh_interval': max(300, int(contest.leaderboard_refresh_interval or 0)),
+                'refresh_interval': max(1, min(300, int(contest.leaderboard_refresh_interval or 3))),
                 'now': timezone.now(),
             }
         )
@@ -37,65 +36,72 @@ class LeaderboardPinsView(APIView):
         if not contest:
             return Response({'results': []})
         limit = min(max(int(request.query_params.get('limit', 100) or 100), 1), 200)
-        rows = list(
-            PinContestScore.objects.filter(contest=contest)
+        ordered = list(
+            PinContestScore.objects.filter(contest=contest, pin__is_story=False)
             .select_related('pin', 'creator')
             .order_by('-adjusted_score', 'rank', 'pin_id')
         )
         best_by_creator = {}
-        for row in rows:
+        for row in ordered:
             if row.creator_id in best_by_creator:
                 continue
             best_by_creator[row.creator_id] = row
             if len(best_by_creator) >= limit:
                 break
-        selected_rows = sorted(best_by_creator.values(), key=lambda r: (-float(r.adjusted_score), r.rank or 999999))
+        selected_rows = sorted(
+            best_by_creator.values(),
+            key=lambda r: (-float(r.adjusted_score), r.rank or 999_999, r.pin_id),
+        )
 
-        pin_ids = [row.pin_id for row in selected_rows]
-        interaction_totals = {
-            item['pin_id']: item
-            for item in ContestInteractionEvent.objects.filter(contest=contest, pin_id__in=pin_ids)
-            .values('pin_id')
-            .annotate(
-                total_interactions=Count('id'),
-                eligible_interactions=Count('id', filter=Q(is_valid=True)),
+        results = []
+        for idx, row in enumerate(selected_rows):
+            likes = int(row.total_likes or 0)
+            views = int(row.total_views or 0)
+            shares = int(row.total_shares or 0)
+            saves = int(row.total_saves or 0)
+            comments = int(row.total_comments or 0)
+            results.append(
+                {
+                    'pin_id': row.pin_id,
+                    'pin_slug': row.pin.slug,
+                    'pin_title': row.pin.title,
+                    'pin_image_url': build_versioned_media_url(request, row.pin.image),
+                    'creator_id': row.creator_id,
+                    'creator_username': row.creator.username,
+                    'rank': idx + 1,
+                    'previous_rank': row.previous_rank,
+                    'score': row.adjusted_score,
+                    'likes': likes,
+                    'views': views,
+                    'shares': shares,
+                    'saves': saves,
+                    'comments': comments,
+                    'engagement_total': likes + views + shares + saves + comments,
+                }
             )
-        }
-
-        action_totals = {
-            item['pin_id']: item
-            for item in ContestInteractionEvent.objects.filter(contest=contest, pin_id__in=pin_ids, is_valid=True)
-            .values('pin_id')
-            .annotate(
-                likes=Count('id', filter=Q(interaction_type='like')),
-                views=Count('id', filter=Q(interaction_type='view')),
-                shares=Count('id', filter=Q(interaction_type='share')),
-                saves=Count('id', filter=Q(interaction_type='save')),
-                comments=Count('id', filter=Q(interaction_type='comment')),
-            )
-        }
-        results = [
-            {
-                'pin_id': row.pin_id,
-                'pin_slug': row.pin.slug,
-                'pin_title': row.pin.title,
-                'pin_image_url': build_versioned_media_url(request, row.pin.image),
-                'creator_id': row.creator_id,
-                'creator_username': row.creator.username,
-                'rank': idx + 1,
-                'previous_rank': row.previous_rank,
-                'score': row.adjusted_score,
-                'likes': int((action_totals.get(row.pin_id) or {}).get('likes') or row.total_likes or 0),
-                'views': int((action_totals.get(row.pin_id) or {}).get('views') or row.total_views or 0),
-                'shares': int((action_totals.get(row.pin_id) or {}).get('shares') or row.total_shares or 0),
-                'saves': int((action_totals.get(row.pin_id) or {}).get('saves') or row.total_saves or 0),
-                'comments': int((action_totals.get(row.pin_id) or {}).get('comments') or row.total_comments or 0),
-                'total_interactions': int((interaction_totals.get(row.pin_id) or {}).get('total_interactions') or 0),
-                'eligible_interactions': int((interaction_totals.get(row.pin_id) or {}).get('eligible_interactions') or 0),
-            }
-            for idx, row in enumerate(selected_rows)
-        ]
         return Response({'contest_key': contest.contest_key, 'results': results})
+
+
+class ContestArchiveIndexView(APIView):
+    """Mois passés ayant un résultat finalisé (`ContestResult`)."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        rows = ContestResult.objects.select_related('contest').order_by('-contest__start_at')[:72]
+        return Response(
+            {
+                'results': [
+                    {
+                        'contest_key': r.contest.contest_key,
+                        'start_at': r.contest.start_at,
+                        'end_at': r.contest.end_at,
+                        'finalized_at': r.finalized_at,
+                    }
+                    for r in rows
+                ]
+            }
+        )
 
 
 class LeaderboardCreatorsView(APIView):
