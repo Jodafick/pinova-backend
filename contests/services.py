@@ -148,12 +148,20 @@ def _maybe_send_rank_notifications(*, settings: ContestSettings, pin_score: PinC
     from notifications.notification_i18n import create_localized_notification
 
     recipient = pin_score.creator
-    metadata = {'contest_key': settings.contest_key, 'pin_id': pin_score.pin_id, 'rank': pin_score.rank}
+    metadata = {
+        'kind': 'contest_rank_update',
+        'contest_key': settings.contest_key,
+        'pin_id': pin_score.pin_id,
+        'pin_slug': pin_score.pin.slug,
+        'rank': pin_score.rank,
+    }
     if settings.notify_top_10 and pin_score.rank <= 10 and (pin_score.previous_rank > 10 or pin_score.previous_rank == 0):
         create_localized_notification(
             recipient=recipient,
             notification_type='system',
-            message_fr=f"Ton pin vient d'entrer dans le top 10 mensuel (#{pin_score.rank}).",
+            title_fr='Concours mensuel',
+            message_fr=f"Ton pin « {pin_score.pin.title} » entre dans le top 10 (#{pin_score.rank}).",
+            action_url='/contest/live',
             pin_id=pin_score.pin_id,
             pin_slug=pin_score.pin.slug,
             metadata=metadata,
@@ -162,7 +170,9 @@ def _maybe_send_rank_notifications(*, settings: ContestSettings, pin_score: PinC
         create_localized_notification(
             recipient=recipient,
             notification_type='system',
-            message_fr=f"Ton pin vient d'entrer dans le top 100 mensuel (#{pin_score.rank}).",
+            title_fr='Concours mensuel',
+            message_fr=f"Ton pin « {pin_score.pin.title} » entre dans le top 100 (#{pin_score.rank}).",
+            action_url='/contest/live',
             pin_id=pin_score.pin_id,
             pin_slug=pin_score.pin.slug,
             metadata=metadata,
@@ -261,6 +271,10 @@ def track_contest_interaction(
             entity_id=pin.id,
             payload={
                 'pin_id': pin.id,
+                'pin_slug': pin.slug,
+                'pin_title': pin.title,
+                'creator_id': pin.author_id,
+                'creator_username': pin.author.username,
                 'contest_key': settings.contest_key,
                 'score': round(pin_score.adjusted_score, 4),
                 'rank': pin_score.rank,
