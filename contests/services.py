@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
@@ -152,6 +153,10 @@ def _maybe_send_contest_display_rank_notifications(
     prev_display_rank: int | None,
     new_display_rank: int | None,
     representative_row: PinContestScore | None,
+    likes_delta: int = 0,
+    views_delta: int = 0,
+    comments_delta: int = 0,
+    views_total: int | None = None,
 ) -> None:
     """
     In-app Notification (+ push Web/Expo via signal). Rang = leaderboard affiché (meilleur pin / créateur).
@@ -172,11 +177,20 @@ def _maybe_send_contest_display_rank_notifications(
         return
     from notifications.notification_i18n import create_localized_notification
 
+    try:
+        recipient_for_copy = User.objects.select_related('profile').get(pk=recipient.pk)
+    except User.DoesNotExist:
+        recipient_for_copy = recipient
+
     tit_fr, msg_fr = build_contest_display_rank_notification_fr(
-        recipient=recipient,
+        recipient=recipient_for_copy,
         pin_title=representative_row.pin.title,
         prev_rank=prev_display_rank,
         new_rank=new_display_rank,
+        likes_delta=likes_delta,
+        views_delta=views_delta,
+        comments_delta=comments_delta,
+        views_total=views_total,
     )
     md = {
         'kind': 'contest_display_rank_change',
@@ -299,6 +313,9 @@ def track_contest_interaction(
             pin=pin,
             defaults={'creator': pin.author},
         )
+        old_likes = int(pin_score.total_likes or 0)
+        old_views = int(pin_score.total_views or 0)
+        old_comments = int(pin_score.total_comments or 0)
         prev_rank = pin_score.rank
         pin_score.raw_score = float(pin_score.raw_score) + delta
         pin_score.adjusted_score = float(pin_score.adjusted_score) + delta
@@ -333,6 +350,9 @@ def track_contest_interaction(
         shares = int(pin_score.total_shares or 0)
         saves = int(pin_score.total_saves or 0)
         comments = int(pin_score.total_comments or 0)
+        likes_delta = likes - old_likes
+        views_delta = views - old_views
+        comments_delta = comments - old_comments
 
         new_display_rank, representative_row = display_rank_and_row_for_creator(settings, pin.author_id)
 
@@ -383,6 +403,10 @@ def track_contest_interaction(
             prev_display_rank=prev_display_rank,
             new_display_rank=new_display_rank,
             representative_row=representative_row,
+            likes_delta=likes_delta,
+            views_delta=views_delta,
+            comments_delta=comments_delta,
+            views_total=views,
         )
 
 
