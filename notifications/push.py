@@ -73,13 +73,17 @@ def is_push_configured():
 
 
 def _notification_payload_dict(notification):
-    return {
+    slug = getattr(notification, 'pin_slug', None)
+    out = {
         'title': notification.title or 'PINOVA',
         'body': notification.message,
         'notification_type': notification.notification_type,
         'action_url': _push_action_url(notification),
         'notification_id': notification.id,
     }
+    if slug:
+        out['pin_slug'] = str(slug)
+    return out
 
 
 def _send_web_push_for_user(recipient_user, payload_dict):
