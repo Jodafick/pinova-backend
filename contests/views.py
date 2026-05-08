@@ -73,7 +73,7 @@ class LeaderboardPinsView(APIView):
                 saves=Count('id', filter=Q(interaction_type='save')),
                 comments=Count('id', filter=Q(interaction_type='comment')),
             )
-        )
+        }
         results = [
             {
                 'pin_id': row.pin_id,
