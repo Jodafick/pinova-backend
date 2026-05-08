@@ -7,6 +7,7 @@ tzdata
 # Django REST Framework
 djangorestframework
 djangorestframework-simplejwt
+channels
 
 # Auth system
 django-allauth

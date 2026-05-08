@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
@@ -33,7 +35,11 @@ def _month_bounds(dt: datetime, tz_name: str) -> tuple[datetime, datetime, str]:
         next_start = start.replace(year=start.year + 1, month=1)
     else:
         next_start = start.replace(month=start.month + 1)
-    return start.astimezone(timezone.utc), next_start.astimezone(timezone.utc), local_dt.strftime('%Y-%m')
+    return (
+        start.astimezone(dt_timezone.utc),
+        next_start.astimezone(dt_timezone.utc),
+        local_dt.strftime('%Y-%m'),
+    )
 
 
 def get_active_contest_settings(now: datetime | None = None) -> ContestSettings | None:
@@ -109,12 +115,30 @@ def _rank_for_creator(contest: ContestSettings, score: float) -> int:
 
 
 def _emit_leaderboard_event(*, contest: ContestSettings, event_type: str, entity_type: str, entity_id: int, payload: dict):
-    LeaderboardEvent.objects.create(
+    row = LeaderboardEvent.objects.create(
         contest=contest,
         event_type=event_type,
         entity_type=entity_type,
         entity_id=entity_id,
         payload=payload,
+    )
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+    group_name = f'contest_{contest.contest_key.replace("-", "_")}'
+    async_to_sync(channel_layer.group_send)(
+        group_name,
+        {
+            'type': 'contest.event',
+            'payload': {
+                'sequence': row.sequence,
+                'event_type': row.event_type,
+                'entity_type': row.entity_type,
+                'entity_id': row.entity_id,
+                'payload': row.payload,
+                'created_at': row.created_at.isoformat(),
+            },
+        },
     )
 
 

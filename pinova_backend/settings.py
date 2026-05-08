@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',
+    'channels',
     # Third party apps
     'rest_framework',
     'rest_framework.authtoken',
@@ -143,6 +144,13 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'pinova_backend.wsgi.application'
+ASGI_APPLICATION = 'pinova_backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
 
 
 # Database

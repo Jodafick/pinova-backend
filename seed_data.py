@@ -79,6 +79,16 @@ from accounts.models import (
 )
 from accounts.subscription_seats import generate_invite_plain_token_and_hash, grant_member_seat
 from notifications.models import ExpoPushToken, Notification, PushSubscription
+from contests.models import (
+    ContestInteractionEvent,
+    ContestResult,
+    ContestSettings,
+    CreatorContestScore,
+    LeaderboardEvent,
+    LeaderboardSnapshot,
+    PinContestScore,
+)
+from contests.services import create_monthly_contest_if_missing
 from pins.serializers import extract_mentions
 from pins.models import (
     Board,
@@ -437,6 +447,146 @@ def cleanup_relational_data():
     Board.objects.all().delete()
 
     TopicTranslation.objects.all().delete()
+    ContestResult.objects.all().delete()
+    LeaderboardSnapshot.objects.all().delete()
+    LeaderboardEvent.objects.all().delete()
+    CreatorContestScore.objects.all().delete()
+    PinContestScore.objects.all().delete()
+    ContestInteractionEvent.objects.all().delete()
+    ContestSettings.objects.all().delete()
+
+
+def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None:
+    """Données concours mensuel: settings actifs + scores pins/créateurs + événements live."""
+    if not public_pins:
+        logger.info('Contest seed ignoré (aucun pin public).')
+        return
+
+    contest = create_monthly_contest_if_missing()
+    contest.is_active = True
+    contest.auto_reset_enabled = True
+    contest.max_winners = 3
+    contest.distribution_mode = ContestSettings.DISTRIBUTION_PERCENTAGE
+    contest.total_prize_pool = 10000
+    contest.distribution_weights_json = [50, 30, 20]
+    contest.weight_likes = 1.0
+    contest.weight_views = 0.12
+    contest.weight_shares = 2.8
+    contest.weight_saves = 2.0
+    contest.weight_comments = 2.3
+    contest.leaderboard_refresh_interval = 3
+    contest.websocket_broadcast_threshold = 0.15
+    contest.save()
+
+    eligible = [p for p in public_pins if contest.start_at <= p.created_at < contest.end_at]
+    if not eligible:
+        # Si les pins seed sont hors fenêtre, on en prend un échantillon quand même pour alimenter la démo.
+        eligible = public_pins[: min(120, len(public_pins))]
+
+    random.shuffle(eligible)
+    chosen = eligible[: min(120, len(eligible))]
+    pin_scores_created = []
+    creator_totals: dict[int, float] = {}
+
+    for rank, pin in enumerate(chosen, start=1):
+        base = max(5.0, 320 - rank * random.uniform(1.0, 2.2))
+        bonus = random.uniform(0.0, 35.0)
+        score = round(base + bonus, 4)
+        previous_rank = max(1, rank + random.randint(-4, 7))
+        obj = PinContestScore.objects.create(
+            contest=contest,
+            pin=pin,
+            creator=pin.author,
+            raw_score=score,
+            adjusted_score=score,
+            rank=rank,
+            previous_rank=previous_rank,
+            total_likes=max(0, int(score * random.uniform(1.4, 2.3))),
+            total_views=max(0, int(score * random.uniform(6.5, 14.0))),
+            total_saves=max(0, int(score * random.uniform(0.5, 1.4))),
+            total_shares=max(0, int(score * random.uniform(0.2, 0.8))),
+            total_comments=max(0, int(score * random.uniform(0.15, 0.7))),
+        )
+        pin_scores_created.append(obj)
+        creator_totals[obj.creator_id] = creator_totals.get(obj.creator_id, 0.0) + obj.adjusted_score
+
+    creator_rows = sorted(creator_totals.items(), key=lambda it: it[1], reverse=True)
+    for rank, (creator_id, total) in enumerate(creator_rows, start=1):
+        CreatorContestScore.objects.create(
+            contest=contest,
+            creator_id=creator_id,
+            adjusted_score=round(total, 4),
+            rank=rank,
+            previous_rank=max(1, rank + random.randint(-2, 4)),
+        )
+
+    # Simule un flux live initial pour web/mobile.
+    for row in pin_scores_created[:40]:
+        LeaderboardEvent.objects.create(
+            contest=contest,
+            event_type='pin_rank_updated',
+            entity_type='pin',
+            entity_id=row.pin_id,
+            payload={
+                'pin_id': row.pin_id,
+                'pin_slug': row.pin.slug,
+                'pin_title': row.pin.title,
+                'creator_id': row.creator_id,
+                'creator_username': row.creator.username,
+                'contest_key': contest.contest_key,
+                'score': row.adjusted_score,
+                'rank': row.rank,
+                'previous_rank': row.previous_rank,
+                'delta_score': round(random.uniform(0.05, 2.7), 4),
+            },
+        )
+
+    top_creator_rows = CreatorContestScore.objects.filter(contest=contest).select_related('creator').order_by('rank')[:25]
+    for row in top_creator_rows:
+        LeaderboardEvent.objects.create(
+            contest=contest,
+            event_type='creator_rank_updated',
+            entity_type='creator',
+            entity_id=row.creator_id,
+            payload={
+                'creator_id': row.creator_id,
+                'creator_username': row.creator.username,
+                'contest_key': contest.contest_key,
+                'score': row.adjusted_score,
+                'rank': row.rank,
+                'previous_rank': row.previous_rank,
+            },
+        )
+
+    winners = list(
+        PinContestScore.objects.filter(contest=contest)
+        .order_by('rank', '-adjusted_score')
+        .select_related('creator')[: contest.max_winners]
+    )
+    ContestResult.objects.update_or_create(
+        contest=contest,
+        defaults={
+            'winners_json': [
+                {
+                    'rank': idx + 1,
+                    'pin_id': row.pin_id,
+                    'creator_id': row.creator_id,
+                    'score': row.adjusted_score,
+                }
+                for idx, row in enumerate(winners)
+            ],
+            'payout_json': [
+                {'rank': 1, 'amount': 5000},
+                {'rank': 2, 'amount': 3000},
+                {'rank': 3, 'amount': 2000},
+            ],
+        },
+    )
+    logger.info(
+        f'Contest seed OK — {contest.contest_key}: '
+        f'{PinContestScore.objects.filter(contest=contest).count()} pins, '
+        f'{CreatorContestScore.objects.filter(contest=contest).count()} créateurs.'
+    )
 
 
 def cleanup_seed():
@@ -1437,6 +1587,7 @@ def seed_data():
             PinViewEvent.objects.create(user=viewer, pin=pin)
 
     seed_david_fan_army(david_user)
+    seed_contest_data(public_pins, regular_users)
 
     queries_search = ['tattoo', 'salon', 'minimal', 'cake', 'street', 'zen', 'loft']
     for u in random.sample(regular_users, min(6, len(regular_users))):
