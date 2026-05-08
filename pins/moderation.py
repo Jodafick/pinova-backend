@@ -167,6 +167,22 @@ def validate_comment_text(text: str) -> None:
     if _profanity_in(text or ''):
         raise serializers.ValidationError({'text': [MSG_PROFANITY_COMMENT]})
 
+def validate_clean_text_fields(
+    fields: dict[str, str],
+    *,
+    message: str = 'Ce champ contient un contenu inapproprie.',
+) -> None:
+    """Validation generique anti-contenu par champ (erreurs DRF mappees par cle de champ)."""
+    if not profanity:
+        return
+    errors: dict[str, list[str]] = {}
+    for field_name, raw_value in fields.items():
+        value = (raw_value or '').strip()
+        if value and _profanity_in(value):
+            errors[field_name] = [message]
+    if errors:
+        raise serializers.ValidationError(errors)
+
 
 def pin_is_story_flag(raw_is_story, validated_is_story) -> bool:
     if validated_is_story is True:

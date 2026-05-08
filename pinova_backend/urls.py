@@ -24,6 +24,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('pins.urls')),
     path('api/', include('accounts.urls')),
+    path('api/', include('contests.urls')),
     path('api/notifications/', include('notifications.urls')),
     # Médias utilisateurs : Cache-Control long (+ version cv= côté serializers).
     # En production, si nginx sert /media/ directement, aligner les mêmes en-têtes là-bas.

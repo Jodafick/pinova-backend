@@ -106,6 +106,7 @@ INSTALLED_APPS = [
     'pins',
     'accounts',
     'notifications',
+    'contests',
 ]
 
 SITE_ID = 1

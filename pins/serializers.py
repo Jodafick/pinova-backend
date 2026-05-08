@@ -26,6 +26,7 @@ from .comment_access import viewer_sees_comment_content, user_can_comment_on_pin
 from .visibility import profile_is_verified_adult
 from .moderation import (
     validate_pin_text,
+    validate_clean_text_fields,
     apply_pin_creation_rate_limits,
     pin_body_fingerprint,
     enforce_identical_content_flood,
@@ -71,6 +72,18 @@ class BoardSerializer(serializers.ModelSerializer):
             'is_owner',
             'owner_username',
         ]
+
+    def validate(self, attrs):
+        name = attrs.get('name', getattr(self.instance, 'name', '') if self.instance else '')
+        description = attrs.get('description', getattr(self.instance, 'description', '') if self.instance else '')
+        validate_clean_text_fields(
+            {
+                'name': str(name or ''),
+                'description': str(description or ''),
+            },
+            message='Ce champ contient un contenu inapproprie. Merci de le modifier.',
+        )
+        return attrs
 
     def get_preview_images(self, obj):
         from .visibility import pin_is_visible_for_request

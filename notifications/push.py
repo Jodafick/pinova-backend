@@ -74,12 +74,16 @@ def is_push_configured():
 
 def _notification_payload_dict(notification):
     slug = getattr(notification, 'pin_slug', None)
+    metadata = getattr(notification, 'metadata', None)
+    if not isinstance(metadata, dict):
+        metadata = {}
     out = {
         'title': notification.title or 'PINOVA',
         'body': notification.message,
         'notification_type': notification.notification_type,
         'action_url': _push_action_url(notification),
         'notification_id': notification.id,
+        'metadata_json': json.dumps(metadata, ensure_ascii=False, separators=(',', ':')),
     }
     if slug:
         out['pin_slug'] = str(slug)

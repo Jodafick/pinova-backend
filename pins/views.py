@@ -78,6 +78,7 @@ from .topic_i18n import resolve_topic_language, ensure_topic_translation
 from .pagination import PinFeedPagination, BoardListPagination
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
+from contests.services import track_contest_interaction
 from .creator_analytics import creator_totals_for_user, paginated_creator_top_pins
 from .creator_audience import VALID_ACTIONS, creator_engagement_breakdown
 from .weekly_stats import (
@@ -414,6 +415,12 @@ class PinViewSet(viewsets.ModelViewSet):
             event_type=UserInteraction.TYPE_SAVE,
             metadata={'action': 'save'},
         )
+        track_contest_interaction(
+            pin=pin,
+            actor=request.user,
+            interaction_type='save',
+            metadata={'source': 'pin_save'},
+        )
         update_user_embedding(request.user)
 
         return Response({'status': 'saved', 'saves_count': pin.saves_count})
@@ -450,6 +457,12 @@ class PinViewSet(viewsets.ModelViewSet):
             creator=pin.author,
             event_type=UserInteraction.TYPE_LIKE,
             metadata={'action': 'like'},
+        )
+        track_contest_interaction(
+            pin=pin,
+            actor=request.user,
+            interaction_type='like',
+            metadata={'source': 'pin_like'},
         )
         update_user_embedding(request.user)
 
@@ -505,6 +518,13 @@ class PinViewSet(viewsets.ModelViewSet):
             pin=pin,
             creator=pin.author,
             event_type=UserInteraction.TYPE_VIEW,
+            dwell_seconds=max(0, dwell_seconds),
+            metadata={'source': request.data.get('source') or ''},
+        )
+        track_contest_interaction(
+            pin=pin,
+            actor=request.user,
+            interaction_type='view',
             dwell_seconds=max(0, dwell_seconds),
             metadata={'source': request.data.get('source') or ''},
         )
@@ -773,6 +793,13 @@ class PinViewSet(viewsets.ModelViewSet):
                 )
 
             serializer = CommentSerializer(comment, context={'request': request})
+            track_contest_interaction(
+                pin=pin,
+                actor=request.user,
+                interaction_type='comment',
+                comment_text=text,
+                metadata={'comment_id': comment.id, 'has_media': bool(media_file), 'has_gif': bool(gif_url)},
+            )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         sort = (request.query_params.get('sort') or 'recent').lower()

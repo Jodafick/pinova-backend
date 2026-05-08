@@ -19,6 +19,7 @@ from datetime import timedelta
 from .currency_utils import normalize_currency
 from notifications.notification_i18n import create_localized_notification
 from pinova_backend.media_cache import build_versioned_media_url
+from pins.moderation import validate_clean_text_fields
 
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
@@ -344,7 +345,13 @@ class RegisterSerializer(BaseRegisterSerializer):
         email = data.get('email')
         if not data.get('username') and email:
             data['username'] = email.split('@')[0]
-            
+        validate_clean_text_fields(
+            {
+                'username': str(data.get('username', '') or ''),
+                'display_name': str(data.get('display_name', '') or ''),
+            },
+            message='Ce champ contient un contenu inapproprie. Merci de le modifier.',
+        )
         return super().validate(data)
 
     def get_cleaned_data(self):
