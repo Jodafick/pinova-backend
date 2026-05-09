@@ -111,7 +111,6 @@ INSTALLED_APPS = [
     'notifications',
     'contests',
     'referrals',
-    'ads',
 ]
 
 SITE_ID = 1
@@ -399,36 +398,7 @@ CACHES = {
 # django-ratelimit utilise le cache « default »
 RATELIMIT_USE_CACHE = 'default'
 
-# --- Publicité Pinova ---
-MAPBOX_ACCESS_TOKEN = (os.environ.get('MAPBOX_ACCESS_TOKEN') or '').strip()
-GOOGLE_MAPS_API_KEY = (os.environ.get('GOOGLE_MAPS_API_KEY') or '').strip()
-
-ADS_RANK_WEIGHTS = {
-    'bid': float(os.environ.get('ADS_RANK_WEIGHT_BID', '0.22')),
-    'relevance': float(os.environ.get('ADS_RANK_WEIGHT_RELEVANCE', '0.28')),
-    'quality': float(os.environ.get('ADS_RANK_WEIGHT_QUALITY', '0.22')),
-    'freshness': float(os.environ.get('ADS_RANK_WEIGHT_FRESHNESS', '0.08')),
-    'engagement_pred': float(os.environ.get('ADS_RANK_WEIGHT_ENGAGEMENT', '0.12')),
-    'fatigue_penalty': float(os.environ.get('ADS_RANK_WEIGHT_FATIGUE', '0.08')),
-}
-
-ADS_ANTIFRAUD_MAX_CLICKS_30S = int(os.environ.get('ADS_ANTIFRAUD_MAX_CLICKS_30S', '8'))
-ADS_ANTIFRAUD_MAX_REPORTS_7D = int(os.environ.get('ADS_ANTIFRAUD_MAX_REPORTS_7D', '200'))
-
 _redis_url = (os.environ.get('REDIS_URL') or os.environ.get('PINNOVA_REDIS_URL') or '').strip()
-if _redis_url:
-    try:
-        import django_redis  # noqa: F401
-
-        CACHES['ads'] = {
-            'BACKEND': 'django_redis.cache.RedisCache',
-            'LOCATION': _redis_url,
-            'OPTIONS': {'CLIENT_CLASS': 'django_redis.client.DefaultClient'},
-            'KEY_PREFIX': 'pinova:ads',
-            'TIMEOUT': 90,
-        }
-    except ImportError:
-        pass
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', _redis_url or 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)

@@ -38,8 +38,6 @@ class Profile(models.Model):
     preferred_language = models.CharField(max_length=10, default='fr')
     preferred_currency = models.CharField(max_length=3, default='XOF')
     country_code = models.CharField(max_length=2, blank=True, default='')
-    ad_ads_enabled = models.BooleanField(default=True)
-    partner_ads_enabled = models.BooleanField(default=True)
     tips_enabled = models.BooleanField(default=False)
     tips_url = models.URLField(blank=True, null=True)
     private_profile = models.BooleanField(default=False)

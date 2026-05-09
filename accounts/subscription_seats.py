@@ -128,8 +128,6 @@ def strip_member_seat_entitlement(member_user: User):
     p.subscription_plan = Profile.PLAN_FREE
     p.translation_quota_monthly = 5
     p.translation_used_monthly = 0
-    p.ad_ads_enabled = True
-    p.partner_ads_enabled = True
     p.subscription_renewal_at = None
     p.subscription_cancel_at_period_end = False
     p.subscription_scheduled_plan = ''
@@ -141,8 +139,6 @@ def strip_member_seat_entitlement(member_user: User):
             'subscription_plan',
             'translation_quota_monthly',
             'translation_used_monthly',
-            'ad_ads_enabled',
-            'partner_ads_enabled',
             'subscription_renewal_at',
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
@@ -166,8 +162,6 @@ def sync_member_entitlements_from_owner(owner: User):
         mp.subscription_plan = ow.subscription_plan
         mp.subscription_renewal_at = ow.subscription_renewal_at
         mp.translation_quota_monthly = ow.translation_quota_monthly
-        mp.partner_ads_enabled = ow.partner_ads_enabled
-        mp.ad_ads_enabled = ow.ad_ads_enabled
         mp.subscription_cancel_at_period_end = ow.subscription_cancel_at_period_end
         mp.subscription_scheduled_plan = ow.subscription_scheduled_plan
         mp.save(
@@ -176,8 +170,6 @@ def sync_member_entitlements_from_owner(owner: User):
                 'subscription_plan',
                 'subscription_renewal_at',
                 'translation_quota_monthly',
-                'partner_ads_enabled',
-                'ad_ads_enabled',
                 'subscription_cancel_at_period_end',
                 'subscription_scheduled_plan',
             ],
@@ -210,8 +202,6 @@ def grant_member_seat(owner: User, member: User):
     mp.subscription_plan = ow.subscription_plan
     mp.subscription_renewal_at = ow.subscription_renewal_at
     mp.translation_quota_monthly = ow.translation_quota_monthly
-    mp.partner_ads_enabled = ow.partner_ads_enabled
-    mp.ad_ads_enabled = ow.ad_ads_enabled
     mp.subscription_cancel_at_period_end = ow.subscription_cancel_at_period_end
     mp.subscription_scheduled_plan = ow.subscription_scheduled_plan
     mp.save(
@@ -220,8 +210,6 @@ def grant_member_seat(owner: User, member: User):
             'subscription_plan',
             'subscription_renewal_at',
             'translation_quota_monthly',
-            'partner_ads_enabled',
-            'ad_ads_enabled',
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
         ],

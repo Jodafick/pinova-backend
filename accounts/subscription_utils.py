@@ -36,8 +36,6 @@ def _enforce_subscription_state(profile: Profile) -> bool:
     if profile.subscription_plan == Profile.PLAN_FREE:
         profile.translation_quota_monthly = 5
         profile.translation_used_monthly = 0
-        profile.ad_ads_enabled = True
-        profile.partner_ads_enabled = True
         profile.tips_enabled = False
         profile.tips_url = ''
         profile.sensitive_media_blur_by_default = True
@@ -53,8 +51,6 @@ def _enforce_subscription_state(profile: Profile) -> bool:
             'subscription_renewal_at',
             'translation_quota_monthly',
             'translation_used_monthly',
-            'ad_ads_enabled',
-            'partner_ads_enabled',
             'tips_enabled',
             'tips_url',
             'subscription_seat_bundle',
