@@ -42,7 +42,7 @@ class ReferralPendingIntent(models.Model):
         ]
         constraints = [
             models.CheckConstraint(
-                check=~models.Q(session_key='') | ~models.Q(device_binding_id=''),
+                condition=~(models.Q(session_key='') & models.Q(device_binding_id='')),
                 name='referral_intent_session_or_device',
             ),
         ]
