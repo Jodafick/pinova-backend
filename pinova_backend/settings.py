@@ -14,6 +14,7 @@ import os
 import dj_database_url
 from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 from datetime import timedelta
 
@@ -64,6 +65,7 @@ else:
     )
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_headers, 'x-pinova-device-binding')
 # Permet au navigateur de lire l’en-tête du compteur notifications (axios / fetch).
 CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications']
 
