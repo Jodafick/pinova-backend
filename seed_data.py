@@ -26,6 +26,10 @@ SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTrans
 Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save ; Like ; Comment ;
 CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction ;
 ExpoPushToken (jeton factice mobile, idempotent par user id).
+Publicité (app ``ads``) : Advertiser ; BusinessAccount ; Campaign ; CampaignBudget ; AdCategory ; AudienceSegment ;
+AdCreative ; Ad ; AdTargeting ; AdImpression ; AdClick ; AdView ; AdWatchSession ; AdDeliveryLog ; AdPendingEvent ;
+AdQualityScore ; AdPerformanceSnapshot ; AdHide ; AdReport ; AdFrequencyTracking ; UserInterestScore ;
+UserBehaviorProfile ; UserTrustScore.
 Stories : finalisation alignée sur `pins/active-stories` (éphémères + `story_expires_at` futur).
 
 Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
@@ -35,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import os
 import random
+from decimal import Decimal
 import secrets
 import base64
 import uuid
@@ -115,6 +120,33 @@ from pins.models import (
     SearchInteraction,
     Topic,
     TopicTranslation,
+)
+
+from ads import constants as ads_ac
+from ads.models import (
+    Ad,
+    AdCategory,
+    AdClick,
+    AdCreative,
+    AdDeliveryLog,
+    AdFrequencyTracking,
+    AdHide,
+    AdImpression,
+    AdPendingEvent,
+    AdPerformanceSnapshot,
+    AdQualityScore,
+    AdReport,
+    AdTargeting,
+    AdView,
+    AdWatchSession,
+    Advertiser,
+    AudienceSegment,
+    BusinessAccount,
+    Campaign,
+    CampaignBudget,
+    UserBehaviorProfile,
+    UserInterestScore,
+    UserTrustScore,
 )
 
 try:
@@ -423,9 +455,39 @@ def cleanup_existing_pin_media():
     Hashtag.objects.all().delete()
 
 
+def cleanup_ads_tables():
+    """Supprime toutes les lignes publicitaires (ordre respectant les FK)."""
+    logger.info('Nettoyage des tables publicité (ads)…')
+    for cr in AdCreative.objects.exclude(media_image='').iterator():
+        try:
+            cr.media_image.delete(save=False)
+        except Exception:
+            pass
+    AdWatchSession.objects.all().delete()
+    AdView.objects.all().delete()
+    AdClick.objects.all().delete()
+    AdImpression.objects.all().delete()
+    AdDeliveryLog.objects.all().delete()
+    AdReport.objects.all().delete()
+    AdHide.objects.all().delete()
+    AdPerformanceSnapshot.objects.all().delete()
+    AdQualityScore.objects.all().delete()
+    AdFrequencyTracking.objects.all().delete()
+    AdPendingEvent.objects.all().delete()
+    Ad.objects.all().delete()
+    AdCreative.objects.all().delete()
+    CampaignBudget.objects.all().delete()
+    Campaign.objects.all().delete()
+    AudienceSegment.objects.all().delete()
+    BusinessAccount.objects.all().delete()
+    Advertiser.objects.all().delete()
+    AdCategory.objects.all().delete()
+
+
 def cleanup_relational_data():
     """Notifications, interactions, boards (orphelins), etc."""
     logger.info('Nettoyage des données relationnelles…')
+    cleanup_ads_tables()
     Notification.objects.all().delete()
     PushSubscription.objects.all().delete()
     SubscriptionPayment.objects.all().delete()
@@ -1150,6 +1212,361 @@ def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> b
     return True
 
 
+def _save_creative_image(creative: AdCreative, seed_key: str, skip_network: bool) -> None:
+    """Attache une image au créatif (réseau ou PNG minimal)."""
+    tmp, fname = fetch_seed_image_file(seed_key, skip_network)
+    if tmp:
+        try:
+            creative.media_image.save(fname, File(tmp), save=True)
+        finally:
+            tmp.close()
+    else:
+        creative.media_image.save(
+            f'{_safe_seed_slug(seed_key, 40)}.png',
+            ContentFile(placeholder_png_bytes(seed_key)),
+            save=True,
+        )
+
+
+def seed_ads_data(regular_users: list[User], skip_network: bool) -> None:
+    """Démo complète du module publicitaire : entités core, ciblage, events, analytics, user intel."""
+    if not regular_users:
+        logger.info('Ads seed ignoré (aucun utilisateur).')
+        return
+
+    owner = next((u for u in regular_users if u.username == 'clara'), regular_users[0])
+    u_nina = next((u for u in regular_users if u.username == 'nina'), regular_users[-1])
+    u_leo = next((u for u in regular_users if u.username == 'leo'), regular_users[min(1, len(regular_users) - 1)])
+
+    now = dj_tz.now()
+    start = now - timedelta(days=7)
+    end = now + timedelta(days=60)
+
+    logger.info('Publicité (ads) — création des annonces seed…')
+
+    with transaction.atomic():
+        adv = Advertiser.objects.create(
+            name='Pinova Seed Advertiser',
+            contact_email='ads-seed@pinova.invalid',
+            status=ads_ac.ADVERTISER_STATUS_ACTIVE,
+        )
+        ba = BusinessAccount.objects.create(
+            owner=owner,
+            advertiser=adv,
+            display_name='Studio seed Pinova',
+            currency='XOF',
+            timezone='Africa/Abidjan',
+        )
+
+        cat_parent = AdCategory.objects.create(slug='seed-lifestyle', name='Lifestyle (seed)')
+        AdCategory.objects.create(slug='seed-travel', name='Voyage (seed)', parent=cat_parent)
+        seg = AudienceSegment.objects.create(
+            business_account=ba,
+            name='Audience CI + FR',
+            description='Segment démo seed.',
+            rules={'countries': ['CI', 'FR']},
+            estimated_size=125_000,
+        )
+
+        camp = Campaign.objects.create(
+            business_account=ba,
+            name='Campagne seed — diffusion web & mobile',
+            objective=ads_ac.CAMPAIGN_OBJECTIVE_AWARENESS,
+            status=ads_ac.CAMPAIGN_STATUS_ACTIVE,
+            bid_strategy=ads_ac.BID_STRATEGY_CPM,
+            bid_micro=5_000_000,
+            start_at=start,
+            end_at=end,
+        )
+        CampaignBudget.objects.create(
+            campaign=camp,
+            budget_type=ads_ac.BUDGET_TYPE_DAILY,
+            budget_micro=50_000_000_000,
+            spend_micro=120_000_000,
+            pacing=ads_ac.PACING_EVEN,
+            day_cursor=now.date(),
+            spend_micro_day=80_000_000,
+        )
+
+        cr_img = AdCreative.objects.create(
+            business_account=ba,
+            headline='Pinova — inspiration calme',
+            body='Découvrez des idées sans surcharge.',
+            cta_text='Découvrir',
+            brand_name='Pinova',
+            brand_logo_url='https://pinova.app/favicon.ico',
+            media_video_url='',
+            aspect_ratio='16:9',
+            autoplay_muted_default=True,
+        )
+        cr_vid = AdCreative.objects.create(
+            business_account=ba,
+            headline='Vidéo seed (démo)',
+            body='Lecture test.',
+            cta_text='Voir la vidéo',
+            brand_name='Pinova Labs',
+            brand_logo_url='',
+            media_video_url='https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+            aspect_ratio='9:16',
+            autoplay_muted_default=True,
+            duration_seconds_est=45,
+        )
+        cr_side = AdCreative.objects.create(
+            business_account=ba,
+            headline='Offre sidebar web',
+            body='Emplacement discret desktop.',
+            cta_text='En savoir plus',
+            brand_name='Pinova Ads',
+            brand_logo_url='',
+            media_video_url='',
+            aspect_ratio='4:3',
+            autoplay_muted_default=False,
+        )
+
+        for cr in (cr_img, cr_side):
+            _save_creative_image(cr, f'ads_cr_{cr.pk}', skip_network)
+            cr.categories.add(cat_parent)
+
+        ad_feed_img = Ad.objects.create(
+            campaign=camp,
+            creative=cr_img,
+            name='Annonce feed image (seed)',
+            status=ads_ac.AD_STATUS_ACTIVE,
+            ad_format=ads_ac.AD_FORMAT_FEED_IMAGE,
+            destination_url='https://pinova.app/',
+            deep_link='',
+            priority_boost=2,
+        )
+        ad_feed_vid = Ad.objects.create(
+            campaign=camp,
+            creative=cr_vid,
+            name='Annonce feed vidéo (seed)',
+            status=ads_ac.AD_STATUS_ACTIVE,
+            ad_format=ads_ac.AD_FORMAT_FEED_VIDEO,
+            destination_url='https://pinova.app/',
+            deep_link='pinova://home',
+            priority_boost=0,
+        )
+        ad_sidebar = Ad.objects.create(
+            campaign=camp,
+            creative=cr_side,
+            name='Annonce sidebar native (seed)',
+            status=ads_ac.AD_STATUS_ACTIVE,
+            ad_format=ads_ac.AD_FORMAT_SIDEBAR_NATIVE,
+            destination_url='https://pinova.app/',
+            deep_link='',
+            priority_boost=4,
+        )
+
+        tgt_wide = AdTargeting.objects.create(
+            ad=ad_feed_img,
+            age_min=18,
+            age_max=65,
+            genders=[],
+            countries=['CI', 'FR', 'US'],
+            cities=[],
+            languages=['fr', 'en'],
+            devices=['phone', 'desktop'],
+            operating_systems=['web', 'ios', 'android'],
+            interest_topic_slugs=['design', 'photo'],
+            interest_category_slugs=[],
+            include_hashtags=['pinova', 'design'],
+            exclude_hashtags=[],
+            search_keywords=['inspiration'],
+            raw_rules={'seed': True},
+        )
+        tgt_wide.audience_segments.add(seg)
+
+        AdTargeting.objects.create(
+            ad=ad_feed_vid,
+            age_min=None,
+            age_max=None,
+            countries=[],
+            cities=[],
+            languages=[],
+            devices=[],
+            operating_systems=[],
+            genders=[],
+            raw_rules={},
+        )
+
+        AdTargeting.objects.create(
+            ad=ad_sidebar,
+            countries=['CI', 'FR'],
+            cities=[{'label': 'Abidjan', 'country_code': 'CI'}],
+            languages=['fr'],
+            devices=['desktop'],
+            operating_systems=['web'],
+            genders=[],
+            interest_topic_slugs=[],
+            raw_rules={'placement_hint': 'sidebar_web'},
+        )
+
+        for a in (ad_feed_img, ad_feed_vid, ad_sidebar):
+            AdQualityScore.objects.create(
+                ad=a,
+                quality_0_100=78,
+                hide_rate=Decimal('0.000120'),
+                report_rate=Decimal('0.000040'),
+                ctr_smoothed=Decimal('0.012000'),
+                engagement_bonus=Decimal('0.0800'),
+                watch_bonus=Decimal('0.0500'),
+            )
+
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        AdPerformanceSnapshot.objects.create(
+            ad=ad_feed_img,
+            period_start=day_start,
+            period_end=day_end,
+            granularity=AdPerformanceSnapshot.GRANULARITY_DAY,
+            impressions=4200,
+            valid_impressions=4100,
+            clicks=88,
+            views=2100,
+            completes=340,
+            spend_micro=1_200_000_000,
+            watch_duration_ms_total=4_200_000,
+            watch_duration_ms_avg=2000,
+            engagement_events=560,
+            hidden_count=3,
+            reported_count=0,
+            ctr=Decimal('0.021463'),
+            cpm_micro=292_682_926,
+            cpc_micro=13_636_363,
+            engagement_rate=Decimal('0.136585'),
+            retention_proxy=Decimal('0.42'),
+        )
+
+        rid = uuid.uuid4()
+        imp1 = AdImpression.objects.create(
+            request_id=rid,
+            user=owner,
+            ad=ad_feed_img,
+            placement=ads_ac.PLACEMENT_FEED_WEB,
+            is_valid=True,
+            client_context={'language': 'fr', 'device': 'desktop'},
+        )
+        AdImpression.objects.create(
+            request_id=uuid.uuid4(),
+            user=u_leo,
+            ad=ad_sidebar,
+            placement=ads_ac.PLACEMENT_SIDEBAR_WEB,
+            is_valid=True,
+            client_context={'os': 'web'},
+        )
+
+        AdClick.objects.create(
+            impression=imp1,
+            user=owner,
+            ad=ad_feed_img,
+            click_x=120,
+            click_y=44,
+            referrer='https://pinova.app/',
+            is_suspicious=False,
+        )
+
+        v_start = now - timedelta(hours=2)
+        av = AdView.objects.create(
+            impression=imp1,
+            user=owner,
+            ad=ad_feed_img,
+            started_at=v_start,
+            duration_ms=3200,
+            visible_pct_max=92,
+            completed=False,
+        )
+        AdWatchSession.objects.create(
+            ad_view=av,
+            user=owner,
+            ad=ad_feed_img,
+            started_at=v_start,
+            ended_at=v_start + timedelta(seconds=3),
+            total_watched_ms=2800,
+            milestones={'p50': True},
+            heartbeat_count=4,
+        )
+
+        AdDeliveryLog.objects.create(
+            request_id=rid,
+            user=owner,
+            placement=ads_ac.PLACEMENT_FEED_WEB,
+            candidates=[str(ad_feed_img.pk), str(ad_feed_vid.pk)],
+            scores={'top': [0.82, 0.71]},
+            chosen_ad=ad_feed_img,
+            reason='mmr',
+        )
+
+        AdPendingEvent.objects.create(
+            event_type=ads_ac.PENDING_EVENT_IMPRESSION,
+            payload={'ad_id': str(ad_feed_vid.pk), 'placement': ads_ac.PLACEMENT_FEED_MOBILE},
+            dedupe_key=f'seed-{ad_feed_vid.pk}-imp',
+        )
+        AdPendingEvent.objects.create(
+            event_type=ads_ac.PENDING_EVENT_CLICK,
+            payload={'ad_id': str(ad_sidebar.pk)},
+            dedupe_key='',
+        )
+
+        AdHide.objects.create(user=u_nina, ad=ad_feed_vid, reason='not_relevant')
+        AdReport.objects.create(user=u_leo, ad=ad_feed_vid, reason='spam', details='Rapport seed automatique.')
+
+        AdFrequencyTracking.objects.update_or_create(
+            user=owner,
+            ad=ad_feed_img,
+            defaults={
+                'impressions_1h': 2,
+                'impressions_24h': 9,
+                'impressions_7d': 28,
+                'last_shown_at': now - timedelta(minutes=12),
+                'rotation_bucket': 3,
+            },
+        )
+
+        UserInterestScore.objects.update_or_create(
+            user=owner,
+            key_type=ads_ac.INTEREST_KEY_TOPIC,
+            key_slug='design',
+            defaults={
+                'score': Decimal('12.5'),
+                'raw_score': Decimal('15'),
+                'source_counts': {'pins': 4},
+                'last_signal_at': now,
+            },
+        )
+        UserBehaviorProfile.objects.update_or_create(
+            user=owner,
+            defaults={
+                'total_watch_seconds_7d': 3600,
+                'total_watch_seconds_30d': 14_000,
+                'engagement_rate_30d': Decimal('0.0480'),
+                'category_histogram': {'design': 12, 'photo': 5},
+                'hashtag_histogram': {'pinova': 3},
+                'search_histogram': {'voyage': 2},
+                'device_primary': 'phone',
+                'os_primary': 'ios',
+                'last_active_at': now - timedelta(hours=1),
+                'ads_hidden_30d': 1,
+                'ads_reported_30d': 0,
+            },
+        )
+        UserTrustScore.objects.update_or_create(
+            user=owner,
+            defaults={
+                'trust': Decimal('0.8800'),
+                'click_velocity_score': Decimal('0.9600'),
+                'impression_anomaly_score': Decimal('0.9900'),
+                'automation_flags': [],
+            },
+        )
+
+    logger.info(
+        'Ads seed OK — campagne %s, %d annonces, catégories & segments.',
+        camp.pk,
+        Ad.objects.filter(campaign=camp).count(),
+    )
+
+
 def seed_data():
     logger.info('Mise à jour complète de la base de données (seed)…')
     skip_network = os.environ.get('SEED_SKIP_NETWORK', '').lower() in ('1', 'true', 'yes')
@@ -1741,6 +2158,8 @@ def seed_data():
                 CommentLike.objects.get_or_create(user=lc, comment=c)
 
     seed_contest_data(public_pins, regular_users)
+
+    seed_ads_data(regular_users, skip_network)
 
     seed_content_sample_reports(public_pins, regular_users)
     seed_user_blocks_sample()
