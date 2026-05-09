@@ -65,27 +65,27 @@ class ContestSettings(models.Model):
         help_text='Si activé : aucun point parrain tant que le filleul ne passe pas les garde-fous (âge compte, actions, trust).',
     )
     referral_min_account_age_hours = models.PositiveIntegerField(
-        default=24,
+        default=12,
         help_text='Âge minimum du compte filleul (h) avant éligibilité aux points parrain.',
     )
     referral_min_engagement_actions = models.PositiveIntegerField(
-        default=3,
+        default=1,
         help_text='Nombre minimum d’interactions concours pins valides (filleul) pour débloquer la récompense.',
     )
     referral_reward_delay_hours = models.PositiveIntegerField(
-        default=6,
+        default=1,
         help_text='Délai minimum après première activation email du filleul avant éligibilité aux points.',
     )
     referral_min_days_before_reward = models.PositiveIntegerField(
-        default=0,
+        default=2,
         help_text='Jours minimum après activation du parrainage avant points (0 = désactivé).',
     )
     referral_max_signups_per_ip_per_24h = models.PositiveIntegerField(
-        default=20,
+        default=40,
         help_text='Plafond inscriptions avec contexte IP identique sur 24 h (anti mass signup).',
     )
     referral_max_signups_per_device_per_24h = models.PositiveIntegerField(
-        default=8,
+        default=20,
         help_text='Plafond inscriptions avec même empreinte device sur 24 h.',
     )
     referral_max_referrals_per_referrer_per_24h = models.PositiveIntegerField(
@@ -93,7 +93,7 @@ class ContestSettings(models.Model):
         help_text='Plafond nouveaux filleuls attribués au même parrain sur 24 h.',
     )
     referral_referee_trust_threshold = models.FloatField(
-        default=0.35,
+        default=0.25,
         help_text='Trust minimum du filleul (0–1) pour créditer le parrain.',
     )
     referral_min_pins_published = models.PositiveIntegerField(

@@ -88,6 +88,7 @@ from contests.models import (
     LeaderboardSnapshot,
     PinContestScore,
 )
+from referrals.models import ReferralContestSettings
 from contests.services import (
     create_monthly_contest_if_missing,
     estimate_contest_adjusted_score_from_counts,
@@ -482,6 +483,22 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
     contest.leaderboard_refresh_interval = 3
     contest.websocket_broadcast_threshold = 0.15
     contest.save()
+    # Referral contest settings (modèle séparé).
+    ReferralContestSettings.objects.update_or_create(
+        contest=contest,
+        defaults={
+            'defer_rewards': True,
+            'min_account_age_hours': 12,
+            'min_engagement_actions': 1,
+            'reward_delay_hours': 1,
+            'min_days_before_reward': 2,
+            'max_signups_per_ip_per_24h': 40,
+            'max_signups_per_device_per_24h': 20,
+            'max_referrals_per_referrer_per_24h': 40,
+            'referee_trust_threshold': 0.25,
+            'min_pins_published': 0,
+        },
+    )
 
     non_story_public = [p for p in public_pins if not p.is_story]
     eligible = [p for p in non_story_public if contest.start_at <= p.created_at < contest.end_at]

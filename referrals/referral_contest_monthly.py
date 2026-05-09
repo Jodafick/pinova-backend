@@ -14,6 +14,8 @@ from .models import ReferralContestResult, ReferrerReferralScore
 from .referral_contest_cache import invalidate_referral_leaderboard_cache
 from .referral_contest_notifications import notify_referral_contest_month_closed
 
+MIN_REFERRAL_LEADERBOARD_SCORE = 100.0
+
 
 def finalize_referral_month_for_contest(contest: ContestSettings) -> ReferralContestResult | None:
     """
@@ -27,7 +29,7 @@ def finalize_referral_month_for_contest(contest: ContestSettings) -> ReferralCon
         return existing
 
     rows = list(
-        ReferrerReferralScore.objects.filter(contest=contest)
+        ReferrerReferralScore.objects.filter(contest=contest, total_score__gte=MIN_REFERRAL_LEADERBOARD_SCORE)
         .select_related('referrer')
         .order_by('-total_score', 'referrer_id')[:500],
     )

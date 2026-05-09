@@ -11,7 +11,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
 
-from contests.services import get_active_contest_settings
+from contests.services import get_active_contest_settings, get_referral_settings_for_contest
 
 from .antifraud import is_self_referral, should_reject_low_trust, trust_for_new_device
 from .referral_contest_cache import get_cached_json, invalidate_referral_leaderboard_cache, referral_leaderboard_cache_key, set_cached_json
@@ -36,13 +36,27 @@ FRESH_USER_ATTRIBUTION_MAX_AGE_SEC = 900
 
 # Pondération simple (extensible / admin plus tard). Les points forts vont au filleul validé.
 POINTS_BY_EVENT: dict[str, float] = {
-    ReferralEvent.TYPE_SIGNUP_VALIDATED: 40.0,
-    ReferralEvent.TYPE_REFERRAL_FINALIZED: 60.0,
+    # 1 filleul validé = 10 points au total.
+    ReferralEvent.TYPE_SIGNUP_VALIDATED: 4.0,
+    ReferralEvent.TYPE_REFERRAL_FINALIZED: 6.0,
     ReferralEvent.TYPE_FIRST_POST: 25.0,
     ReferralEvent.TYPE_FIRST_LOGIN: 5.0,
     ReferralEvent.TYPE_ENGAGEMENT: 10.0,
     ReferralEvent.TYPE_RETENTION: 15.0,
+    ReferralEvent.TYPE_RETENTION_PROGRESS: 0.0,  # Calculé via paliers (bonus fidélité léger).
 }
+
+# Bonus fidélité progressif, volontairement modeste.
+RETENTION_PROGRESS_MILESTONES: tuple[tuple[int, float], ...] = (
+    (3, 1.0),
+    (7, 1.5),
+    (14, 2.0),
+    (30, 3.0),
+    (60, 4.0),
+)
+
+# Seuil d'affichage dans le leaderboard referral.
+MIN_REFERRAL_LEADERBOARD_SCORE = 100.0
 
 
 def _is_user_recently_created(user: User) -> bool:
@@ -504,7 +518,8 @@ def finalize_referral_attribution(attr: ReferralAttribution, *, trust: float = 1
         metadata={'phase': 'email_verified_no_points'},
     )
 
-    defer = bool(contest and getattr(contest, 'referral_defer_rewards', True))
+    referral_settings = get_referral_settings_for_contest(contest)
+    defer = bool(referral_settings and getattr(referral_settings, 'defer_rewards', getattr(referral_settings, 'referral_defer_rewards', True)))
     if defer:
         record_referral_event(
             event_type=ReferralEvent.TYPE_REWARD_DEFERRED,
@@ -521,7 +536,7 @@ def finalize_referral_attribution(attr: ReferralAttribution, *, trust: float = 1
         notify_referrer_reward_unlocked(
             referrer=attr.referrer,
             contest_key=getattr(contest, 'contest_key', '') if contest else '',
-            message_fr=f'{attr.referee.username} a validé son compte ; les points parrainage seront crédités après vérification anti-fraude.',
+            message_fr=f'{attr.referee.username} progresse bien ; vos points parrainage seront crédités dès validation des règles du concours.',
         )
         try_complete_referral_rewards(attr)
         return
@@ -672,6 +687,7 @@ def on_referee_first_login(user: User) -> None:
     )
     if contest:
         _bump_referrer_score(contest=contest, referrer=attr.referrer, delta=delta)
+    _grant_retention_progress_bonus_if_eligible(attr)
 
 
 def grant_retention_bonus_if_eligible(attr: ReferralAttribution) -> bool:
@@ -709,7 +725,56 @@ def grant_retention_bonus_if_eligible(attr: ReferralAttribution) -> bool:
     )
     if contest:
         _bump_referrer_score(contest=contest, referrer=attr.referrer, delta=delta)
+    _grant_retention_progress_bonus_if_eligible(attr)
     return True
+
+
+def _grant_retention_progress_bonus_if_eligible(attr: ReferralAttribution) -> float:
+    """
+    Petit bonus progressif quand le filleul reste actif.
+    Chaque palier est crédité une seule fois.
+    """
+    if attr.status != ReferralAttribution.STATUS_ACTIVE or not attr.activated_at:
+        return 0.0
+    if not attr.rewards_granted_at:
+        return 0.0
+
+    contest = _contest_period_for_now()
+    if not contest:
+        return 0.0
+
+    active_days = max(0, (timezone.now() - attr.activated_at).days)
+    if active_days <= 0:
+        return 0.0
+
+    total_delta = 0.0
+    for min_days, delta in RETENTION_PROGRESS_MILESTONES:
+        if active_days < min_days:
+            continue
+        already_awarded = ReferralEvent.objects.filter(
+            referee_id=attr.referee_id,
+            referrer_id=attr.referrer_id,
+            event_type=ReferralEvent.TYPE_RETENTION_PROGRESS,
+            is_valid=True,
+            metadata__milestone_days=min_days,
+        ).exists()
+        if already_awarded:
+            continue
+
+        record_referral_event(
+            event_type=ReferralEvent.TYPE_RETENTION_PROGRESS,
+            referee=attr.referee,
+            referrer=attr.referrer,
+            is_valid=True,
+            score_delta=delta,
+            contest=contest,
+            metadata={'milestone_days': min_days, 'active_days': active_days},
+        )
+        total_delta += delta
+
+    if total_delta > 0:
+        _bump_referrer_score(contest=contest, referrer=attr.referrer, delta=total_delta)
+    return total_delta
 
 
 def on_first_pin_created(user: User) -> None:
@@ -732,6 +797,7 @@ def on_first_pin_created(user: User) -> None:
     )
     if contest and delta:
         _bump_referrer_score(contest=contest, referrer=attr.referrer, delta=delta)
+    _grant_retention_progress_bonus_if_eligible(attr)
 
 
 def build_public_resolve_payload(*, code: str) -> dict[str, Any] | None:
@@ -782,7 +848,7 @@ def referral_leaderboard_rows(*, contest_id: int | None = None, limit: int = 50)
     if not contest:
         return []
     rows = (
-        ReferrerReferralScore.objects.filter(contest=contest)
+        ReferrerReferralScore.objects.filter(contest=contest, total_score__gte=MIN_REFERRAL_LEADERBOARD_SCORE)
         .select_related('referrer')
         .order_by('rank', '-total_score')[:limit]
     )
@@ -818,7 +884,7 @@ def build_referral_leaderboard_http_payload(request, *, contest_id: int | None, 
         return cached
 
     ordered_full = list(
-        ReferrerReferralScore.objects.filter(contest=contest)
+        ReferrerReferralScore.objects.filter(contest=contest, total_score__gte=MIN_REFERRAL_LEADERBOARD_SCORE)
         .select_related('referrer')
         .order_by('-total_score', 'referrer_id'),
     )

@@ -59,24 +59,6 @@ class ContestSettingsAdmin(admin.ModelAdmin):
             },
         ),
         (
-            'Anti-fraud / parrainage',
-            {
-                'classes': ('collapse',),
-                'fields': (
-                    'referral_defer_rewards',
-                    'referral_min_account_age_hours',
-                    'referral_min_engagement_actions',
-                    'referral_min_pins_published',
-                    'referral_reward_delay_hours',
-                    'referral_min_days_before_reward',
-                    'referral_max_signups_per_ip_per_24h',
-                    'referral_max_signups_per_device_per_24h',
-                    'referral_max_referrals_per_referrer_per_24h',
-                    'referral_referee_trust_threshold',
-                ),
-            },
-        ),
-        (
             'Notifications',
             {
                 'classes': ('collapse',),

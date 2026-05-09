@@ -14,7 +14,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from contests.models import ContestInteractionEvent
-from contests.services import get_active_contest_settings
+from contests.services import get_active_contest_settings, get_referral_settings_for_contest
 
 from .models import (
     ReferralAttribution,
@@ -88,6 +88,10 @@ def _active_contest_settings():
     return get_active_contest_settings()
 
 
+def _active_referral_settings():
+    return get_referral_settings_for_contest(_active_contest_settings())
+
+
 def referee_is_in_uplink_of_referrer(*, referrer_id: int, referee_id: int, max_depth: int = 24) -> bool:
     """Détecte un cycle : le filleul apparaît dans la chaîne « parrains du parrain » (remontée)."""
     if referrer_id == referee_id:
@@ -112,34 +116,22 @@ def referee_is_in_uplink_of_referrer(*, referrer_id: int, referee_id: int, max_d
 
 
 def signup_velocity_allows(*, request, referee: User) -> tuple[bool, str]:
-    cs = _active_contest_settings()
-    if not cs:
+    rs = _active_referral_settings()
+    if not rs:
         return True, ''
     since = timezone.now() - timezone.timedelta(hours=24)
     ip = _client_ip(request)
     dev = _hash_device(request)
     if ip:
-        max_ip = max(1, int(getattr(cs, 'referral_max_signups_per_ip_per_24h', 20) or 20))
+        max_ip = max(1, int(getattr(rs, 'max_signups_per_ip_per_24h', getattr(rs, 'referral_max_signups_per_ip_per_24h', 40)) or 40))
         n_ip = ReferralSignupContext.objects.filter(signup_ip=ip, created_at__gte=since).exclude(user_id=referee.id).count()
         if n_ip >= max_ip:
             return False, 'ip_velocity'
     if dev:
-        max_dev = max(1, int(getattr(cs, 'referral_max_signups_per_device_per_24h', 8) or 8))
+        max_dev = max(1, int(getattr(rs, 'max_signups_per_device_per_24h', getattr(rs, 'referral_max_signups_per_device_per_24h', 20)) or 20))
         n_dev = ReferralSignupContext.objects.filter(device_hash=dev, created_at__gte=since).exclude(user_id=referee.id).count()
         if n_dev >= max_dev:
             return False, 'device_velocity'
-    return True, ''
-
-
-def referrer_daily_volume_allows(referrer_id: int) -> tuple[bool, str]:
-    cs = _active_contest_settings()
-    if not cs:
-        return True, ''
-    since = timezone.now() - timezone.timedelta(hours=24)
-    max_r = max(1, int(getattr(cs, 'referral_max_referrals_per_referrer_per_24h', 40) or 40))
-    n = ReferralAttribution.objects.filter(referrer_id=referrer_id, created_at__gte=since).count()
-    if n >= max_r:
-        return False, 'referrer_daily_cap'
     return True, ''
 
 
@@ -182,12 +174,8 @@ def precheck_new_referral(
     ok, reason = signup_velocity_allows(request=request, referee=referee)
     if not ok:
         log_audit(action=f'velocity_{reason}', user=referee, metadata={'referrer_id': referrer.id}, request=request)
-        open_suspicion(code=reason, severity=3, notes='Vélocité inscription', user=referee)
+        open_suspicion(code=reason, severity=2, notes='Vélocité inscription', user=referee)
         return False, reason
-    ok2, r2 = referrer_daily_volume_allows(referrer.id)
-    if not ok2:
-        log_audit(action=r2, user=referee, metadata={'referrer_id': referrer.id}, request=request)
-        return False, r2
     return True, ''
 
 
@@ -252,38 +240,39 @@ def evaluate_referral_reward_eligibility(attr: ReferralAttribution) -> tuple[boo
     if not attr.email_verified_at:
         return False, 'email_not_marked'
 
-    cs = _active_contest_settings()
-    if not cs:
+    rs = _active_referral_settings()
+    if not rs:
         return False, 'no_contest'
-    if not getattr(cs, 'referral_defer_rewards', True):
+    if not bool(getattr(rs, 'defer_rewards', getattr(rs, 'referral_defer_rewards', True))):
         return True, 'defer_disabled'
 
     referee = User.objects.get(pk=attr.referee_id)
     trust = compute_and_store_referee_trust(referee)
-    th = float(getattr(cs, 'referral_referee_trust_threshold', 0.35) or 0.35)
+    th = float(getattr(rs, 'referee_trust_threshold', getattr(rs, 'referral_referee_trust_threshold', 0.25)) or 0.25)
     if trust < th:
         return False, f'trust_below:{trust:.2f}<{th:.2f}'
 
-    min_age_h = max(0, int(getattr(cs, 'referral_min_account_age_hours', 24) or 0))
+    min_age_h = max(0, int(getattr(rs, 'min_account_age_hours', getattr(rs, 'referral_min_account_age_hours', 12)) or 0))
     age_h = (timezone.now() - referee.date_joined).total_seconds() / 3600.0
     if age_h < min_age_h:
         return False, 'account_too_young'
 
-    delay_h = max(0, int(getattr(cs, 'referral_reward_delay_hours', 0) or 0))
+    delay_h = max(0, int(getattr(rs, 'reward_delay_hours', getattr(rs, 'referral_reward_delay_hours', 1)) or 0))
     if delay_h and attr.email_verified_at and (timezone.now() - attr.email_verified_at).total_seconds() < delay_h * 3600:
         return False, 'reward_delay'
 
-    min_days = max(0, int(getattr(cs, 'referral_min_days_before_reward', 0) or 0))
+    min_days = max(0, int(getattr(rs, 'min_days_before_reward', getattr(rs, 'referral_min_days_before_reward', 2)) or 0))
     if min_days and attr.activated_at and (timezone.now() - attr.activated_at).days < min_days:
         return False, 'min_days_not_met'
 
-    min_act = max(0, int(getattr(cs, 'referral_min_engagement_actions', 3) or 0))
+    min_act = max(0, int(getattr(rs, 'min_engagement_actions', getattr(rs, 'referral_min_engagement_actions', 1)) or 0))
     if min_act:
-        n = count_referee_valid_contest_actions(referee_id=referee.id, contest_id=cs.id)
+        contest = _active_contest_settings()
+        n = count_referee_valid_contest_actions(referee_id=referee.id, contest_id=getattr(contest, 'id', None))
         if n < min_act:
             return False, f'actions:{n}<{min_act}'
 
-    min_pins = max(0, int(getattr(cs, 'referral_min_pins_published', 0) or 0))
+    min_pins = max(0, int(getattr(rs, 'min_pins_published', getattr(rs, 'referral_min_pins_published', 0)) or 0))
     if min_pins:
         from pins.models import Pin
 
@@ -303,13 +292,14 @@ def signup_fingerprint(request) -> tuple[str, str]:
 
 
 def describe_deferral_for_contest(contest) -> dict[str, Any]:
-    if not contest:
+    rs = get_referral_settings_for_contest(contest)
+    if not rs:
         return {'defer': True}
     return {
-        'defer': bool(getattr(contest, 'referral_defer_rewards', True)),
-        'min_account_age_hours': int(getattr(contest, 'referral_min_account_age_hours', 24) or 0),
-        'min_engagement_actions': int(getattr(contest, 'referral_min_engagement_actions', 3) or 0),
-        'reward_delay_hours': int(getattr(contest, 'referral_reward_delay_hours', 0) or 0),
-        'min_days_before_reward': int(getattr(contest, 'referral_min_days_before_reward', 0) or 0),
-        'trust_threshold': float(getattr(contest, 'referral_referee_trust_threshold', 0.35) or 0.35),
+        'defer': bool(getattr(rs, 'defer_rewards', getattr(rs, 'referral_defer_rewards', True))),
+        'min_account_age_hours': int(getattr(rs, 'min_account_age_hours', getattr(rs, 'referral_min_account_age_hours', 12)) or 0),
+        'min_engagement_actions': int(getattr(rs, 'min_engagement_actions', getattr(rs, 'referral_min_engagement_actions', 1)) or 0),
+        'reward_delay_hours': int(getattr(rs, 'reward_delay_hours', getattr(rs, 'referral_reward_delay_hours', 1)) or 0),
+        'min_days_before_reward': int(getattr(rs, 'min_days_before_reward', getattr(rs, 'referral_min_days_before_reward', 2)) or 0),
+        'trust_threshold': float(getattr(rs, 'referee_trust_threshold', getattr(rs, 'referral_referee_trust_threshold', 0.25)) or 0.25),
     }

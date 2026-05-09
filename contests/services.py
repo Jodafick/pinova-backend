@@ -58,7 +58,19 @@ def get_active_contest_settings(now: datetime | None = None) -> ContestSettings 
     return create_monthly_contest_if_missing(now=now)
 
 
+def get_referral_settings_for_contest(contest: ContestSettings | None):
+    if not contest:
+        return None
+    row = getattr(contest, 'referral_settings', None)
+    if row:
+        return row
+    # Fallback transitionnel : anciennes colonnes sur ContestSettings.
+    return contest
+
+
 def create_monthly_contest_if_missing(now: datetime | None = None) -> ContestSettings:
+    from referrals.models import ReferralContestSettings
+
     now = now or timezone.now()
     start_at, end_at, contest_key = _month_bounds(now, 'UTC')
     existing = ContestSettings.objects.filter(contest_key=contest_key).first()
@@ -67,16 +79,19 @@ def create_monthly_contest_if_missing(now: datetime | None = None) -> ContestSet
             existing.start_at = start_at
             existing.end_at = end_at
             existing.save(update_fields=['start_at', 'end_at', 'updated_at'])
+        ReferralContestSettings.objects.get_or_create(contest=existing)
         return existing
 
     ContestSettings.objects.filter(is_active=True).update(is_active=False)
-    return ContestSettings.objects.create(
+    row = ContestSettings.objects.create(
         contest_key=contest_key,
         is_active=True,
         timezone='UTC',
         start_at=start_at,
         end_at=end_at,
     )
+    ReferralContestSettings.objects.get_or_create(contest=row)
+    return row
 
 
 def _validate_interaction(*, settings: ContestSettings, actor_id: int, interaction_type: str, dwell_seconds: int, comment_text: str) -> InteractionValidation:

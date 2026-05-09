@@ -4,6 +4,7 @@ from .models import (
     ReferralAttribution,
     ReferralAuditLog,
     ReferralContestResult,
+    ReferralContestSettings,
     ReferralEvent,
     ReferralLeaderboardEvent,
     ReferralPendingIntent,
@@ -86,3 +87,15 @@ class ReferralSuspicionFlagAdmin(admin.ModelAdmin):
 class ReferralContestResultAdmin(admin.ModelAdmin):
     list_display = ('contest', 'finalized_at')
     readonly_fields = ('finalized_at',)
+
+
+@admin.register(ReferralContestSettings)
+class ReferralContestSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        'contest',
+        'defer_rewards',
+        'min_days_before_reward',
+        'referee_trust_threshold',
+        'updated_at',
+    )
+    raw_id_fields = ('contest',)
