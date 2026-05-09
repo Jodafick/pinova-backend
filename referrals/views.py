@@ -10,6 +10,7 @@ from .services import (
     build_referral_leaderboard_http_payload,
     normalize_referral_code,
     record_referral_event,
+    referral_signup_reward_bundle_total,
     store_referral_intent,
     _lookup_referrer_by_code,
 )
@@ -97,6 +98,7 @@ class ReferralMyRefereesView(APIView):
             .select_related('referee')
             .order_by('-created_at')[:200]
         )
+        bundle = referral_signup_reward_bundle_total()
         return Response(
             {
                 'results': [
@@ -109,6 +111,10 @@ class ReferralMyRefereesView(APIView):
                         'activated_at': a.activated_at.isoformat() if a.activated_at else None,
                         'email_verified_at': a.email_verified_at.isoformat() if a.email_verified_at else None,
                         'rewards_granted_at': a.rewards_granted_at.isoformat() if a.rewards_granted_at else None,
+                        'reward_points_credited': bundle if a.rewards_granted_at else 0.0,
+                        'reward_points_pending': bundle
+                        if (a.status == ReferralAttribution.STATUS_ACTIVE and not a.rewards_granted_at)
+                        else 0.0,
                     }
                     for a in rows
                 ],

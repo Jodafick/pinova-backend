@@ -46,6 +46,16 @@ POINTS_BY_EVENT: dict[str, float] = {
     ReferralEvent.TYPE_RETENTION_PROGRESS: 0.0,  # Calculé via paliers (bonus fidélité léger).
 }
 
+
+def referral_signup_reward_bundle_total() -> float:
+    """Bloc unique crédité quand `_execute_referral_reward_grant` passe (somme signup + finalized)."""
+
+    return float(
+        POINTS_BY_EVENT.get(ReferralEvent.TYPE_SIGNUP_VALIDATED, 0.0)
+        + POINTS_BY_EVENT.get(ReferralEvent.TYPE_REFERRAL_FINALIZED, 0.0)
+    )
+
+
 # Bonus fidélité progressif, volontairement modeste.
 RETENTION_PROGRESS_MILESTONES: tuple[tuple[int, float], ...] = (
     (3, 1.0),
