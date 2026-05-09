@@ -339,6 +339,7 @@ class SetInitialPasswordSerializer(serializers.Serializer):
 class RegisterSerializer(BaseRegisterSerializer):
     username = serializers.CharField(required=False, allow_blank=True)
     display_name = serializers.CharField(required=False, allow_blank=True)
+    referral_code = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
     def validate(self, data):
         # Si le username n'est pas fourni, on prend le début de l'email
@@ -362,6 +363,9 @@ class RegisterSerializer(BaseRegisterSerializer):
     def save(self, request):
         with transaction.atomic():
             user = super().save(request)
+            from referrals.fraud_engine import record_signup_context
+
+            record_signup_context(user, request)
             display_name = self.cleaned_data.get('display_name')
             if display_name:
                 profile = user.profile
@@ -398,4 +402,14 @@ class RegisterSerializer(BaseRegisterSerializer):
                         'code': [EMAIL_DELIVERY_ERROR_CODE],
                     }
                 ) from None
+
+            from referrals.services import consume_referral_for_new_user
+
+            device = (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip() if request else ''
+            consume_referral_for_new_user(
+                user,
+                explicit_code=self.validated_data.get('referral_code'),
+                request=request,
+                device_binding_header=device or None,
+            )
         return user

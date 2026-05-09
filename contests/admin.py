@@ -45,7 +45,37 @@ class ContestSettingsAdmin(admin.ModelAdmin):
             },
         ),
         ('Ranking Rules', {'classes': ('collapse',), 'fields': ('weight_likes', 'weight_views', 'weight_shares', 'weight_saves', 'weight_comments', 'recency_decay_enabled', 'decay_rate', 'virality_multiplier', 'share_boost_factor', 'max_actions_per_user_weight')}),
-        ('Anti-fraud', {'classes': ('collapse',), 'fields': ('min_view_duration_seconds', 'valid_view_time_threshold', 'max_likes_per_user_per_pin', 'comment_min_length', 'trust_score_threshold')}),
+        (
+            'Anti-fraud (pins)',
+            {
+                'classes': ('collapse',),
+                'fields': (
+                    'min_view_duration_seconds',
+                    'valid_view_time_threshold',
+                    'max_likes_per_user_per_pin',
+                    'comment_min_length',
+                    'trust_score_threshold',
+                ),
+            },
+        ),
+        (
+            'Anti-fraud / parrainage',
+            {
+                'classes': ('collapse',),
+                'fields': (
+                    'referral_defer_rewards',
+                    'referral_min_account_age_hours',
+                    'referral_min_engagement_actions',
+                    'referral_min_pins_published',
+                    'referral_reward_delay_hours',
+                    'referral_min_days_before_reward',
+                    'referral_max_signups_per_ip_per_24h',
+                    'referral_max_signups_per_device_per_24h',
+                    'referral_max_referrals_per_referrer_per_24h',
+                    'referral_referee_trust_threshold',
+                ),
+            },
+        ),
         (
             'Notifications',
             {

@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from contests.models import ContestSettings
 from contests.services import create_monthly_contest_if_missing, finalize_contest
+from referrals.referral_contest_monthly import finalize_referral_month_for_contest
 
 
 class Command(BaseCommand):
@@ -13,6 +14,7 @@ class Command(BaseCommand):
         ended = ContestSettings.objects.filter(end_at__lte=now, is_locked=False)
         for contest in ended:
             finalize_contest(contest)
+            finalize_referral_month_for_contest(contest)
             contest.is_locked = True
             contest.is_active = False
             contest.save(update_fields=['is_locked', 'is_active', 'updated_at'])

@@ -128,4 +128,10 @@ class MySocialAccountAdapter(DefaultSocialAccountAdapter):
         user = super().save_user(request, sociallogin, form=form)
         self._ensure_social_login_email_verified(user, sociallogin)
         self._sync_google_profile_fields(user, sociallogin)
+        from referrals.fraud_engine import record_signup_context
+
+        record_signup_context(user, request)
+        from referrals.services import assign_referrer_from_registration_context
+
+        assign_referrer_from_registration_context(user, request, sociallogin)
         return user

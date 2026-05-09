@@ -108,6 +108,7 @@ INSTALLED_APPS = [
     'accounts',
     'notifications',
     'contests',
+    'referrals',
 ]
 
 SITE_ID = 1
@@ -197,6 +198,8 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
 
 # Frontend URLs for Emails
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5174')
+# Schéma deep link mobile (pinova://invite?ref=…)
+REFERRAL_DEEP_LINK_SCHEME = os.environ.get('REFERRAL_DEEP_LINK_SCHEME', 'pinova').strip() or 'pinova'
 # URL_FRONTEND_VERIFY_EMAIL = os.environ.get('FRONTEND_URL', 'http://localhost:5174') + '/verify-email'
 URL_FRONTEND_PASSWORD_RESET = FRONTEND_URL + '/password-reset-confirm'
 

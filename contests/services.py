@@ -408,6 +408,19 @@ def track_contest_interaction(
             comments_delta=comments_delta,
             views_total=views,
         )
+        try:
+            from referrals.referral_scoring_hooks import on_contest_interaction_for_referral
+
+            on_contest_interaction_for_referral(
+                pin=pin,
+                actor=actor,
+                contest_settings=settings,
+                interaction_valid=validation.is_valid,
+                trust_score=float(validation.trust_score),
+                pin_contest_delta=float(delta),
+            )
+        except Exception:
+            pass
 
 
 def finalize_contest(contest: ContestSettings) -> None:

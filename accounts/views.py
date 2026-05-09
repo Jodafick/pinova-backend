@@ -389,6 +389,10 @@ class VerifyOTPView(APIView):
 
             otp.delete()
 
+            from referrals.services import finalize_referral_on_email_verified
+
+            finalize_referral_on_email_verified(user)
+
             return Response({'message': 'Email validé avec succès'}, status=status.HTTP_200_OK)
 
         except (User.DoesNotExist, EmailOTP.DoesNotExist):
@@ -791,6 +795,9 @@ class UserMeView(APIView):
         ).data
         data.update(build_me_hydration_bundle(request))
         data['has_usable_password'] = request.user.has_usable_password()
+        from referrals.services import build_me_referral_payload
+
+        data['referral'] = build_me_referral_payload(request.user, request)
         return Response(data)
 
     def patch(self, request):
@@ -880,6 +887,23 @@ class UserMeView(APIView):
             ).data
             payload.update(build_me_hydration_bundle(request))
             payload['has_usable_password'] = request.user.has_usable_password()
+            from referrals.services import build_me_referral_payload, try_apply_onboarding_referral
+
+            if 'referral_code' in request.data:
+                device_hdr = (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip() or None
+                payload['referral_onboarding'] = try_apply_onboarding_referral(
+                    user,
+                    referral_code_optional=str(request.data.get('referral_code') or ''),
+                    request=request,
+                    device_binding_header=device_hdr,
+                )
+            from referrals.models import ReferralAttribution
+            from referrals.services import try_complete_referral_rewards
+
+            _rattr = ReferralAttribution.objects.filter(referee=user).first()
+            if _rattr:
+                try_complete_referral_rewards(_rattr)
+            payload['referral'] = build_me_referral_payload(request.user, request)
             return Response(payload)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
