@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 import dj_database_url
+from urllib.parse import quote_plus
 from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 from corsheaders.defaults import default_headers
@@ -158,16 +159,39 @@ CHANNEL_LAYERS = {
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+#
+# PostgreSQL si DATABASE_URL (ou variables POSTGRES_*/PG*) est défini ; sinon SQLite local (dev sans Postgres).
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL'),
-        conn_max_age=600
-    )
-}
 
-# If DATABASE_URL is not set (e.g. for local dev without a Postgres DB)
-if not DATABASES['default']:
+def _postgres_url_from_split_env() -> str | None:
+    """Construit une URL postgres:// à partir des variables classiques Docker / libpq."""
+    host = (os.environ.get('POSTGRES_HOST') or os.environ.get('PGHOST') or '').strip()
+    name = (os.environ.get('POSTGRES_DB') or os.environ.get('PGDATABASE') or '').strip()
+    user = (os.environ.get('POSTGRES_USER') or os.environ.get('PGUSER') or '').strip()
+    if not (host and name and user):
+        return None
+    password = os.environ.get('POSTGRES_PASSWORD') or os.environ.get('PGPASSWORD') or ''
+    port = (os.environ.get('POSTGRES_PORT') or os.environ.get('PGPORT') or '5432').strip() or '5432'
+    if password:
+        auth = f'{quote_plus(user)}:{quote_plus(password)}'
+    else:
+        auth = quote_plus(user)
+    return f'postgresql://{auth}@{host}:{port}/{quote_plus(name)}'
+
+
+def _resolved_database_url() -> str | None:
+    raw = (os.environ.get('DATABASE_URL') or '').strip()
+    if raw:
+        return raw
+    return _postgres_url_from_split_env()
+
+
+_db_url = _resolved_database_url()
+
+if _db_url:
+    DATABASES = {'default': dj_database_url.parse(_db_url, conn_max_age=600)}
+else:
+    # Pas de Postgres dans l’env (ni DATABASE_URL ni POSTGRES_*/PG*) : SQLite local pour le dev.
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
