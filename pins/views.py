@@ -20,6 +20,7 @@ from PIL import Image
 from accounts.models import Profile
 from accounts.blocking import filter_pins_exclude_blocked, blocked_mutual_user_ids
 from accounts.subscription_utils import _enforce_subscription_state
+from accounts.user_invite_lookup import resolve_user_for_invite_identifier
 from pinova_backend.media_cache import append_version_using_media_path, build_versioned_media_url
 from pinova_backend.throttling import client_ip_from_request
 import re
@@ -1988,11 +1989,18 @@ class BoardViewSet(viewsets.ModelViewSet):
 
         if request.method == 'POST':
             username = (request.data.get('username') or '').strip()
-            if not username:
+            target_user, collab_err, collab_candidates = resolve_user_for_invite_identifier(username)
+            if collab_err == 'required':
                 return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                target_user = User.objects.get(username=username)
-            except User.DoesNotExist:
+            if collab_err == 'ambiguous_display_name':
+                return Response(
+                    {
+                        'code': 'ambiguous_display_name',
+                        'candidates': collab_candidates,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if target_user is None:
                 return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
             if target_user == board.user:
                 return Response({'error': 'Board owner cannot be collaborator'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2039,11 +2047,18 @@ class BoardViewSet(viewsets.ModelViewSet):
             return Response({'status': 'invited', 'invite_id': invite.id, 'collaborator_count': board.collaborators.count()})
 
         username = (request.data.get('username') or '').strip()
-        if not username:
+        target_user, collab_err, collab_candidates = resolve_user_for_invite_identifier(username)
+        if collab_err == 'required':
             return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            target_user = User.objects.get(username=username)
-        except User.DoesNotExist:
+        if collab_err == 'ambiguous_display_name':
+            return Response(
+                {
+                    'code': 'ambiguous_display_name',
+                    'candidates': collab_candidates,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if target_user is None:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         if not board.collaborators.filter(id=target_user.id).exists():
             return Response({'error': 'Not a collaborator'}, status=status.HTTP_400_BAD_REQUEST)

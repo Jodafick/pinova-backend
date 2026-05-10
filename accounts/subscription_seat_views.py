@@ -31,6 +31,7 @@ from .subscription_seats import (
     strip_member_seat_entitlement,
 )
 from .models import Profile, SubscriptionSeatInvitation, SubscriptionSeatMember
+from .user_invite_lookup import resolve_user_for_invite_identifier
 
 
 def _invite_create_rate_allow(owner_user: User) -> bool:
@@ -123,8 +124,6 @@ class SubscriptionSeatInviteCreateView(APIView):
 
     def post(self, request):
         username = str(request.data.get('username') or '').strip().lstrip('@')
-        if len(username) < 2:
-            return Response({'error': 'username requis.'}, status=status.HTTP_400_BAD_REQUEST)
 
         owner = request.user
         profile = owner.profile
@@ -138,9 +137,18 @@ class SubscriptionSeatInviteCreateView(APIView):
         if not _invite_create_rate_allow(owner):
             return Response({'error': 'Trop d’invitations récentes. Réessayez plus tard.'}, status=429)
 
-        try:
-            target = User.objects.select_related('profile').get(username__iexact=username)
-        except User.DoesNotExist:
+        target, invite_err, invite_candidates = resolve_user_for_invite_identifier(username)
+        if invite_err == 'required':
+            return Response({'error': 'username requis.'}, status=status.HTTP_400_BAD_REQUEST)
+        if invite_err == 'ambiguous_display_name':
+            return Response(
+                {
+                    'code': 'ambiguous_display_name',
+                    'candidates': invite_candidates,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if target is None:
             return Response({'error': GENERIC_DENY_MSG}, status=status.HTTP_404_NOT_FOUND)
 
         if target.id == owner.id:

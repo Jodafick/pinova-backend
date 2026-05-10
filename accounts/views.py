@@ -439,6 +439,24 @@ class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
     lookup_field = 'user__username'
 
+    def get_queryset(self):
+        qs = Profile.objects.select_related('user')
+        if getattr(self, 'action', None) != 'list':
+            return qs
+        q = (self.request.query_params.get('q') or '').strip()
+        if not q:
+            return Profile.objects.none()
+        qs = qs.filter(discoverable_profile=True).filter(
+            models.Q(user__username__icontains=q) | models.Q(display_name__icontains=q)
+        )
+        viewer = self.request.user
+        if viewer.is_authenticated:
+            qs = qs.exclude(user_id=viewer.id)
+            forb = blocked_mutual_user_ids(viewer)
+            if forb:
+                qs = qs.exclude(user_id__in=forb)
+        return qs.order_by('user__username')
+
     def _share_access_ok(self, request, profile):
         if not profile.share_token:
             return False
@@ -617,10 +635,21 @@ class UserBlockViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
+class QTextSearchFilter(filters.SearchFilter):
+    """Paramètre `q` (mobile) ou `search` (DRF) pour filtrer username + display_name."""
+
+    def get_search_terms(self, request):
+        raw = (request.query_params.get('q') or request.query_params.get('search') or '').strip()
+        if not raw:
+            return []
+        raw = raw.replace('\x00', '').replace(',', ' ')
+        return raw.split()
+
+
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    filter_backends = [filters.SearchFilter]
+    filter_backends = [QTextSearchFilter]
     search_fields = ['username', 'profile__display_name']
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])

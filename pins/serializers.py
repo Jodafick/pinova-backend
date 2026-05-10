@@ -536,8 +536,23 @@ class PinSerializer(serializers.ModelSerializer):
         if method in ('PUT', 'PATCH') and self.instance:
             title_v = attrs.get('title', self.instance.title)
             desc_v = attrs.get('description', self.instance.description)
-            if 'title' in attrs or 'description' in attrs:
-                validate_pin_text(title_v or '', desc_v or '')
+            pub_patch = (
+                self._normalize_string_list(attrs['public_tags_input'])
+                if 'public_tags_input' in attrs
+                else None
+            )
+            priv_patch = (
+                self._normalize_string_list(attrs['private_tags_input'])
+                if 'private_tags_input' in attrs
+                else None
+            )
+            if 'title' in attrs or 'description' in attrs or pub_patch is not None or priv_patch is not None:
+                validate_pin_text(
+                    title_v or '',
+                    desc_v or '',
+                    pub_patch if pub_patch is not None else [],
+                    priv_patch if priv_patch is not None else [],
+                )
             if 'media_sensitive_blur' in attrs:
                 profile = req.user.profile if req and req.user.is_authenticated else None
                 want_blur = attrs.get('media_sensitive_blur')
@@ -727,20 +742,32 @@ class PinSerializer(serializers.ModelSerializer):
         return pin
 
     def update(self, instance, validated_data):
-        board_ids = validated_data.pop('board_ids_input', serializers.empty)
+        board_ids_raw = validated_data.pop('board_ids_input', serializers.empty)
+        public_tags = self._normalize_string_list(validated_data.pop('public_tags_input', []))
+        private_tags = self._normalize_string_list(validated_data.pop('private_tags_input', []))
         if 'topic' in validated_data:
             topic_value = validated_data.pop('topic')
             validated_data['topic'] = self._resolve_topic(topic_value)
         pin = super().update(instance, validated_data)
         request = self.context.get('request')
-        if board_ids is not serializers.empty and request and request.user == pin.author:
-            self._apply_pin_tags_and_boards(
-                pin,
-                request,
-                [],
-                [],
-                self._normalize_int_list(board_ids),
-            )
+        if not request or request.user != pin.author:
+            return pin
+        if private_tags and not request.user.profile.can_use_private_tags:
+            raise serializers.ValidationError({
+                'private_tags_input': 'Private tags require Plus or Pro plan.',
+            })
+        req_data = getattr(request, 'data', {}) or {}
+        tag_touch = 'public_tags_input' in req_data or 'private_tags_input' in req_data
+        board_ids_list = None
+        if board_ids_raw is not serializers.empty:
+            board_ids_list = self._normalize_int_list(board_ids_raw)
+        if tag_touch or board_ids_list is not None:
+            boards_arg = board_ids_list
+            if boards_arg is None:
+                boards_arg = list(
+                    PinBoard.objects.filter(pin=pin).order_by('position').values_list('board_id', flat=True)
+                )
+            self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, boards_arg)
         return pin
 
 
