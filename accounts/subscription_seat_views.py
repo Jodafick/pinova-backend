@@ -209,7 +209,7 @@ class SubscriptionSeatInviteCreateView(APIView):
             notification_type='system',
             title_fr=notif_title,
             message_fr=notif_message,
-            action_url='/settings',
+            action_url='/settings?section=seats',
             metadata={
                 'seat_invite_id': str(inv.id),
                 'kind': 'subscription_seat_invite',

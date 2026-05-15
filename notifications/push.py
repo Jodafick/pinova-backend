@@ -87,6 +87,12 @@ def _notification_payload_dict(notification):
     }
     if slug:
         out['pin_slug'] = str(slug)
+    cid = getattr(notification, 'comment_id', None)
+    if cid is not None:
+        out['comment_id'] = str(int(cid))
+    sender = getattr(notification, 'sender', None)
+    if sender is not None and getattr(sender, 'username', None):
+        out['sender_username'] = str(sender.username)
     return out
 
 

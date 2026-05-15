@@ -27,6 +27,7 @@ Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save 
 CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction ;
 ExpoPushToken (jeton factice mobile, idempotent par user id).
 Stories : finalisation alignée sur `pins/active-stories` (éphémères + `story_expires_at` futur).
+Concours parrainage : `ReferrerReferralScore` + `ReferralLeaderboardEvent` (scores ≥ seuil API).
 
 Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
 """
@@ -89,7 +90,9 @@ from contests.models import (
     LeaderboardSnapshot,
     PinContestScore,
 )
-from referrals.models import ReferralContestSettings
+from referrals.models import ReferralContestSettings, ReferralLeaderboardEvent, ReferrerReferralScore
+from referrals.referral_contest_cache import invalidate_referral_leaderboard_cache
+from referrals.services import MIN_REFERRAL_LEADERBOARD_SCORE
 from contests.services import (
     create_monthly_contest_if_missing,
     estimate_contest_adjusted_score_from_counts,
@@ -631,6 +634,89 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
         f'Contest seed OK — {contest.contest_key}: '
         f'{PinContestScore.objects.filter(contest=contest).count()} pins, '
         f'{CreatorContestScore.objects.filter(contest=contest).count()} créateurs.'
+    )
+
+    seed_referral_contest_leaderboard(contest, regular_users)
+
+
+def seed_referral_contest_leaderboard(contest, regular_users: list[User]) -> None:
+    """
+    Classement parrainage démo : scores ≥ MIN_REFERRAL_LEADERBOARD_SCORE pour apparaître dans l’API live.
+    Émet aussi des événements `referrer_rank_updated` (polling HTTP / backlog WebSocket).
+    """
+    if not regular_users:
+        logger.info('Referral contest seed ignoré (aucun utilisateur seed).')
+        return
+
+    preferred_order = [
+        'david1anato',
+        'clara',
+        'max',
+        'emma',
+        'leo',
+        'sofia',
+        'karim',
+        'lucas',
+        'aya',
+        'zoe',
+        'nina',
+    ]
+    by_username = {u.username: u for u in regular_users}
+    participants: list[User] = []
+    for name in preferred_order:
+        u = by_username.get(name)
+        if u and u not in participants:
+            participants.append(u)
+
+    if not participants:
+        return
+
+    min_sc = float(MIN_REFERRAL_LEADERBOARD_SCORE)
+    # Échelle décroissante, toutes les entrées visibles côté front
+    base_scores = [520, 455, 402, 355, 310, 268, 232, 198, 170, 145, 125, 108]
+    rows: list[tuple[User, float]] = []
+    for i, user in enumerate(participants):
+        if i < len(base_scores):
+            sc = float(base_scores[i])
+        else:
+            sc = max(min_sc, 108.0 - (i - len(base_scores)) * 5.0)
+        rows.append((user, sc))
+
+    rows.sort(key=lambda r: (-r[1], r[0].pk))
+
+    for rank, (user, total) in enumerate(rows, start=1):
+        ReferrerReferralScore.objects.update_or_create(
+            contest=contest,
+            referrer=user,
+            defaults={
+                'total_score': total,
+                'rank': rank,
+                'previous_rank': rank,
+            },
+        )
+
+    for rank, (user, total) in enumerate(rows, start=1):
+        ReferralLeaderboardEvent.objects.create(
+            contest=contest,
+            event_type='referrer_rank_updated',
+            entity_id=user.id,
+            payload={
+                'referrer_id': user.id,
+                'username': user.username,
+                'contest_key': contest.contest_key,
+                'total_score': total,
+                'rank': rank,
+                'previous_rank': rank,
+                'delta': 0.0,
+            },
+        )
+
+    invalidate_referral_leaderboard_cache(contest.id)
+    logger.info(
+        'Referral contest seed OK — %s: %s parrains (seuil score %.0f).',
+        contest.contest_key,
+        len(rows),
+        min_sc,
     )
 
 

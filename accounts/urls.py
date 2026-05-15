@@ -11,6 +11,8 @@ from .views import (
     AccountDeletionRequestView,
     AccountDeletionCancelView,
     GoogleLogin,
+    MobileGoogleSessionExchangeView,
+    MobileGoogleSessionStartView,
     FacebookLogin,
     VerifyOTPView,
     ResendOTPView,
@@ -86,6 +88,8 @@ urlpatterns = [
     path('auth/', include('dj_rest_auth.urls')),
     path('auth/registration/', include('dj_rest_auth.registration.urls')),
     path('auth/social/google/', GoogleLogin.as_view(), name='google_login'),
+    path('auth/mobile/google/session/', MobileGoogleSessionStartView.as_view(), name='mobile_google_session_start'),
+    path('auth/mobile/google/exchange/', MobileGoogleSessionExchangeView.as_view(), name='mobile_google_session_exchange'),
     path('auth/social/facebook/', FacebookLogin.as_view(), name='facebook_login'),
     path('auth/social/', include('allauth.socialaccount.urls')),
 ]

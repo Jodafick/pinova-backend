@@ -338,6 +338,7 @@ class PinSerializer(serializers.ModelSerializer):
     likes_count = serializers.IntegerField(read_only=True)
     comments_count = serializers.IntegerField(read_only=True)
     saves_count = serializers.IntegerField(read_only=True)
+    shares_count = serializers.IntegerField(read_only=True)
     can_comment = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     is_saved = serializers.SerializerMethodField()
@@ -395,6 +396,7 @@ class PinSerializer(serializers.ModelSerializer):
             'can_comment',
             'needs_review',
             'saves_count',
+            'shares_count',
             'is_liked',
             'is_saved',
             'viewer_has_reported',
@@ -772,17 +774,37 @@ class PinSerializer(serializers.ModelSerializer):
 
 
 class StandaloneStoryCreateSerializer(serializers.Serializer):
-    """POST minimal story Plus/Pro sans pin persistant en grille après 24h (image uniquement)."""
+    """POST minimal story Plus/Pro sans pin persistant en grille après 24h."""
 
     image = serializers.ImageField(required=False, allow_null=True)
+    story_video = serializers.FileField(required=False, allow_null=True)
     description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     media_sensitive_blur = serializers.BooleanField(required=False, default=False)
 
+    def validate_story_video(self, value):
+        if not value:
+            return value
+        ct = (getattr(value, 'content_type', '') or '').split(';')[0].strip().lower()
+        name = (getattr(value, 'name', '') or '').strip().lower()
+        allowed = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
+        allowed_ext = ('.mp4', '.webm', '.mov')
+        if ct not in allowed and not name.endswith(allowed_ext):
+            raise serializers.ValidationError('Format vidéo non supporté (MP4, WebM ou MOV).')
+        max_bytes = 48 * 1024 * 1024
+        if getattr(value, 'size', 0) > max_bytes:
+            raise serializers.ValidationError('Vidéo trop lourde (max 48 Mo).')
+        return value
+
     def validate(self, attrs):
         image = attrs.get('image')
-        if not image:
+        story_video = attrs.get('story_video')
+        if image and story_video:
             raise serializers.ValidationError({
-                'non_field_errors': ['Ajoutez une image pour la story éphémère.'],
+                'non_field_errors': ['Choisissez une image ou une vidéo, pas les deux.'],
+            })
+        if not image and not story_video:
+            raise serializers.ValidationError({
+                'non_field_errors': ['Ajoutez une image ou une vidéo pour la story éphémère.'],
             })
 
         request = self.context.get('request')
@@ -790,7 +812,7 @@ class StandaloneStoryCreateSerializer(serializers.Serializer):
         if not profile or not getattr(profile, 'birth_date', None):
             raise serializers.ValidationError({
                 'non_field_errors': [
-                    'La date de naissance est obligatoire pour publier une image.',
+                    'La date de naissance est obligatoire pour publier une image ou une vidéo.',
                 ],
             })
 

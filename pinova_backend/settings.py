@@ -379,6 +379,7 @@ REST_FRAMEWORK = {
 
 REST_AUTH = {
     'USE_JWT': True,
+    'LOGIN_SERIALIZER': 'accounts.serializers.PinovaLoginSerializer',
     'SESSION_LOGIN': False,
     # False : le refresh est inclus dans le JSON (login + social), comme attendu par le web / mobile
     # qui stockent `pinova_refresh_token` en localStorage. True = refresh uniquement cookie HttpOnly.
@@ -391,9 +392,9 @@ REST_AUTH = {
     'REGISTER_SERIALIZER': 'accounts.serializers.RegisterSerializer',
 }
 
-# Accès court (rafraîchissement via refresh) + refresh long ≈ « session » d’un an.
-_jwt_access_minutes = int(os.environ.get('JWT_ACCESS_MINUTES', '60'))
-_jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS', '365'))
+# Accès d'un jour + refresh quasi infini (100 ans).
+_jwt_access_minutes = int(os.environ.get('JWT_ACCESS_MINUTES', '1440'))
+_jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS', '36500'))
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=_jwt_access_minutes),

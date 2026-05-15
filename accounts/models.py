@@ -143,6 +143,22 @@ class EmailOTP(models.Model):
     def __str__(self):
         return f"OTP for {self.user.email}: {self.otp_code}"
 
+
+class MobileOAuthLoginCode(models.Model):
+    """Code court à usage unique pour transférer une session OAuth web vers l'app mobile."""
+
+    code_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    device_binding_id = models.CharField(max_length=128, db_index=True)
+    mobile_state_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    def is_usable(self):
+        return self.consumed_at is None and timezone.now() <= self.expires_at
+
+
 class SubscriptionPricing(models.Model):
     BILLING_MONTHLY = 'monthly'
     BILLING_YEARLY = 'yearly'

@@ -407,3 +407,53 @@ class RegisterSerializer(BaseRegisterSerializer):
                 device_binding_header=device or None,
             )
         return user
+
+
+class PinovaLoginSerializer(serializers.Serializer):
+    """
+    Connexion JWT : distingue « e-mail inconnu » vs « mot de passe incorrect » pour l'UX.
+    (Énumération d'e-mails : assumée côté produit.)
+    """
+
+    username = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    password = serializers.CharField(style={'input_type': 'password'}, write_only=True)
+
+    CODE_UNKNOWN_EMAIL = 'pinova_login_unknown_email'
+    CODE_WRONG_PASSWORD = 'pinova_login_wrong_password'
+    CODE_INACTIVE = 'pinova_login_inactive'
+    CODE_EMAIL_UNVERIFIED = 'pinova_login_email_unverified'
+
+    def validate(self, attrs):
+        from dj_rest_auth.serializers import LoginSerializer as _dj_login_serializer
+
+        username = (attrs.get('username') or '').strip()
+        email_raw = (attrs.get('email') or '').strip()
+        if not email_raw and username:
+            email_raw = username
+        email_norm = email_raw.lower()
+        password = attrs.get('password') or ''
+
+        if not email_norm or not password:
+            raise serializers.ValidationError(_('Must include "email" and "password".'))
+
+        user = User.objects.filter(email__iexact=email_norm).first()
+        if not user:
+            user = User.objects.filter(username__iexact=email_norm).first()
+        if not user:
+            raise serializers.ValidationError({'email': [self.CODE_UNKNOWN_EMAIL]})
+
+        if not user.check_password(password):
+            raise serializers.ValidationError({'password': [self.CODE_WRONG_PASSWORD]})
+
+        if not user.is_active:
+            raise serializers.ValidationError({'non_field_errors': [self.CODE_INACTIVE]})
+
+        if 'dj_rest_auth.registration' in settings.INSTALLED_APPS:
+            try:
+                _dj_login_serializer.validate_email_verification_status(user, email=email_raw)
+            except serializers.ValidationError:
+                raise serializers.ValidationError({'email': [self.CODE_EMAIL_UNVERIFIED]}) from None
+
+        attrs['user'] = user
+        return attrs

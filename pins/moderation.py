@@ -52,6 +52,17 @@ MSG_FLOOD = getattr(
     'Vous avez envoyé trop de fois le même contenu très rapidement. Patientez un instant.',
 )
 
+CODE_RATE_LIMITED = 'moderation.rate_limited'
+CODE_FLOOD = 'moderation.duplicate_content'
+CODE_TEXT_INAPPROPRIATE = 'moderation.text_inappropriate'
+FIELD_MODERATION_CODES = {
+    'title': 'moderation.pin.title_inappropriate',
+    'description': 'moderation.pin.description_inappropriate',
+    'public_tags_input': 'moderation.pin.public_tags_inappropriate',
+    'private_tags_input': 'moderation.pin.private_tags_inappropriate',
+    'text': 'moderation.comment.text_inappropriate',
+}
+
 RATE_PIN_PER_HOUR = getattr(settings, 'MODERATION_RATE_PIN_PER_HOUR', 15)
 RATE_STORY_WINDOW_SEC = getattr(settings, 'MODERATION_RATE_STORY_WINDOW_SEC', 300)
 RATE_STORY_MAX = getattr(settings, 'MODERATION_RATE_STORY_MAX', 5)
@@ -70,7 +81,10 @@ def _consume_fixed_window(user_id: int, bucket: str, limit: int, window_seconds:
     key = f'pinova_rl:{bucket}:{user_id}:{slot}'
     n = cache.get(key, 0)
     if n >= limit:
-        raise serializers.ValidationError(MSG_RATE)
+        raise serializers.ValidationError({
+            'non_field_errors': [MSG_RATE],
+            'code': [CODE_RATE_LIMITED],
+        })
     cache.set(key, n + 1, timeout=window_seconds + 5)
 
 
@@ -83,7 +97,10 @@ def _consume_fixed_window_ip(ident: str, bucket: str, limit: int, window_seconds
     key = f'pinova_rl:{bucket}:{safe}:{slot}'
     n = cache.get(key, 0)
     if n >= limit:
-        raise serializers.ValidationError(MSG_RATE)
+        raise serializers.ValidationError({
+            'non_field_errors': [MSG_RATE],
+            'code': [CODE_RATE_LIMITED],
+        })
     cache.set(key, n + 1, timeout=window_seconds + 5)
 
 
@@ -120,7 +137,10 @@ def enforce_identical_content_flood(user_id: int, kind: str, fingerprint: str) -
     key = f'pinova_flood:{kind}:{user_id}:{fingerprint}:{slot}'
     n = cache.get(key, 0)
     if n >= FLOOD_MAX_IDENTICAL:
-        raise serializers.ValidationError(MSG_FLOOD)
+        raise serializers.ValidationError({
+            'non_field_errors': [MSG_FLOOD],
+            'code': [CODE_FLOOD],
+        })
     cache.set(key, n + 1, timeout=FLOOD_WINDOW_SEC + 5)
 
 
@@ -149,7 +169,15 @@ def validate_pin_text(
     if _profanity_in(priv_joined):
         errors['private_tags_input'] = [MSG_PROFANITY_TAGS_PRIVATE]
     if errors:
-        raise serializers.ValidationError(errors)
+        raise serializers.ValidationError({
+            **errors,
+            'code': [CODE_TEXT_INAPPROPRIATE],
+            'error_codes': {
+                field: [FIELD_MODERATION_CODES[field]]
+                for field in errors
+                if field in FIELD_MODERATION_CODES
+            },
+        })
 
 
 def sanitize_comment_plain_text(text: str) -> str:
@@ -165,7 +193,11 @@ def validate_comment_text(text: str) -> None:
     if not profanity:
         return
     if _profanity_in(text or ''):
-        raise serializers.ValidationError({'text': [MSG_PROFANITY_COMMENT]})
+        raise serializers.ValidationError({
+            'text': [MSG_PROFANITY_COMMENT],
+            'code': [CODE_TEXT_INAPPROPRIATE],
+            'error_codes': {'text': [FIELD_MODERATION_CODES['text']]},
+        })
 
 def validate_clean_text_fields(
     fields: dict[str, str],

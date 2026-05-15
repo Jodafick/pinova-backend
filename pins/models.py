@@ -113,9 +113,21 @@ class Pin(models.Model):
     moderation_hidden = models.BooleanField(default=False)
     # Image/vidéo : affichage flouté par défaut pour les spectateurs adultes (NSFWJS côté client).
     media_sensitive_blur = models.BooleanField(default=False)
+    # Partages enregistrés (POST record-share) — dénormalisé pour l’API mobile / détail.
+    shares_count = models.PositiveIntegerField(default=0)
+    upload_idempotency_key = models.CharField(max_length=128, blank=True, default='', db_index=True)
 
     def __str__(self):
         return self.title
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['author', 'upload_idempotency_key'],
+                condition=~models.Q(upload_idempotency_key=''),
+                name='unique_pin_upload_idempotency_per_author',
+            ),
+        ]
 
     def refresh_story_expiry(self):
         from datetime import timedelta
@@ -454,12 +466,14 @@ class UserInteraction(models.Model):
     TYPE_LIKE = 'like'
     TYPE_CLICK = 'click'
     TYPE_SAVE = 'save'
+    TYPE_SHARE = 'share'
     TYPE_CREATOR_VISIT = 'creator_visit'
     EVENT_TYPE_CHOICES = [
         (TYPE_VIEW, 'View'),
         (TYPE_LIKE, 'Like'),
         (TYPE_CLICK, 'Click'),
         (TYPE_SAVE, 'Save'),
+        (TYPE_SHARE, 'Share'),
         (TYPE_CREATOR_VISIT, 'Creator Visit'),
     ]
 

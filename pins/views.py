@@ -4,17 +4,20 @@ from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery, Exists
+from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery, Exists, F
 from django.contrib.auth.models import User
 from django.utils import timezone
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from datetime import timedelta
 from asgiref.sync import async_to_sync
 from googletrans import Translator
 from pathlib import Path
+from io import StringIO
+import csv
 from urllib.parse import urlencode
 from django.conf import settings
+from django.http import HttpResponse
 from django.core.files.storage import default_storage
 from PIL import Image
 from accounts.models import Profile
@@ -80,13 +83,17 @@ from .pagination import PinFeedPagination, BoardListPagination
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
 from contests.services import track_contest_interaction
+from contests.models import ContestInteractionEvent
 from .creator_analytics import creator_totals_for_user, paginated_creator_top_pins
 from .creator_audience import VALID_ACTIONS, creator_engagement_breakdown
 from .weekly_stats import (
     weekly_creator_pins_page,
     pin_thumbnail_absolute_url,
     creator_period_engagement_totals,
+    creator_period_engagement_between,
+    count_pin_view_events_between,
 )
+from .creator_hub import paginated_recent_pins, paginated_comment_inbox
 from .report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
 
 # Borne mémoire pour mélange following / discover (home_feed) et tri par score sujet.
@@ -269,6 +276,25 @@ class PinViewSet(viewsets.ModelViewSet):
             q |= Q(author=user) & (Q(is_story=False) | Q(story_ephemeral=False))
         return q
 
+    def _upload_idempotency_key(self, request):
+        value = str(
+            request.headers.get('Idempotency-Key')
+            or request.META.get('HTTP_IDEMPOTENCY_KEY')
+            or ''
+        ).strip()
+        if not value or len(value) > 128:
+            return ''
+        return value
+
+    def _idempotent_upload_response(self, request):
+        key = self._upload_idempotency_key(request)
+        if not key or not request.user.is_authenticated:
+            return None
+        pin = Pin.objects.filter(author=request.user, upload_idempotency_key=key).first()
+        if not pin:
+            return None
+        return Response(PinSerializer(pin, context={'request': request}).data, status=status.HTTP_200_OK)
+
     def get_queryset(self):
         ephemeral_hide_feed_actions = frozenset({
             'list',
@@ -363,8 +389,17 @@ class PinViewSet(viewsets.ModelViewSet):
             queryset = queryset.annotate(_saved_at=Subquery(saved_at_sub)).order_by('-_saved_at')
         return exclude_ephemeral_story_only(queryset)
 
+    def create(self, request, *args, **kwargs):
+        existing = self._idempotent_upload_response(request)
+        if existing is not None:
+            return existing
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
-        pin = serializer.save(author=self.request.user)
+        pin = serializer.save(
+            author=self.request.user,
+            upload_idempotency_key=self._upload_idempotency_key(self.request),
+        )
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
         update_pin_ai_metadata(pin)
@@ -532,6 +567,29 @@ class PinViewSet(viewsets.ModelViewSet):
         update_user_embedding(request.user)
         return Response({'status': 'recorded'})
 
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='record-share')
+    def record_share(self, request, slug=None):
+        pin = self.get_object()
+        meta_source = str(request.data.get('source') or 'mobile')[:64]
+        with transaction.atomic():
+            Pin.objects.filter(pk=pin.pk).update(shares_count=F('shares_count') + 1)
+        pin.refresh_from_db(fields=['shares_count'])
+        UserInteraction.objects.create(
+            user=request.user,
+            pin=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_SHARE,
+            metadata={'source': meta_source},
+        )
+        track_contest_interaction(
+            pin=pin,
+            actor=request.user,
+            interaction_type=ContestInteractionEvent.TYPE_SHARE,
+            metadata={'source': meta_source},
+        )
+        update_user_embedding(request.user)
+        return Response({'shares_count': pin.shares_count})
+
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='search-interactions')
     def search_interactions(self, request):
         query = (request.data.get('query') or '').strip()
@@ -630,9 +688,12 @@ class PinViewSet(viewsets.ModelViewSet):
     )
     def standalone_story(self, request):
         """
-        Story Plus/Pro hors flux « pin » classique : image + légende (pas de vidéo).
+        Story Plus/Pro hors flux « pin » classique : image ou vidéo + légende.
         `story_ephemeral` : purge DB + fichiers après `story_expires_at` (voir management command).
         """
+        existing = self._idempotent_upload_response(request)
+        if existing is not None:
+            return existing
         _enforce_subscription_state(request.user.profile)
         request.user.profile.refresh_from_db()
         prof = request.user.profile
@@ -667,9 +728,12 @@ class PinViewSet(viewsets.ModelViewSet):
             story_ephemeral=True,
             topic=None,
             media_sensitive_blur=validated.get('media_sensitive_blur', False),
+            upload_idempotency_key=self._upload_idempotency_key(request),
         )
         if validated.get('image'):
             pin.image = validated['image']
+        if validated.get('story_video'):
+            pin.story_video = validated['story_video']
         pin.save()
         pin.refresh_story_expiry()
         pin.save(update_fields=['story_expires_at'])
@@ -1673,7 +1737,7 @@ class PinViewSet(viewsets.ModelViewSet):
 
         skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
         since = timezone.now() - timedelta(days=days)
-        wcache_key = f'pinova:creator_weekly:v1:{request.user.id}:{days}:{wsize}:{wpage}'
+        wcache_key = f'pinova:creator_weekly:v2:{request.user.id}:{days}:{wsize}:{wpage}'
         if wpage == 1 and not skip_cache:
             hit = cache.get(wcache_key)
             if hit is not None:
@@ -1697,12 +1761,22 @@ class PinViewSet(viewsets.ModelViewSet):
                 'comments_week': row.get('comments_week', 0),
                 'thumbnail_url': thumb,
             })
+        prev_start = since - timedelta(days=days)
         body = {
             'period_days': days,
             'since': since.isoformat(),
             'total_view_events_period': total_view_events,
             'pins_with_views_period': total_pins_period,
             'period_engagement': period_engagement,
+            'period_comparison': {
+                'previous_period_days': days,
+                'previous_period_engagement': creator_period_engagement_between(
+                    request.user, prev_start, since
+                ),
+                'previous_total_view_events_period': count_pin_view_events_between(
+                    request.user, prev_start, since
+                ),
+            },
             'top_pins': rows,
             'pagination': {
                 'page': w_p,
@@ -1752,6 +1826,93 @@ class PinViewSet(viewsets.ModelViewSet):
         if not skip_cache:
             cache.set(e_key, body, 45)
         return Response(body)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-recent-pins')
+    def creator_recent_pins(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Recent pins list requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            page = int(request.query_params.get('page') or 1)
+        except ValueError:
+            page = 1
+        try:
+            page_size = int(request.query_params.get('page_size') or 12)
+        except ValueError:
+            page_size = 12
+        rows, total, p, ps, pages = paginated_recent_pins(request, request.user, page, page_size)
+        return Response(
+            {
+                'pins': rows,
+                'pagination': {
+                    'page': p,
+                    'page_size': ps,
+                    'total_items': total,
+                    'total_pages': pages,
+                    'has_next': p < pages,
+                    'has_previous': p > 1,
+                },
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-comment-inbox')
+    def creator_comment_inbox(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Comment inbox requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            limit = int(request.query_params.get('limit') or 20)
+        except ValueError:
+            limit = 20
+        try:
+            offset = int(request.query_params.get('offset') or 0)
+        except ValueError:
+            offset = 0
+        rows, total, off, lim = paginated_comment_inbox(request.user, limit, offset)
+        return Response(
+            {
+                'comments': rows,
+                'total': total,
+                'offset': off,
+                'limit': lim,
+                'has_more': off + len(rows) < total,
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-stats-export')
+    def creator_stats_export(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Export requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user = request.user
+        totals = creator_totals_for_user(user)
+        top_pins_payload, _top_total, _tp, _tps, _tpages = paginated_creator_top_pins(
+            user, page=1, page_size=200, pool=800
+        )
+        buf = StringIO()
+        w = csv.writer(buf)
+        w.writerow(['Pinova creator export'])
+        w.writerow([])
+        w.writerow(['Totals'])
+        for key in sorted(totals.keys()):
+            w.writerow([key, totals[key]])
+        w.writerow([])
+        w.writerow(['slug', 'views', 'likes', 'saves'])
+        for row in top_pins_payload:
+            w.writerow([row['slug'], row['views'], row['likes'], row['saves']])
+        payload = '\ufeff' + buf.getvalue()
+        resp = HttpResponse(payload, content_type='text/csv; charset=utf-8')
+        resp['Content-Disposition'] = 'attachment; filename="pinova-creator-stats.csv"'
+        return resp
 
     @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
     def provenance(self, request, slug=None):

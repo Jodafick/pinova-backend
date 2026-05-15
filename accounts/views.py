@@ -6,12 +6,16 @@ from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
 from django.conf import settings
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import time
 import requests
 from django.db import transaction, IntegrityError
 import logging
+from urllib.parse import urlparse
 
 class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
@@ -31,7 +35,15 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 import uuid
-from .models import Profile, EmailOTP, SubscriptionPayment, SubscriptionPricing, SupportTicket, UserBlock
+from .models import (
+    MobileOAuthLoginCode,
+    Profile,
+    EmailOTP,
+    SubscriptionPayment,
+    SubscriptionPricing,
+    SupportTicket,
+    UserBlock,
+)
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
@@ -63,6 +75,137 @@ from .currency_utils import (
 from notifications.notification_i18n import create_localized_notification
 
 logger = logging.getLogger(__name__)
+
+MOBILE_GOOGLE_LOGIN_CODE_TTL_SECONDS = int(os.environ.get('MOBILE_GOOGLE_LOGIN_CODE_TTL_SECONDS', '120'))
+MOBILE_GOOGLE_DEVICE_BINDING_MAX_LENGTH = 128
+MOBILE_GOOGLE_STATE_MAX_LENGTH = 256
+
+
+def _mobile_oauth_code_hash(raw_code: str) -> str:
+    return hashlib.sha256(raw_code.encode('utf-8')).hexdigest()
+
+
+def _mobile_device_binding(raw_value) -> str:
+    value = str(raw_value or '').strip()
+    if not value or len(value) > MOBILE_GOOGLE_DEVICE_BINDING_MAX_LENGTH:
+        return ''
+    return value
+
+
+def _mobile_state(raw_value) -> str:
+    value = str(raw_value or '').strip()
+    if not value or len(value) > MOBILE_GOOGLE_STATE_MAX_LENGTH:
+        return ''
+    return value
+
+
+def _is_allowed_mobile_google_redirect_uri(raw_uri: str) -> bool:
+    try:
+        parsed = urlparse(raw_uri)
+        expected = urlparse(getattr(settings, 'FRONTEND_URL', 'http://localhost:5174').rstrip('/'))
+    except Exception:
+        return False
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    return (
+        parsed.scheme == expected.scheme
+        and parsed.netloc == expected.netloc
+        and parsed.path.rstrip('/') == '/auth/mobile/google'
+    )
+
+
+class MobileGoogleSessionStartView(GoogleLogin):
+    """
+    Échange le code OAuth Google côté backend, puis crée un code Pinova court.
+
+    Le navigateur web ne renvoie jamais le token Google au deep link mobile :
+    l'application reçoit seulement ce code à usage unique et l'échange contre
+    les JWT Pinova via MobileGoogleSessionExchangeView.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        code = str(request.data.get('code') or '').strip()
+        redirect_uri = str(request.data.get('redirect_uri') or '').strip()
+        device_binding_id = _mobile_device_binding(request.data.get('device_binding_id'))
+        mobile_state = _mobile_state(request.data.get('mobile_state'))
+        if not code:
+            return Response({'detail': 'code is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not redirect_uri or not _is_allowed_mobile_google_redirect_uri(redirect_uri):
+            return Response({'detail': 'invalid redirect_uri'}, status=status.HTTP_400_BAD_REQUEST)
+        if not device_binding_id:
+            return Response({'detail': 'device_binding_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not mobile_state:
+            return Response({'detail': 'mobile_state is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        self.request = request
+        self.callback_url = redirect_uri
+        self.serializer = self.get_serializer(data={'code': code})
+        self.serializer.is_valid(raise_exception=True)
+        self.login()
+        auth_response = self.get_response()
+        auth_payload = dict(auth_response.data)
+        if not auth_payload.get('access'):
+            return Response({'detail': 'google login refused'}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_mobile_code = secrets.token_urlsafe(32)
+        now = timezone.now()
+        MobileOAuthLoginCode.objects.filter(expires_at__lt=now).delete()
+        MobileOAuthLoginCode.objects.create(
+            code_hash=_mobile_oauth_code_hash(raw_mobile_code),
+            device_binding_id=device_binding_id,
+            mobile_state_hash=_mobile_oauth_code_hash(mobile_state),
+            payload=auth_payload,
+            expires_at=now + timedelta(seconds=MOBILE_GOOGLE_LOGIN_CODE_TTL_SECONDS),
+        )
+        return Response(
+            {'code': raw_mobile_code, 'expires_in': MOBILE_GOOGLE_LOGIN_CODE_TTL_SECONDS},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class MobileGoogleSessionExchangeView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        raw_code = str(request.data.get('code') or '').strip()
+        mobile_state = _mobile_state(request.data.get('mobile_state'))
+        device_binding_id = _mobile_device_binding(request.META.get('HTTP_X_PINOVA_DEVICE_BINDING'))
+        if not raw_code:
+            return Response({'detail': 'code is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not mobile_state:
+            return Response({'detail': 'mobile_state is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not device_binding_id:
+            return Response({'detail': 'device binding is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        code_hash = _mobile_oauth_code_hash(raw_code)
+        with transaction.atomic():
+            row = (
+                MobileOAuthLoginCode.objects
+                .select_for_update()
+                .filter(code_hash=code_hash)
+                .first()
+            )
+            if not row or not row.is_usable():
+                return Response({'detail': 'invalid or expired code'}, status=status.HTTP_400_BAD_REQUEST)
+            if (
+                not row.device_binding_id
+                or not hmac.compare_digest(row.device_binding_id, device_binding_id)
+            ):
+                return Response({'detail': 'invalid device binding'}, status=status.HTTP_400_BAD_REQUEST)
+            expected_state_hash = row.mobile_state_hash or ''
+            if not expected_state_hash or not hmac.compare_digest(
+                expected_state_hash,
+                _mobile_oauth_code_hash(mobile_state),
+            ):
+                return Response({'detail': 'invalid mobile state'}, status=status.HTTP_400_BAD_REQUEST)
+            payload = dict(row.payload or {})
+            row.consumed_at = timezone.now()
+            row.payload = {}
+            row.save(update_fields=['consumed_at', 'payload'])
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 def _fedapay_normalize_transaction_body(body):
@@ -510,6 +653,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
                     sender=request.user,
                     notification_type='follow',
                     message_fr=f"{request.user.username} a commencé à vous suivre.",
+                    action_url=f'/profile/{request.user.username}',
                 )
             return Response({'status': 'followed'})
 

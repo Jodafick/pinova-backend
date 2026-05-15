@@ -31,6 +31,47 @@ def creator_period_engagement_totals(user, since):
     }
 
 
+def creator_period_engagement_between(user, start, end_exclusive):
+    """Même métrique que `creator_period_engagement_totals`, sur [start, end_exclusive)."""
+    likes = Like.objects.filter(
+        pin__author=user,
+        created_at__gte=start,
+        created_at__lt=end_exclusive,
+    ).count()
+    saves = Save.objects.filter(
+        pin__author=user,
+        created_at__gte=start,
+        created_at__lt=end_exclusive,
+    ).count()
+    comments = Comment.objects.filter(
+        pin__author=user,
+        created_at__gte=start,
+        created_at__lt=end_exclusive,
+    ).count()
+    distinct_viewers = (
+        PinViewEvent.objects.filter(
+            pin__author=user,
+            created_at__gte=start,
+            created_at__lt=end_exclusive,
+        ).aggregate(n=Count('user_id', distinct=True))['n']
+        or 0
+    )
+    return {
+        'likes_period': likes,
+        'saves_period': saves,
+        'comments_period': comments,
+        'distinct_viewers_period': int(distinct_viewers),
+    }
+
+
+def count_pin_view_events_between(user, start, end_exclusive):
+    return PinViewEvent.objects.filter(
+        pin__author=user,
+        created_at__gte=start,
+        created_at__lt=end_exclusive,
+    ).count()
+
+
 def _pin_counts_in_period(model, pin_ids, user, since):
     if not pin_ids:
         return {}
