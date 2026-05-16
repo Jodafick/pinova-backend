@@ -61,4 +61,7 @@ resend
 # Ads / async / cache Redis (optionnel si REDIS_URL défini)
 celery>=5.3
 redis>=5.0
-django-redis>=5.4
+django-redis>=5.
+
+# Environment variables
+dotenv-cli
