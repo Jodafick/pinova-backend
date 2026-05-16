@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import warnings
 import dj_database_url
 from urllib.parse import quote_plus
 from pathlib import Path
@@ -21,6 +22,14 @@ from datetime import timedelta
 
 # Load environment variables from .env file
 load_dotenv()
+
+# dj-rest-auth + allauth : comparaison sur AUTHENTICATION_METHOD dépréciée (bruit en tests / runserver).
+warnings.filterwarnings(
+    'ignore',
+    message=r'.*AUTHENTICATION_METHOD is deprecated.*',
+    category=UserWarning,
+    module='dj_rest_auth.forms',
+)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -235,12 +244,20 @@ FEDAPAY_SECRET_KEY = os.environ.get('FEDAPAY_SECRET_KEY', '')
 FEDAPAY_CURRENCY_ISO = os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
 FEDAPAY_CALLBACK_URL = os.environ.get('FEDAPAY_CALLBACK_URL', FRONTEND_URL + '/premium')
 
-# E-mail : Resend (API) si RESEND_API_KEY est défini, sinon SMTP classique (sauf EMAIL_BACKEND explicite).
+# E-mail : Resend (API) si RESEND_API_KEY est défini, sinon SMTP (sauf EMAIL_BACKEND explicite).
+# En DEBUG sans Resend ni identifiants SMTP : console — évite les 500 sur auth/password/reset/ en local.
 RESEND_API_KEY = (os.environ.get('RESEND_API_KEY') or '').strip()
-if os.environ.get('EMAIL_BACKEND'):
-    EMAIL_BACKEND = os.environ['EMAIL_BACKEND']
+_explicit_email_backend = (os.environ.get('EMAIL_BACKEND') or '').strip()
+_smtp_configured = bool(
+    (os.environ.get('EMAIL_HOST_USER') or '').strip()
+    and (os.environ.get('EMAIL_HOST_PASSWORD') or '').strip()
+)
+if _explicit_email_backend:
+    EMAIL_BACKEND = _explicit_email_backend
 elif RESEND_API_KEY:
     EMAIL_BACKEND = 'pinova_backend.email_backends.resend.ResendBackend'
+elif DEBUG and not _smtp_configured:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
@@ -249,7 +266,9 @@ EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER
+DEFAULT_FROM_EMAIL = (os.environ.get('DEFAULT_FROM_EMAIL') or '').strip() or EMAIL_HOST_USER
+if EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend' and not DEFAULT_FROM_EMAIL:
+    DEFAULT_FROM_EMAIL = 'pinova-dev@localhost'
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -287,6 +306,11 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+# Dossier attendu par WhiteNoise en dev/tests (souvent absent car listé dans .gitignore).
+try:
+    Path(STATIC_ROOT).mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 # Évite W004 si le dossier n’existe pas (ex. déploiement Render sans dossier ``static`` versionné).
 _static_app_dir = BASE_DIR / 'static'
@@ -380,6 +404,7 @@ REST_FRAMEWORK = {
 REST_AUTH = {
     'USE_JWT': True,
     'LOGIN_SERIALIZER': 'accounts.serializers.PinovaLoginSerializer',
+    'PASSWORD_RESET_SERIALIZER': 'accounts.serializers.PinovaPasswordResetSerializer',
     'SESSION_LOGIN': False,
     # False : le refresh est inclus dans le JSON (login + social), comme attendu par le web / mobile
     # qui stockent `pinova_refresh_token` en localStorage. True = refresh uniquement cookie HttpOnly.

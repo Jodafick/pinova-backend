@@ -7,6 +7,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from .models import Profile, EmailOTP, SubscriptionPayment, UserBlock
 from dj_rest_auth.registration.serializers import RegisterSerializer as BaseRegisterSerializer
+from dj_rest_auth.serializers import PasswordResetSerializer as DjPasswordResetSerializer
 from django.conf import settings
 from .mail_delivery import (
     EMAIL_DELIVERY_ERROR_CODE,
@@ -457,3 +458,27 @@ class PinovaLoginSerializer(serializers.Serializer):
 
         attrs['user'] = user
         return attrs
+
+
+def pinova_password_reset_url_generator(request, user, temp_key):
+    """
+    Lien de reset aligné sur le routeur web (`/password-reset-confirm/:uid/:token`).
+    Évite `NoReverseMatch` sur `password_reset_confirm` (non défini avec dj-rest-auth seul).
+    """
+    from urllib.parse import quote
+    from allauth.account.utils import user_pk_to_url_str
+
+    base = (getattr(settings, 'URL_FRONTEND_PASSWORD_RESET', None) or '').strip().rstrip('/')
+    if not base:
+        base = settings.FRONTEND_URL.rstrip('/') + '/password-reset-confirm'
+    uid = user_pk_to_url_str(user)
+    return f'{base}/{quote(uid, safe="")}/{quote(temp_key, safe="")}'
+
+
+class PinovaPasswordResetSerializer(DjPasswordResetSerializer):
+    """Passe un `url_generator` qui pointe vers le SPA au lieu de `reverse('password_reset_confirm')`."""
+
+    def get_email_options(self):
+        opts = super().get_email_options()
+        opts['url_generator'] = pinova_password_reset_url_generator
+        return opts

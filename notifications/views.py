@@ -10,6 +10,7 @@ from .models import ExpoPushToken, Notification, PushSubscription
 from .serializers import (
     ExpoPushRegisterSerializer,
     NotificationSerializer,
+    PushDeviceStatusSerializer,
     PushSubscriptionSerializer,
 )
 from .push import get_vapid_public_key, is_push_configured
@@ -96,13 +97,44 @@ class NotificationViewSet(viewsets.ModelViewSet):
         return Response({'status': 'subscribed', 'id': sub.id}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'])
+    def push_device_status(self, request):
+        """
+        Source de vérité pour l’UI : cet endpoint est-il enregistré et actif pour l’utilisateur connecté ?
+        Un même compte peut avoir plusieurs appareils (plusieurs lignes PushSubscription).
+        """
+        serializer = PushDeviceStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        endpoint = (serializer.validated_data.get('endpoint') or '').strip()
+        if not endpoint:
+            return Response(
+                {
+                    'backend_registered': False,
+                    'backend_active': False,
+                },
+            )
+        row = PushSubscription.objects.filter(endpoint=endpoint).only('user_id', 'is_active').first()
+        if row is None or row.user_id != request.user.pk:
+            return Response(
+                {
+                    'backend_registered': False,
+                    'backend_active': False,
+                },
+            )
+        return Response(
+            {
+                'backend_registered': True,
+                'backend_active': bool(row.is_active),
+            },
+        )
+
+    @action(detail=False, methods=['post'])
     def push_unsubscribe(self, request):
         endpoint = str(request.data.get('endpoint') or '').strip()
         if not endpoint:
             return Response({'error': 'endpoint is required'}, status=status.HTTP_400_BAD_REQUEST)
-        # L’endpoint est propre au navigateur / installation PWA, pas au compte : on désactive
-        # toute ligne correspondante (évite un ancien rattachement si le JWT était déjà celui d’un autre user).
-        PushSubscription.objects.filter(endpoint=endpoint).update(is_active=False)
+        # Un seul compte doit pouvoir désactiver sa ligne pour cet endpoint (plusieurs appareils =
+        # plusieurs endpoints ; un endpoint = un enregistrement par user_id après subscribe).
+        PushSubscription.objects.filter(endpoint=endpoint, user=request.user).update(is_active=False)
         return Response({'status': 'unsubscribed'})
 
     @action(detail=False, methods=['post'])

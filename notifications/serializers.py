@@ -106,3 +106,9 @@ class ExpoPushRegisterSerializer(serializers.Serializer):
         if not s.startswith('ExponentPushToken['):
             raise serializers.ValidationError('Invalid Expo push token format.')
         return s
+
+
+class PushDeviceStatusSerializer(serializers.Serializer):
+    """État serveur de l’endpoint web push pour cet appareil / navigateur."""
+
+    endpoint = serializers.CharField(required=False, allow_blank=True, max_length=500, trim_whitespace=True)
