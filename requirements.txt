@@ -65,3 +65,4 @@ django-redis>=5.
 
 # Environment variables
 dotenv-cli
+python-dotenv
