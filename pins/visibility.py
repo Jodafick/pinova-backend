@@ -65,6 +65,17 @@ def sensitive_pins_query_filter(request):
     return Q(media_sensitive_blur=False)
 
 
+def needs_review_pins_query_filter(request):
+    """
+    Pins avec ``needs_review`` (file validation staff / style flux social) :
+    visibles uniquement pour l'auteur jusqu'à décision équipe.
+    """
+    user = getattr(request, 'user', None)
+    if user and user.is_authenticated:
+        return Q(needs_review=False) | Q(author=user)
+    return Q(needs_review=False)
+
+
 def count_pins_visible_on_profile(author_user, request) -> int:
     """
     Nombre de pins d'un créateur visibles pour le visiteur, aligné sur
@@ -91,6 +102,7 @@ def count_pins_visible_on_profile(author_user, request) -> int:
             & sched
             & story_q
             & Q(moderation_hidden=False)
+            & needs_review_pins_query_filter(request)
         )
         qs = queryset.filter(core)
         qs = qs.filter(sensitive_pins_query_filter(request))
@@ -106,6 +118,7 @@ def count_pins_visible_on_profile(author_user, request) -> int:
     )
     core = visibility_q & story_q & (sched | Q(author=user))
     qs = queryset.filter(core).distinct()
+    qs = qs.filter(needs_review_pins_query_filter(request))
     qs = qs.filter(sensitive_pins_query_filter(request))
     qs = qs.exclude(Q(moderation_hidden=True) & ~Q(author=user))
     qs = qs.exclude(Q(is_story=True, story_ephemeral=True))
@@ -118,6 +131,9 @@ def pin_is_visible_for_request(pin: Pin, request) -> bool:
     if user and user.id != pin.author_id and pin.author_id in blocked_mutual_user_ids(user):
         return False
     if getattr(pin, 'moderation_hidden', False):
+        if not user or user.id != pin.author_id:
+            return False
+    if getattr(pin, 'needs_review', False):
         if not user or user.id != pin.author_id:
             return False
     now = timezone.now()

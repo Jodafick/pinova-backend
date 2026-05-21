@@ -61,7 +61,13 @@ from .serializers import (
     extract_hashtags,
 )
 from .comment_media import compress_comment_media_upload
-from .visibility import pin_is_visible_for_request, sensitive_pins_query_filter, viewer_is_verified_adult
+from .visibility import (
+    pin_is_visible_for_request,
+    needs_review_pins_query_filter,
+    sensitive_pins_query_filter,
+    viewer_is_verified_adult,
+)
+from .visual_moderation import apply_server_visual_moderation_to_pin
 from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
 from .moderation import (
     sanitize_comment_plain_text,
@@ -349,6 +355,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 & sched
                 & story_q
                 & Q(moderation_hidden=False)
+                & needs_review_pins_query_filter(self.request)
             )
             if apply_story_placement:
                 core &= placement_q
@@ -367,6 +374,7 @@ class PinViewSet(viewsets.ModelViewSet):
             core &= placement_q
         queryset = queryset.filter(core).distinct()
         queryset = queryset.filter(sensitive_pins_query_filter(self.request))
+        queryset = queryset.filter(needs_review_pins_query_filter(self.request))
         queryset = queryset.exclude(moderation_hidden=True)
         queryset = filter_pins_exclude_blocked(queryset, self.request)
         if self.request.user.is_authenticated:
@@ -734,9 +742,15 @@ class PinViewSet(viewsets.ModelViewSet):
             pin.image = validated['image']
         if validated.get('story_video'):
             pin.story_video = validated['story_video']
-        pin.save()
-        pin.refresh_story_expiry()
-        pin.save(update_fields=['story_expires_at'])
+        try:
+            with transaction.atomic():
+                pin.save()
+                pin.refresh_story_expiry()
+                pin.save(update_fields=['story_expires_at'])
+                apply_server_visual_moderation_to_pin(pin, prof)
+                pin.refresh_from_db()
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
         return Response(PinSerializer(pin, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])

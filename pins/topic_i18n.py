@@ -64,7 +64,7 @@ def ensure_topic_translation(
     if lang != 'fr' and lang not in translations:
         t_inst = translator or Translator()
         try:
-            translations[lang] = async_to_sync(translate_text_to)(t_inst, canonical_name, lang)
+            translations[lang] = async_to_sync(translate_text_to)(t_inst, canonical_name, lang, 'fr')
             record.translations = translations
             record.save(update_fields=['translations', 'updated_at'])
         except RuntimeError:
@@ -100,7 +100,7 @@ async def _warm_topic_translations_async(canonical_name: str) -> None:
         if translations.get(lang_code):
             return
         try:
-            translations[lang_code] = await translate_text_to(t_inst, canonical_name, lang_code)
+            translations[lang_code] = await translate_text_to(t_inst, canonical_name, lang_code, 'fr')
         except (RuntimeError, Exception):
             pass
 

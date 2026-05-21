@@ -311,6 +311,7 @@ class ReferralContestResult(models.Model):
     winners_json = models.JSONField(default=list, blank=True)
     leaderboard_snapshot_json = models.JSONField(default=list, blank=True)
     stats_json = models.JSONField(default=dict, blank=True)
+    payout_json = models.JSONField(default=list, blank=True)
     finalized_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     class Meta:

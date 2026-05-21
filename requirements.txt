@@ -52,6 +52,11 @@ gunicorn
 better-profanity
 django-ratelimit
 
+# Médias / modération (échantillon vidéo + optional ONNX NSFW)
+opencv-python-headless>=4.9,<5
+numpy>=1.26
+onnxruntime>=1.17
+
 # Seed data (noms / profils synthétiques)
 Faker>=24.0.0
 

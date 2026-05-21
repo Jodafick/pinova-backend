@@ -8,7 +8,8 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils import timezone
 
-from contests.models import ContestSettings
+from contests.contest_payouts import build_referral_contest_payout_payload
+from contests.models import ContestSettings, ContestWinnerPayout
 
 from .models import ReferralContestResult, ReferrerReferralScore
 from .referral_contest_cache import invalidate_referral_leaderboard_cache
@@ -26,6 +27,17 @@ def finalize_referral_month_for_contest(contest: ContestSettings) -> ReferralCon
         return None
     existing = ReferralContestResult.objects.filter(contest=contest).first()
     if existing:
+        winners_existing = existing.winners_json or []
+        payouts_missing = not (existing.payout_json or [])
+        if not payouts_missing or not winners_existing:
+            return existing
+        payout_json, payout_rows = build_referral_contest_payout_payload(contest, winners_existing)
+        with transaction.atomic():
+            existing.payout_json = payout_json
+            existing.save(update_fields=['payout_json'])
+            ContestWinnerPayout.objects.filter(contest=contest, source=ContestWinnerPayout.SOURCE_REFERRAL).delete()
+            if payout_rows:
+                ContestWinnerPayout.objects.bulk_create(payout_rows)
         return existing
 
     rows = list(
@@ -57,6 +69,7 @@ def finalize_referral_month_for_contest(contest: ContestSettings) -> ReferralCon
         'participants_with_score': len(rows),
         'contest_key': contest.contest_key,
     }
+    payout_json, payout_rows = build_referral_contest_payout_payload(contest, winners)
     with transaction.atomic():
         result, _ = ReferralContestResult.objects.update_or_create(
             contest=contest,
@@ -64,9 +77,15 @@ def finalize_referral_month_for_contest(contest: ContestSettings) -> ReferralCon
                 'winners_json': winners,
                 'leaderboard_snapshot_json': top_snapshot,
                 'stats_json': stats,
+                'payout_json': payout_json,
                 'finalized_at': timezone.now(),
             },
         )
+        ContestWinnerPayout.objects.filter(
+            contest=contest, source=ContestWinnerPayout.SOURCE_REFERRAL
+        ).delete()
+        if payout_rows:
+            ContestWinnerPayout.objects.bulk_create(payout_rows)
     invalidate_referral_leaderboard_cache(contest.id)
 
     # Notifications « mois clos » pour le podium referral (best-effort).

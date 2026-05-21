@@ -59,7 +59,7 @@ class ContestSettings(models.Model):
     comment_min_length = models.PositiveIntegerField(default=2)
     trust_score_threshold = models.FloatField(default=0.4)
 
-    # --- Anti-fraude / parrainage (réutilise l’admin concours ; paramètres par mois) ---
+    # --- Anti-fraude / parrainage (réutilise l'admin concours ; paramètres par mois) ---
     referral_defer_rewards = models.BooleanField(
         default=True,
         help_text='Si activé : aucun point parrain tant que le filleul ne passe pas les garde-fous (âge compte, actions, trust).',
@@ -70,7 +70,7 @@ class ContestSettings(models.Model):
     )
     referral_min_engagement_actions = models.PositiveIntegerField(
         default=1,
-        help_text='Nombre minimum d’interactions concours pins valides (filleul) pour débloquer la récompense.',
+        help_text="Nombre minimum d'interactions concours pins valides (filleul) pour débloquer la récompense.",
     )
     referral_reward_delay_hours = models.PositiveIntegerField(
         default=1,
@@ -254,3 +254,55 @@ class ContestResult(models.Model):
 
     class Meta:
         ordering = ['-finalized_at']
+
+
+class ContestWinnerPayout(models.Model):
+    """Suivi ops / audit des primes attribuées (pins ou parrainage) pour un mois de concours."""
+
+    SOURCE_PINS = 'pins'
+    SOURCE_REFERRAL = 'referral'
+    SOURCE_CHOICES = [
+        (SOURCE_PINS, 'Pins'),
+        (SOURCE_REFERRAL, 'Referral'),
+    ]
+
+    STATUS_PENDING = 'pending'
+    STATUS_PAID = 'paid'
+    STATUS_FAILED = 'failed'
+    STATUS_WITHHELD = 'withheld'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PAID, 'Paid'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_WITHHELD, 'Withheld'),
+    ]
+
+    contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='winner_payouts')
+    source = models.CharField(max_length=16, choices=SOURCE_CHOICES, db_index=True)
+    winner_rank = models.PositiveSmallIntegerField()
+    beneficiary = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    pin = models.ForeignKey('pins.Pin', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    gross_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
+    currency = models.CharField(max_length=8, default='EUR')
+    payment_status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    payment_reference = models.CharField(max_length=191, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['contest_id', 'source', 'winner_rank']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['contest', 'source', 'winner_rank'],
+                name='contest_winpayout_unique_contest_source_rank',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['contest', 'source', 'payment_status']),
+        ]
+
+    def __str__(self):
+        return f'payout {self.contest_id} {self.source} #{self.winner_rank}'

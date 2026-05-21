@@ -15,9 +15,12 @@ from django.utils import timezone
 from .contest_rank_notification_copy import build_contest_display_rank_notification_fr
 from .contest_rank_notify_throttle import allow_contest_rank_notification
 from .leaderboard_display_rank import display_rank_and_row_for_creator
+from .contest_payouts import build_pin_contest_payout_payload
 from .models import (
     ContestInteractionEvent,
+    ContestResult,
     ContestSettings,
+    ContestWinnerPayout,
     CreatorContestScore,
     LeaderboardEvent,
     PinContestScore,
@@ -457,8 +460,15 @@ def finalize_contest(contest: ContestSettings) -> None:
         )
         if len(winners) >= contest.max_winners:
             break
-    from .models import ContestResult
-    ContestResult.objects.update_or_create(
-        contest=contest,
-        defaults={'winners_json': winners, 'payout_json': []},
-    )
+    payout_json, payout_rows = build_pin_contest_payout_payload(contest, winners)
+    with transaction.atomic():
+        ContestResult.objects.update_or_create(
+            contest=contest,
+            defaults={
+                'winners_json': winners,
+                'payout_json': payout_json,
+            },
+        )
+        ContestWinnerPayout.objects.filter(contest=contest, source=ContestWinnerPayout.SOURCE_PINS).delete()
+        if payout_rows:
+            ContestWinnerPayout.objects.bulk_create(payout_rows)

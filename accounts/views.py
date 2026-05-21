@@ -8,6 +8,7 @@ from dj_rest_auth.registration.views import SocialLoginView
 from django.conf import settings
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -977,13 +978,36 @@ class UserMeView(APIView):
         user = request.user
         profile = user.profile
         _enforce_subscription_state(profile)
-        
+
         # Update user fields
         if 'email' in request.data:
             user.email = request.data['email']
             user.save()
-            
+
+        if 'username' in request.data:
+            new_username = re.sub(r'[^\w.@+-]', '', str(request.data.get('username') or '').strip(), flags=re.UNICODE)
+            if new_username and new_username != user.username:
+                if User.objects.filter(username=new_username).exclude(pk=user.pk).exists():
+                    return Response({'username': ['Ce nom d’utilisateur est déjà pris.']}, status=status.HTTP_400_BAD_REQUEST)
+                user.username = new_username
+                user.save()
+
         mutable_data = request.data.copy()
+
+        for json_key in ('interests', 'followed_onboarding_creators', 'hobbies', 'skills', 'social_links'):
+            if json_key not in mutable_data:
+                continue
+            raw = mutable_data.get(json_key)
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    mutable_data[json_key] = json.loads(raw)
+                except json.JSONDecodeError:
+                    return Response({json_key: ['Invalid JSON']}, status=status.HTTP_400_BAD_REQUEST)
+
+        if str(mutable_data.get('complete_onboarding', '')).lower() in ('true', '1', 'yes'):
+            profile.onboarding_completed_at = timezone.now()
+            profile.save(update_fields=['onboarding_completed_at'])
+            mutable_data.pop('complete_onboarding', None)
 
         # Tips & monetization are reserved for Pro.
         if profile.subscription_plan != Profile.PLAN_PRO:
@@ -1025,6 +1049,13 @@ class UserMeView(APIView):
         # Search visibility maps to discoverable_profile.
         if 'discoverable_profile' in mutable_data:
             mutable_data['discoverable_profile'] = str(mutable_data.get('discoverable_profile')).lower() == 'true'
+
+        for bool_key in (
+            'show_activity', 'show_last_seen', 'allow_dm', 'allow_tags_mentions',
+            'allow_ai_translation',
+        ):
+            if bool_key in mutable_data:
+                mutable_data[bool_key] = str(mutable_data.get(bool_key)).lower() in ('true', '1', 'yes')
 
         preferred_currency = mutable_data.get('preferred_currency')
         if preferred_currency is not None:

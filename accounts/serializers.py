@@ -22,6 +22,56 @@ from notifications.notification_i18n import create_localized_notification
 from pinova_backend.media_cache import build_versioned_media_url
 from pins.moderation import validate_clean_text_fields
 
+ALLOWED_ACCENT_COLORS = frozenset({
+    'rose', 'pink', 'violet', 'indigo', 'blue', 'cyan', 'emerald', 'amber', 'orange',
+})
+ALLOWED_INTEREST_SLUGS = frozenset({
+    'design', 'photography', 'fashion', 'music', 'sports', 'gaming', 'tech', 'travel',
+    'food', 'art', 'ai', 'anime', 'business', 'education', 'wellness', 'nature',
+    'architecture', 'cinema', 'literature', 'diy', 'parenting', 'pets', 'cars',
+})
+SOCIAL_LINK_KEYS = frozenset({
+    'instagram', 'tiktok', 'github', 'linkedin', 'youtube', 'portfolio', 'twitter', 'facebook',
+})
+
+
+def _normalize_slug_list(value, allowed=None, max_items=32, max_len=48):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise serializers.ValidationError('Expected a list')
+    out = []
+    for item in value:
+        slug = str(item).strip().lower()[:max_len]
+        if not slug or slug in out:
+            continue
+        if allowed is not None and slug not in allowed:
+            continue
+        out.append(slug)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _normalize_social_links(value):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise serializers.ValidationError('Expected an object')
+    out = {}
+    for key, url in value.items():
+        k = str(key).strip().lower()
+        if k not in SOCIAL_LINK_KEYS:
+            continue
+        u = str(url).strip()
+        if not u:
+            continue
+        if len(u) > 500:
+            u = u[:500]
+        out[k] = u
+    return out
+
+
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
@@ -36,9 +86,36 @@ class ProfileSerializer(serializers.ModelSerializer):
             'username',
             'email',
             'display_name',
+            'first_name',
+            'last_name',
             'bio',
             'avatar',
+            'cover_image',
             'avatar_color',
+            'gender',
+            'pronouns',
+            'city',
+            'website',
+            'job_title',
+            'school',
+            'company',
+            'phone',
+            'interests',
+            'followed_onboarding_creators',
+            'theme_mode',
+            'accent_color',
+            'date_format',
+            'timezone',
+            'presence_status',
+            'show_activity',
+            'show_last_seen',
+            'allow_dm',
+            'allow_tags_mentions',
+            'favorite_quote',
+            'hobbies',
+            'skills',
+            'social_links',
+            'onboarding_completed_at',
             'followers_count',
             'following_count',
             'is_following',
@@ -66,10 +143,16 @@ class ProfileSerializer(serializers.ModelSerializer):
             'sensitive_media_blur_by_default',
             'hide_sensitive_pins',
         ]
-        read_only_fields = ['username', 'email', 'followers_count', 'following_count', 'is_following', 'country_code', 'subscription_trial_consumed_at']
+        read_only_fields = [
+            'username', 'email', 'followers_count', 'following_count', 'is_following',
+            'subscription_trial_consumed_at', 'onboarding_completed_at',
+        ]
 
     _PUBLIC_PROFILE_HIDDEN_FIELDS = frozenset({
         'email',
+        'phone',
+        'followed_onboarding_creators',
+        'onboarding_completed_at',
         'subscription_renewal_at',
         'subscription_cancel_at_period_end',
         'subscription_scheduled_plan',
@@ -83,6 +166,13 @@ class ProfileSerializer(serializers.ModelSerializer):
         'sensitive_media_blur_by_default',
         'hide_sensitive_pins',
         'share_token',
+        'show_activity',
+        'show_last_seen',
+        'allow_dm',
+        'allow_tags_mentions',
+        'theme_mode',
+        'date_format',
+        'timezone',
     })
 
     _OWNER_ONLY_FIELDS = frozenset({'birth_date'})
@@ -92,6 +182,40 @@ class ProfileSerializer(serializers.ModelSerializer):
         if not normalized:
             raise serializers.ValidationError('Unsupported currency code')
         return normalized
+
+    def validate_country_code(self, value):
+        code = (value or '').strip().upper()[:2]
+        return code
+
+    def validate_accent_color(self, value):
+        v = (value or 'rose').strip().lower()
+        if v not in ALLOWED_ACCENT_COLORS:
+            raise serializers.ValidationError('Unsupported accent color')
+        return v
+
+    def validate_interests(self, value):
+        return _normalize_slug_list(value, allowed=ALLOWED_INTEREST_SLUGS)
+
+    def validate_followed_onboarding_creators(self, value):
+        return _normalize_slug_list(value, allowed=None, max_items=50)
+
+    def validate_hobbies(self, value):
+        return _normalize_slug_list(value, allowed=None, max_items=24)
+
+    def validate_skills(self, value):
+        return _normalize_slug_list(value, allowed=None, max_items=24)
+
+    def validate_social_links(self, value):
+        return _normalize_social_links(value)
+
+    def validate(self, attrs):
+        text_fields = {}
+        for key in ('display_name', 'first_name', 'last_name', 'bio', 'city', 'job_title', 'school', 'company', 'favorite_quote', 'pronouns'):
+            if key in attrs:
+                text_fields[key] = attrs[key]
+        if text_fields:
+            validate_clean_text_fields(text_fields)
+        return attrs
 
     def get_followers_count(self, obj):
         return obj.followers.count()
@@ -117,8 +241,11 @@ class ProfileSerializer(serializers.ModelSerializer):
         if not is_owner:
             for key in self._PUBLIC_PROFILE_HIDDEN_FIELDS:
                 data.pop(key, None)
-        if request and getattr(instance, 'avatar', None) and getattr(instance.avatar, 'name', None):
-            data['avatar'] = build_versioned_media_url(request, instance.avatar)
+        if request:
+            if getattr(instance, 'avatar', None) and getattr(instance.avatar, 'name', None):
+                data['avatar'] = build_versioned_media_url(request, instance.avatar)
+            if getattr(instance, 'cover_image', None) and getattr(instance.cover_image, 'name', None):
+                data['cover_image'] = build_versioned_media_url(request, instance.cover_image)
         return data
 
 
@@ -311,6 +438,7 @@ class UserSerializer(serializers.ModelSerializer):
             .first()
         )
         sub['active_billing_cycle'] = last_pay_cycle or None
+        sub['has_billing_history'] = SubscriptionPayment.objects.filter(user=obj).exists()
         return sub
 
 

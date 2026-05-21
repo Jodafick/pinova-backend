@@ -1,5 +1,8 @@
 from rest_framework import serializers
 import re
+
+from django.conf import settings
+from django.db import transaction
 from django.db.models import Count, Case, When, Value, IntegerField, Exists, OuterRef
 from django.utils import timezone
 from .models import (
@@ -33,10 +36,58 @@ from .moderation import (
     pin_is_story_flag,
 )
 from .topic_i18n import resolve_topic_language, ensure_topic_translation, warm_topic_translations_for_new_topic
-
+from .visual_moderation import apply_server_visual_moderation_to_pin
+from .api_locale import localize_api_user_message
 
 HASHTAG_RE = re.compile(r'#([A-Za-z0-9_]{2,80})')
 MENTION_RE = re.compile(r'@([A-Za-z0-9_\.]{2,80})')
+
+
+def story_video_min_bytes_required() -> int:
+    mb = float(getattr(settings, 'PIN_STORY_VIDEO_MIN_SIZE_MB', 0) or 0)
+    if mb <= 0:
+        return 0
+    return int(round(mb * 1024 * 1024))
+
+
+def story_video_max_bytes_allowed() -> int:
+    mb = float(getattr(settings, 'PIN_STORY_VIDEO_MAX_SIZE_MB', 0) or 0)
+    if mb <= 0:
+        return 0
+    return int(round(mb * 1024 * 1024))
+
+
+_STORY_VIDEO_BAD_FORMAT_FR = (
+    'Format vidéo non reconnu. Formats acceptés : MP4, WebM ou MOV.'
+)
+
+
+def _validate_story_video_max_size(uploaded, request=None) -> None:
+    mx = story_video_max_bytes_allowed()
+    if mx <= 0:
+        return
+    sz = int(getattr(uploaded, 'size', 0) or 0)
+    if sz > mx:
+        mxf = float(getattr(settings, 'PIN_STORY_VIDEO_MAX_SIZE_MB', 128) or 128)
+        fr_msg = (
+            f'La vidéo dépasse la taille maximale autorisée ({mxf:g} Mo). '
+            f'Réduisez la qualité ou raccourcissez la durée avant envoi.'
+        )
+        raise serializers.ValidationError(localize_api_user_message(fr_msg, request))
+
+
+def _validate_story_video_min_size(uploaded, request=None) -> None:
+    mn = story_video_min_bytes_required()
+    if mn <= 0:
+        return
+    sz = int(getattr(uploaded, 'size', 0) or 0)
+    if sz < mn:
+        mbf = float(getattr(settings, 'PIN_STORY_VIDEO_MIN_SIZE_MB', 1) or 1)
+        fr_msg = (
+            f'La vidéo est trop petite (minimum {mbf:g} Mo). '
+            f'Veuillez envoyer une version moins compressée ou de meilleure qualité.'
+        )
+        raise serializers.ValidationError(localize_api_user_message(fr_msg, request))
 
 
 def extract_hashtags(text: str) -> list[str]:
@@ -437,13 +488,17 @@ class PinSerializer(serializers.ModelSerializer):
     def validate_story_video(self, value):
         if not value:
             return value
+        request = self.context.get('request')
         ct = (getattr(value, 'content_type', '') or '').split(';')[0].strip().lower()
+        name = (getattr(value, 'name', '') or '').strip().lower()
         allowed = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
-        if ct not in allowed:
-            raise serializers.ValidationError('Unsupported video type (use MP4, WebM or MOV).')
-        max_bytes = 48 * 1024 * 1024
-        if getattr(value, 'size', 0) > max_bytes:
-            raise serializers.ValidationError('Video too large (max 48 MB).')
+        allowed_ext = ('.mp4', '.webm', '.mov')
+        if ct not in allowed and not name.endswith(allowed_ext):
+            raise serializers.ValidationError(
+                localize_api_user_message(_STORY_VIDEO_BAD_FORMAT_FR, request)
+            )
+        _validate_story_video_max_size(value, request=request)
+        _validate_story_video_min_size(value, request=request)
         return value
 
     def get_boards(self, obj):
@@ -739,37 +794,47 @@ class PinSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             validated_data['author'] = request.user
         validated_data['topic'] = self._resolve_topic(topic_value)
-        pin = super().create(validated_data)
-        self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, board_ids)
+        with transaction.atomic():
+            pin = super().create(validated_data)
+            if request and request.user.is_authenticated:
+                apply_server_visual_moderation_to_pin(pin, request.user.profile)
+            self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, board_ids)
         return pin
 
     def update(self, instance, validated_data):
         board_ids_raw = validated_data.pop('board_ids_input', serializers.empty)
         public_tags = self._normalize_string_list(validated_data.pop('public_tags_input', []))
         private_tags = self._normalize_string_list(validated_data.pop('private_tags_input', []))
+        old_img_name = getattr(instance.image, 'name', '') if getattr(instance, 'image', None) else ''
+        old_vid_name = getattr(instance.story_video, 'name', '') if getattr(instance, 'story_video', None) else ''
         if 'topic' in validated_data:
             topic_value = validated_data.pop('topic')
             validated_data['topic'] = self._resolve_topic(topic_value)
-        pin = super().update(instance, validated_data)
-        request = self.context.get('request')
-        if not request or request.user != pin.author:
-            return pin
-        if private_tags and not request.user.profile.can_use_private_tags:
-            raise serializers.ValidationError({
-                'private_tags_input': 'Private tags require Plus or Pro plan.',
-            })
-        req_data = getattr(request, 'data', {}) or {}
-        tag_touch = 'public_tags_input' in req_data or 'private_tags_input' in req_data
-        board_ids_list = None
-        if board_ids_raw is not serializers.empty:
-            board_ids_list = self._normalize_int_list(board_ids_raw)
-        if tag_touch or board_ids_list is not None:
-            boards_arg = board_ids_list
-            if boards_arg is None:
-                boards_arg = list(
-                    PinBoard.objects.filter(pin=pin).order_by('position').values_list('board_id', flat=True)
-                )
-            self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, boards_arg)
+        with transaction.atomic():
+            pin = super().update(instance, validated_data)
+            request = self.context.get('request')
+            if not request or request.user != pin.author:
+                return pin
+            if private_tags and not request.user.profile.can_use_private_tags:
+                raise serializers.ValidationError({
+                    'private_tags_input': 'Private tags require Plus or Pro plan.',
+                })
+            new_img_name = getattr(pin.image, 'name', '') if getattr(pin, 'image', None) else ''
+            new_vid_name = getattr(pin.story_video, 'name', '') if getattr(pin, 'story_video', None) else ''
+            if new_img_name != old_img_name or new_vid_name != old_vid_name:
+                apply_server_visual_moderation_to_pin(pin, request.user.profile)
+            req_data = getattr(request, 'data', {}) or {}
+            tag_touch = 'public_tags_input' in req_data or 'private_tags_input' in req_data
+            board_ids_list = None
+            if board_ids_raw is not serializers.empty:
+                board_ids_list = self._normalize_int_list(board_ids_raw)
+            if tag_touch or board_ids_list is not None:
+                boards_arg = board_ids_list
+                if boards_arg is None:
+                    boards_arg = list(
+                        PinBoard.objects.filter(pin=pin).order_by('position').values_list('board_id', flat=True)
+                    )
+                self._apply_pin_tags_and_boards(pin, request, private_tags, public_tags, boards_arg)
         return pin
 
 
@@ -784,15 +849,17 @@ class StandaloneStoryCreateSerializer(serializers.Serializer):
     def validate_story_video(self, value):
         if not value:
             return value
+        request = self.context.get('request')
         ct = (getattr(value, 'content_type', '') or '').split(';')[0].strip().lower()
         name = (getattr(value, 'name', '') or '').strip().lower()
         allowed = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
         allowed_ext = ('.mp4', '.webm', '.mov')
         if ct not in allowed and not name.endswith(allowed_ext):
-            raise serializers.ValidationError('Format vidéo non supporté (MP4, WebM ou MOV).')
-        max_bytes = 48 * 1024 * 1024
-        if getattr(value, 'size', 0) > max_bytes:
-            raise serializers.ValidationError('Vidéo trop lourde (max 48 Mo).')
+            raise serializers.ValidationError(
+                localize_api_user_message(_STORY_VIDEO_BAD_FORMAT_FR, request)
+            )
+        _validate_story_video_max_size(value, request=request)
+        _validate_story_video_min_size(value, request=request)
         return value
 
     def validate(self, attrs):

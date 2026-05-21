@@ -456,3 +456,31 @@ CELERY_TASK_ALWAYS_EAGER = os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False') =
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', '300'))
+
+# Vidéo story / pin : taille minimale du fichier uploadé en Mo (0 ou vide = valeur par défaut 1 ; mettre « 0 » pour désactiver)
+_raw_mb_s = (os.environ.get('PIN_STORY_VIDEO_MIN_SIZE_MB') or '').strip()
+try:
+    PIN_STORY_VIDEO_MIN_SIZE_MB = float(_raw_mb_s) if _raw_mb_s != '' else 1.0
+except ValueError:
+    PIN_STORY_VIDEO_MIN_SIZE_MB = 1.0
+
+# Taille maximale en Mo (0 désactive la limite maximale ; vide = valeur par défaut 128 Mo)
+_raw_mb_max = (os.environ.get('PIN_STORY_VIDEO_MAX_SIZE_MB') or '').strip()
+try:
+    PIN_STORY_VIDEO_MAX_SIZE_MB = float(_raw_mb_max) if _raw_mb_max != '' else 128.0
+except ValueError:
+    PIN_STORY_VIDEO_MAX_SIZE_MB = 128.0
+if PIN_STORY_VIDEO_MAX_SIZE_MB < 0:
+    PIN_STORY_VIDEO_MAX_SIZE_MB = 128.0
+
+# NSFW ONNX (backend) — laisser vides pour désactiver la classification automatique
+NSFW_ONNX_MODEL_PATH = (os.environ.get('NSFW_ONNX_MODEL_PATH') or '').strip()
+NSFW_ONNX_MODEL_URL = (os.environ.get('NSFW_ONNX_MODEL_URL') or '').strip()
+# Libellés = ordre des sorties softmax du ONNX ( défaut mobilenet-nsfwjs )
+NSFW_ONNX_CLASSES = (
+    os.environ.get('NSFW_ONNX_CLASSES') or 'Drawing,Hentai,Neutral,Porn,Sexy'
+).strip()
+NSFW_ONNX_LAYOUT = (os.environ.get('NSFW_ONNX_LAYOUT') or 'NCHW').strip()
+NSFW_ONNX_IMG_SIZE = int(os.environ.get('NSFW_ONNX_IMG_SIZE') or '224')
+NSFW_ONNX_NORMALIZE = (os.environ.get('NSFW_ONNX_NORMALIZE') or 'imagenet').strip()
+NSFW_TWOCLASS_UNSAFE_BIAS = float(os.environ.get('NSFW_TWOCLASS_UNSAFE_BIAS') or '0')

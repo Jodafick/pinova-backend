@@ -4,6 +4,7 @@ from .models import (
     ContestInteractionEvent,
     ContestResult,
     ContestSettings,
+    ContestWinnerPayout,
     CreatorContestScore,
     LeaderboardEvent,
     LeaderboardSnapshot,
@@ -115,7 +116,26 @@ class LeaderboardSnapshotAdmin(admin.ModelAdmin):
     search_fields = ('contest__contest_key',)
 
 
+@admin.register(ContestWinnerPayout)
+class ContestWinnerPayoutAdmin(admin.ModelAdmin):
+    list_display = (
+        'contest',
+        'source',
+        'winner_rank',
+        'beneficiary',
+        'gross_amount',
+        'currency',
+        'payment_status',
+        'paid_at',
+        'created_at',
+    )
+    list_filter = ('source', 'payment_status', 'currency')
+    search_fields = ('contest__contest_key', 'beneficiary__username', 'payment_reference')
+    raw_id_fields = ('contest', 'beneficiary', 'pin')
+
+
 @admin.register(ContestResult)
 class ContestResultAdmin(admin.ModelAdmin):
     list_display = ('contest', 'finalized_at')
     search_fields = ('contest__contest_key',)
+    readonly_fields = ('finalized_at', 'winners_json', 'payout_json')

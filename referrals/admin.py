@@ -86,7 +86,7 @@ class ReferralSuspicionFlagAdmin(admin.ModelAdmin):
 @admin.register(ReferralContestResult)
 class ReferralContestResultAdmin(admin.ModelAdmin):
     list_display = ('contest', 'finalized_at')
-    readonly_fields = ('finalized_at',)
+    readonly_fields = ('finalized_at', 'winners_json', 'leaderboard_snapshot_json', 'stats_json', 'payout_json')
 
 
 @admin.register(ReferralContestSettings)

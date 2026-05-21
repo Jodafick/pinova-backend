@@ -74,6 +74,70 @@ class Profile(models.Model):
     # Majeur vérifié : masque les pins d’autrui marquées sensibles (flux, tableau, détail renvoie 404).
     hide_sensitive_pins = models.BooleanField(default=False)
 
+    # --- Identité étendue ---
+    first_name = models.CharField(max_length=80, blank=True, default='')
+    last_name = models.CharField(max_length=80, blank=True, default='')
+    cover_image = models.ImageField(upload_to='covers/', null=True, blank=True)
+    GENDER_CHOICES = [
+        ('', 'Prefer not to say'),
+        ('woman', 'Woman'),
+        ('man', 'Man'),
+        ('non_binary', 'Non-binary'),
+        ('other', 'Other'),
+    ]
+    gender = models.CharField(max_length=20, choices=GENDER_CHOICES, blank=True, default='')
+    pronouns = models.CharField(max_length=40, blank=True, default='')
+    city = models.CharField(max_length=120, blank=True, default='')
+    website = models.URLField(blank=True, default='')
+    job_title = models.CharField(max_length=120, blank=True, default='')
+    school = models.CharField(max_length=200, blank=True, default='')
+    company = models.CharField(max_length=200, blank=True, default='')
+    phone = models.CharField(max_length=32, blank=True, default='')
+
+    # --- Découverte sociale (slugs JSON) ---
+    interests = models.JSONField(default=list, blank=True)
+    followed_onboarding_creators = models.JSONField(default=list, blank=True)
+
+    # --- Personnalisation (sync multi-appareils) ---
+    THEME_LIGHT = 'light'
+    THEME_DARK = 'dark'
+    THEME_SYSTEM = 'system'
+    THEME_MODE_CHOICES = [
+        (THEME_LIGHT, 'Light'),
+        (THEME_DARK, 'Dark'),
+        (THEME_SYSTEM, 'System'),
+    ]
+    theme_mode = models.CharField(max_length=10, choices=THEME_MODE_CHOICES, default=THEME_SYSTEM)
+    accent_color = models.CharField(max_length=24, default='rose')
+    date_format = models.CharField(max_length=24, default='auto')
+    timezone = models.CharField(max_length=64, blank=True, default='')
+
+    # --- Présence / confidentialité sociale ---
+    PRESENCE_AVAILABLE = 'available'
+    PRESENCE_BUSY = 'busy'
+    PRESENCE_INVISIBLE = 'invisible'
+    PRESENCE_CHOICES = [
+        (PRESENCE_AVAILABLE, 'Available'),
+        (PRESENCE_BUSY, 'Busy'),
+        (PRESENCE_INVISIBLE, 'Invisible'),
+    ]
+    presence_status = models.CharField(
+        max_length=16, choices=PRESENCE_CHOICES, default=PRESENCE_AVAILABLE,
+    )
+    show_activity = models.BooleanField(default=True)
+    show_last_seen = models.BooleanField(default=True)
+    allow_dm = models.BooleanField(default=True)
+    allow_tags_mentions = models.BooleanField(default=True)
+
+    # --- Profil avancé ---
+    favorite_quote = models.CharField(max_length=280, blank=True, default='')
+    hobbies = models.JSONField(default=list, blank=True)
+    skills = models.JSONField(default=list, blank=True)
+    social_links = models.JSONField(default=dict, blank=True)
+
+    # --- Onboarding ---
+    onboarding_completed_at = models.DateTimeField(null=True, blank=True)
+
     @property
     def can_use_private_tags(self):
         return self.subscription_plan in {self.PLAN_PLUS, self.PLAN_PRO}
@@ -100,27 +164,40 @@ class Profile(models.Model):
         return {'private_max': 3, 'public_max': 10}
 
     def save(self, *args, **kwargs):
-        """Supprime le fichier avatar précédent du stockage si l’image est remplacée ou retirée."""
+        """Supprime les fichiers média précédents du stockage si remplacés ou retirés."""
         old_avatar_name = ''
         old_avatar_storage = None
+        old_cover_name = ''
+        old_cover_storage = None
         if self.pk:
             try:
-                prev = Profile.objects.only('avatar').get(pk=self.pk)
+                prev = Profile.objects.only('avatar', 'cover_image').get(pk=self.pk)
                 if prev.avatar:
                     old_avatar_name = prev.avatar.name
                     old_avatar_storage = prev.avatar.storage
+                if prev.cover_image:
+                    old_cover_name = prev.cover_image.name
+                    old_cover_storage = prev.cover_image.storage
             except Profile.DoesNotExist:
                 pass
 
         super().save(*args, **kwargs)
 
-        new_name = self.avatar.name if self.avatar else ''
+        new_avatar = self.avatar.name if self.avatar else ''
         if (
             old_avatar_name
-            and old_avatar_name != new_name
+            and old_avatar_name != new_avatar
             and old_avatar_storage is not None
         ):
             unlink_named(old_avatar_storage, old_avatar_name)
+
+        new_cover = self.cover_image.name if self.cover_image else ''
+        if (
+            old_cover_name
+            and old_cover_name != new_cover
+            and old_cover_storage is not None
+        ):
+            unlink_named(old_cover_storage, old_cover_name)
 
     def __str__(self):
         return f"{self.user.username}'s profile"

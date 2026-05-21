@@ -70,6 +70,7 @@ class ReferralContestHistoryView(APIView):
                     'winners': (result.winners_json if result else []),
                     'leaderboard_snapshot': (result.leaderboard_snapshot_json if result else []),
                     'stats': (result.stats_json if result else {}),
+                    'payouts': (result.payout_json if result else []),
                     'finalized_at': (result.finalized_at if result else None),
                 },
             },

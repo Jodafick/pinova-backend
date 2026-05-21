@@ -16,6 +16,7 @@ from .models import (
     PinProvenanceEvent,
     Topic,
     TopicTranslation,
+    MachineTranslationCache,
     LegalDocument,
     FaqItem,
     BoardCollaborationInvite,
@@ -39,11 +40,14 @@ class PinAdmin(admin.ModelAdmin):
         'is_story',
         'story_ephemeral',
         'story_expires_at',
+        'needs_review',
+        'media_sensitive_blur',
+        'moderation_hidden',
         'created_at',
         'likes_count',
         'saves_count',
     )
-    list_filter = ('visibility', 'is_story', 'story_ephemeral', 'created_at', 'topic')
+    list_filter = ('visibility', 'is_story', 'story_ephemeral', 'needs_review', 'created_at', 'topic')
     search_fields = ('title', 'description', 'slug', 'topic__name', 'author__username')
     raw_id_fields = ('author', 'topic')
     inlines = [PinVariantInline]
@@ -226,6 +230,31 @@ class PinProvenanceEventAdmin(admin.ModelAdmin):
 class TopicTranslationAdmin(admin.ModelAdmin):
     list_display = ('topic', 'updated_at')
     search_fields = ('topic',)
+
+
+@admin.register(MachineTranslationCache)
+class MachineTranslationCacheAdmin(admin.ModelAdmin):
+    """Entrées issues de googletrans (cache automatique) — aucune création / édition manuelle."""
+
+    list_display = ('id', 'source_lang', 'target_lang', 'text_sha256', 'hits', 'created_at')
+    list_filter = ('source_lang', 'target_lang')
+    search_fields = ('text_sha256', 'source_text', 'translated_text')
+    readonly_fields = (
+        'source_lang',
+        'target_lang',
+        'text_sha256',
+        'source_text',
+        'translated_text',
+        'created_at',
+        'hits',
+    )
+    ordering = ('-hits', '-id')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(PinViewEvent)

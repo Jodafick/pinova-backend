@@ -422,6 +422,35 @@ class TopicTranslation(models.Model):
         return self.topic
 
 
+class MachineTranslationCache(models.Model):
+    """
+    Cache persistent des résultats googletrans (traduction automatique uniquement).
+
+    Une entrée correspond à une traduction donnée pour un texte source exact déjà vue par le service :
+    évite une deuxième appel Google pour la même paire langues → même octets source.
+    """
+
+    source_lang = models.CharField(max_length=24, db_index=True)
+    target_lang = models.CharField(max_length=24, db_index=True)
+    text_sha256 = models.CharField(max_length=64, db_index=True)
+    source_text = models.TextField()
+    translated_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    hits = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-hits', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('source_lang', 'target_lang', 'text_sha256'),
+                name='uniq_mt_cache_lang_hash',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.source_lang}→{self.target_lang}:{self.text_sha256[:12]}'
+
+
 class PinViewEvent(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_view_events')
     pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='view_events')
