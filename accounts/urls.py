@@ -27,6 +27,7 @@ from .views import (
     SubscriptionInvoiceReceiptView,
     SupportTicketView,
 )
+from .reference_views import ReferenceInterestsView
 from .subscription_seat_views import (
     SubscriptionSeatAdminRevokeHubView,
     SubscriptionSeatInviteCreateView,
@@ -43,6 +44,7 @@ router.register(r'blocks', UserBlockViewSet, basename='userblock')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('reference/interests/', ReferenceInterestsView.as_view(), name='reference-interests'),
     path('register/', RegisterView.as_view(), name='register'),
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),

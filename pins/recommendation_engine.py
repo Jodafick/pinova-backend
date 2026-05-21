@@ -20,6 +20,15 @@ from .models import (
 )
 
 
+def _profile_interest_topic_ids(user) -> set[int]:
+    try:
+        from accounts.preference_utils import profile_interest_topic_ids
+
+        return set(profile_interest_topic_ids(user))
+    except Exception:
+        return set()
+
+
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_]{2,40}")
 EMBEDDING_DIM = 128
 
@@ -160,10 +169,12 @@ def rank_recommendations_for_user(user, base_queryset):
         .order_by("-created_at")[:300]
     )
     items = list(qs)
+    interest_topic_ids = _profile_interest_topic_ids(user)
     if not user_vector:
-        # Fallback froid: popularité + fraîcheur.
+        # Fallback froid: intérêts onboarding + popularité + fraîcheur.
         items.sort(
             key=lambda p: (
+                1 if interest_topic_ids and p.topic_id in interest_topic_ids else 0,
                 getattr(p, "_likes_total", 0) + getattr(p, "_saves_total", 0) * 2 + getattr(p, "_views_total", 0) * 0.2,
                 p.created_at,
             ),

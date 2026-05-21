@@ -14,7 +14,8 @@ import re
 import secrets
 import time
 import requests
-from django.db import transaction, IntegrityError
+from django.db import transaction, IntegrityError, connection
+from django.db.utils import NotSupportedError
 import logging
 from urllib.parse import urlparse
 
@@ -73,7 +74,7 @@ from .currency_utils import (
     normalize_currency,
 )
 
-from notifications.notification_i18n import create_localized_notification
+from .preference_utils import interest_slugs_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,61 @@ def _mobile_state(raw_value) -> str:
     if not value or len(value) > MOBILE_GOOGLE_STATE_MAX_LENGTH:
         return ''
     return value
+
+
+_JSON_LIST_PATCH_KEYS = frozenset({
+    'interests', 'followed_onboarding_creators', 'hobbies', 'skills', 'social_links',
+})
+
+
+def _patch_payload_from_request(request):
+    """
+    Dict plat pour ProfileSerializer.
+    QueryDict convertit les listes Python en str() (quotes simples) → JSONField DRF invalide.
+    """
+    payload = {key: request.data.get(key) for key in request.data}
+    for json_key in _JSON_LIST_PATCH_KEYS:
+        if json_key not in payload:
+            continue
+        raw = payload[json_key]
+        if isinstance(raw, list):
+            payload[json_key] = raw
+        elif isinstance(raw, str) and raw.strip():
+            try:
+                payload[json_key] = json.loads(raw)
+            except json.JSONDecodeError:
+                return None, json_key
+        elif raw in (None, ''):
+            payload[json_key] = []
+    return payload, None
+
+
+def _users_with_shared_interests(queryset, interest_slugs, *, limit=24, prefetch=200):
+    """Filtre par centres d'intérêt — fallback Python si JSON __contains indisponible (SQLite)."""
+    slugs = [str(s).strip().lower() for s in interest_slugs[:16] if str(s).strip()]
+    if not slugs:
+        return []
+
+    if connection.vendor == 'postgresql':
+        interest_q = models.Q()
+        for slug in slugs:
+            interest_q |= models.Q(profile__interests__contains=[slug])
+        try:
+            return list(queryset.filter(interest_q).order_by('-followers_total', 'username')[:limit])
+        except NotSupportedError:
+            pass
+
+    slug_set = set(slugs)
+    pool = list(queryset.order_by('-followers_total', 'username')[:prefetch])
+    matched = []
+    for user in pool:
+        raw = user.profile.interests
+        user_interests = {str(x).strip().lower() for x in raw} if isinstance(raw, list) else set()
+        if slug_set.intersection(user_interests):
+            matched.append(user)
+        if len(matched) >= limit:
+            break
+    return matched
 
 
 def _is_allowed_mobile_google_redirect_uri(raw_uri: str) -> bool:
@@ -914,6 +970,11 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             else:
                 onboarding_interests = [p.strip() for p in raw_interests.split(',') if p.strip()]
 
+        onboarding_interests = interest_slugs_for_user(
+            request.user,
+            onboarding_interests or None,
+        )
+
         country_param = (request.query_params.get('country_code') or '').strip().upper()[:2]
 
         candidates = (
@@ -923,16 +984,13 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
         if onboarding_interests:
-            interest_q = models.Q()
-            for slug in onboarding_interests[:16]:
-                interest_q |= models.Q(profile__interests__contains=[slug])
-            candidates = candidates.filter(interest_q)
             annotate_kwargs = {
                 'followers_total': models.Count('profile__followers', distinct=True),
             }
-            order_fields = []
+            order_fields: list[str] = []
+            interest_candidates = candidates.annotate(**annotate_kwargs)
             if country_param:
-                candidates = candidates.annotate(
+                interest_candidates = interest_candidates.annotate(
                     country_boost=models.Case(
                         models.When(profile__country_code=country_param, then=models.Value(1)),
                         default=models.Value(0),
@@ -940,17 +998,17 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                     ),
                 )
                 order_fields.append('-country_boost')
-            candidates = (
-                candidates.annotate(**annotate_kwargs)
-                .order_by(*order_fields, '-followers_total', 'username')[:24]
+            interest_candidates = interest_candidates.order_by(*order_fields, '-followers_total', 'username')
+            matched_users = _users_with_shared_interests(
+                interest_candidates,
+                onboarding_interests,
+                limit=24,
             )
             data = []
-            for user in candidates:
+            for user in matched_users:
                 reason = 'shared_interests'
-                if country_param and getattr(user, 'country_boost', 0):
+                if country_param and getattr(user.profile, 'country_code', '') == country_param:
                     reason = 'near_you'
-                elif not onboarding_interests:
-                    reason = 'popular'
                 data.append(
                     {
                         'username': user.username,
@@ -1059,17 +1117,9 @@ class UserMeView(APIView):
                 user.username = new_username
                 user.save()
 
-        mutable_data = request.data.copy()
-
-        for json_key in ('interests', 'followed_onboarding_creators', 'hobbies', 'skills', 'social_links'):
-            if json_key not in mutable_data:
-                continue
-            raw = mutable_data.get(json_key)
-            if isinstance(raw, str) and raw.strip():
-                try:
-                    mutable_data[json_key] = json.loads(raw)
-                except json.JSONDecodeError:
-                    return Response({json_key: ['Invalid JSON']}, status=status.HTTP_400_BAD_REQUEST)
+        mutable_data, bad_json_key = _patch_payload_from_request(request)
+        if mutable_data is None:
+            return Response({bad_json_key: ['Invalid JSON']}, status=status.HTTP_400_BAD_REQUEST)
 
         if str(mutable_data.get('complete_onboarding', '')).lower() in ('true', '1', 'yes'):
             profile.onboarding_completed_at = timezone.now()

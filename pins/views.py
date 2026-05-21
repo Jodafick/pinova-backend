@@ -22,6 +22,10 @@ from django.core.files.storage import default_storage
 from PIL import Image
 from accounts.models import Profile
 from accounts.blocking import filter_pins_exclude_blocked, blocked_mutual_user_ids
+from accounts.preference_utils import (
+    merge_profile_interests_into_topic_scores,
+    profile_interest_topic_ids,
+)
 from accounts.subscription_utils import _enforce_subscription_state
 from accounts.user_invite_lookup import resolve_user_for_invite_identifier
 from pinova_backend.media_cache import append_version_using_media_path, build_versioned_media_url
@@ -254,6 +258,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 continue
             for topic in Pin.objects.filter(topic__name__icontains=q).values_list('topic__name', flat=True).distinct()[:20]:
                 scores[topic] = scores.get(topic, 0) + 2
+        merge_profile_interests_into_topic_scores(scores, user)
         return scores
 
     def _scheduled_publish_ok_q(self):
@@ -1296,9 +1301,23 @@ class PinViewSet(viewsets.ModelViewSet):
                 )
             )
         else:
-            board_candidates = list(
-                boards_qs.annotate(pins_total=Count('pins')).order_by('-pins_total', '-created_at')[:board_limit]
-            )
+            pref_topic_ids = profile_interest_topic_ids(request.user) if request.user.is_authenticated else []
+            if pref_topic_ids:
+                board_candidates = list(
+                    boards_qs.annotate(
+                        pins_total=Count('pins'),
+                        pref_overlap=Count(
+                            'pin_board_memberships',
+                            filter=Q(pin_board_memberships__pin__topic_id__in=pref_topic_ids),
+                            distinct=True,
+                        ),
+                    )
+                    .order_by('-pref_overlap', '-pins_total', '-created_at')[:board_limit]
+                )
+            else:
+                board_candidates = list(
+                    boards_qs.annotate(pins_total=Count('pins')).order_by('-pins_total', '-created_at')[:board_limit]
+                )
         boards_data = []
         for b in board_candidates[:board_limit]:
             payload = BoardSerializer(b, context=ctx).data
@@ -1376,10 +1395,24 @@ class PinViewSet(viewsets.ModelViewSet):
             qs = Board.objects.filter(pk__in=ordered_ids).select_related('user').prefetch_related('collaborators')
             qs = qs.annotate(_sort_order=order).order_by('_sort_order', '-created_at')
         else:
-            qs = (
-                boards_qs.annotate(pins_total=Count('pins'))
-                .order_by('-pins_total', '-created_at')
-            )
+            pref_topic_ids = profile_interest_topic_ids(request.user) if request.user.is_authenticated else []
+            if pref_topic_ids:
+                qs = (
+                    boards_qs.annotate(
+                        pins_total=Count('pins'),
+                        pref_overlap=Count(
+                            'pin_board_memberships',
+                            filter=Q(pin_board_memberships__pin__topic_id__in=pref_topic_ids),
+                            distinct=True,
+                        ),
+                    )
+                    .order_by('-pref_overlap', '-pins_total', '-created_at')
+                )
+            else:
+                qs = (
+                    boards_qs.annotate(pins_total=Count('pins'))
+                    .order_by('-pins_total', '-created_at')
+                )
 
         total = qs.count()
         start = (page - 1) * page_size
@@ -1527,6 +1560,16 @@ class PinViewSet(viewsets.ModelViewSet):
                 .order_by('-interactions', 'topic_id')
             )
             suggested_ids = [row['topic_id'] for row in suggested_topics[: (200 if search_query else limit)] if row['topic_id']]
+            pref_topic_ids = profile_interest_topic_ids(request.user)
+            if pref_topic_ids:
+                merged_pref: list[int] = []
+                for tid in pref_topic_ids:
+                    if tid not in merged_pref:
+                        merged_pref.append(tid)
+                for tid in suggested_ids:
+                    if tid not in merged_pref:
+                        merged_pref.append(tid)
+                suggested_ids = merged_pref
             if suggested_ids:
                 # Garder les suggestions d'abord, puis compléter par les plus populaires.
                 popular_rows = list(topics_qs)
@@ -1536,6 +1579,16 @@ class PinViewSet(viewsets.ModelViewSet):
                     if len(merged) >= (200 if search_query else limit):
                         break
                     if row['id'] not in suggested_ids:
+                        merged.append(row)
+                topics_qs = merged[: (200 if search_query else limit)]
+            elif pref_topic_ids:
+                popular_rows = list(topics_qs)
+                topic_map = {row['id']: row for row in popular_rows}
+                merged = [topic_map[tid] for tid in pref_topic_ids if tid in topic_map]
+                for row in popular_rows:
+                    if len(merged) >= (200 if search_query else limit):
+                        break
+                    if row['id'] not in pref_topic_ids:
                         merged.append(row)
                 topics_qs = merged[: (200 if search_query else limit)]
             else:
@@ -2248,13 +2301,25 @@ class BoardViewSet(viewsets.ModelViewSet):
     def suggestions(self, request):
         """Board names inferred from author's pin topics + existing boards that match."""
         user = request.user
-        topic_rows = (
+        topic_rows = list(
             Pin.objects.filter(author=user)
             .exclude(topic__isnull=True)
             .values('topic_id', 'topic__name', 'topic__slug')
             .annotate(c=Count('id'))
             .order_by('-c')[:14]
         )
+        if not topic_rows:
+            pref_ids = profile_interest_topic_ids(user)
+            if pref_ids:
+                topic_rows = [
+                    {
+                        'topic_id': topic.id,
+                        'topic__name': topic.name,
+                        'topic__slug': topic.slug,
+                        'c': 0,
+                    }
+                    for topic in Topic.objects.filter(id__in=pref_ids, is_active=True).order_by('name')[:14]
+                ]
         topic_ids = [row['topic_id'] for row in topic_rows if row['topic_id']]
         existing_names = set(Board.objects.filter(user=user).values_list('name', flat=True))
         new_board_hints = []

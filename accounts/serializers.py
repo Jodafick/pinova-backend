@@ -25,11 +25,7 @@ from pins.moderation import validate_clean_text_fields
 ALLOWED_ACCENT_COLORS = frozenset({
     'rose', 'pink', 'violet', 'indigo', 'blue', 'cyan', 'emerald', 'amber', 'orange',
 })
-ALLOWED_INTEREST_SLUGS = frozenset({
-    'design', 'photography', 'fashion', 'music', 'sports', 'gaming', 'tech', 'travel',
-    'food', 'art', 'ai', 'anime', 'business', 'education', 'wellness', 'nature',
-    'architecture', 'cinema', 'literature', 'diy', 'parenting', 'pets', 'cars',
-})
+from .reference_data import get_allowed_interest_slugs
 SOCIAL_LINK_KEYS = frozenset({
     'instagram', 'tiktok', 'github', 'linkedin', 'youtube', 'portfolio', 'twitter', 'facebook',
 })
@@ -194,7 +190,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         return v
 
     def validate_interests(self, value):
-        return _normalize_slug_list(value, allowed=ALLOWED_INTEREST_SLUGS)
+        return _normalize_slug_list(value, allowed=get_allowed_interest_slugs())
 
     def validate_followed_onboarding_creators(self, value):
         return _normalize_slug_list(value, allowed=None, max_items=50)
