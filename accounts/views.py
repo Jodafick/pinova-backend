@@ -901,6 +901,73 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         following_ids.append(request.user.id)
         exclude_user_ids = set(following_ids) | set(blocked_mutual_user_ids(request.user))
 
+        raw_interests = (request.query_params.get('interests') or '').strip()
+        onboarding_interests = []
+        if raw_interests:
+            if raw_interests.startswith('['):
+                try:
+                    parsed = json.loads(raw_interests)
+                    if isinstance(parsed, list):
+                        onboarding_interests = [str(x).strip() for x in parsed if str(x).strip()]
+                except json.JSONDecodeError:
+                    onboarding_interests = []
+            else:
+                onboarding_interests = [p.strip() for p in raw_interests.split(',') if p.strip()]
+
+        country_param = (request.query_params.get('country_code') or '').strip().upper()[:2]
+
+        candidates = (
+            User.objects.select_related('profile')
+            .exclude(id__in=exclude_user_ids)
+            .filter(profile__discoverable_profile=True)
+        )
+
+        if onboarding_interests:
+            interest_q = models.Q()
+            for slug in onboarding_interests[:16]:
+                interest_q |= models.Q(profile__interests__contains=[slug])
+            candidates = candidates.filter(interest_q)
+            annotate_kwargs = {
+                'followers_total': models.Count('profile__followers', distinct=True),
+            }
+            order_fields = []
+            if country_param:
+                candidates = candidates.annotate(
+                    country_boost=models.Case(
+                        models.When(profile__country_code=country_param, then=models.Value(1)),
+                        default=models.Value(0),
+                        output_field=models.IntegerField(),
+                    ),
+                )
+                order_fields.append('-country_boost')
+            candidates = (
+                candidates.annotate(**annotate_kwargs)
+                .order_by(*order_fields, '-followers_total', 'username')[:24]
+            )
+            data = []
+            for user in candidates:
+                reason = 'shared_interests'
+                if country_param and getattr(user, 'country_boost', 0):
+                    reason = 'near_you'
+                elif not onboarding_interests:
+                    reason = 'popular'
+                data.append(
+                    {
+                        'username': user.username,
+                        'display_name': user.profile.display_name or user.username,
+                        'avatar_color': user.profile.avatar_color or 'bg-neutral-400',
+                        'avatar': build_versioned_media_url(request, user.profile.avatar)
+                        if user.profile.avatar and getattr(user.profile.avatar, 'name', '')
+                        else None,
+                        'is_pro': user.profile.subscription_plan == Profile.PLAN_PRO,
+                        'reason': reason,
+                    }
+                )
+            if not data:
+                onboarding_interests = []
+            else:
+                return Response({'results': data})
+
         topic_rows = (
             request.user.likes.select_related('pin')
             .exclude(pin__topic__isnull=True)
