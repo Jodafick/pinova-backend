@@ -75,7 +75,7 @@ else:
     )
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = (*default_headers, 'x-pinova-device-binding')
+CORS_ALLOW_HEADERS = (*default_headers, 'x-pinova-device-binding', 'x-pinova-lang')
 # Permet au navigateur de lire l’en-tête du compteur notifications (axios / fetch).
 CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications']
 
