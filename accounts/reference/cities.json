@@ -1,0 +1,59 @@
+{
+  "BJ": [
+    { "id": "cotonou", "nameFr": "Cotonou", "nameEn": "Cotonou" },
+    { "id": "porto-novo", "nameFr": "Porto-Novo", "nameEn": "Porto-Novo" },
+    { "id": "parakou", "nameFr": "Parakou", "nameEn": "Parakou" },
+    { "id": "abomey-calavi", "nameFr": "Abomey-Calavi", "nameEn": "Abomey-Calavi" },
+    { "id": "natitingou", "nameFr": "Natitingou", "nameEn": "Natitingou" }
+  ],
+  "TG": [
+    { "id": "lome", "nameFr": "Lomé", "nameEn": "Lome" },
+    { "id": "sokode", "nameFr": "Sokodé", "nameEn": "Sokode" },
+    { "id": "kara", "nameFr": "Kara", "nameEn": "Kara" }
+  ],
+  "CI": [
+    { "id": "abidjan", "nameFr": "Abidjan", "nameEn": "Abidjan" },
+    { "id": "yamoussoukro", "nameFr": "Yamoussoukro", "nameEn": "Yamoussoukro" },
+    { "id": "bouake", "nameFr": "Bouaké", "nameEn": "Bouake" },
+    { "id": "san-pedro", "nameFr": "San-Pédro", "nameEn": "San-Pedro" }
+  ],
+  "SN": [
+    { "id": "dakar", "nameFr": "Dakar", "nameEn": "Dakar" },
+    { "id": "saint-louis", "nameFr": "Saint-Louis", "nameEn": "Saint-Louis" },
+    { "id": "thies", "nameFr": "Thiès", "nameEn": "Thies" }
+  ],
+  "FR": [
+    { "id": "paris", "nameFr": "Paris", "nameEn": "Paris" },
+    { "id": "lyon", "nameFr": "Lyon", "nameEn": "Lyon" },
+    { "id": "marseille", "nameFr": "Marseille", "nameEn": "Marseille" },
+    { "id": "toulouse", "nameFr": "Toulouse", "nameEn": "Toulouse" },
+    { "id": "bordeaux", "nameFr": "Bordeaux", "nameEn": "Bordeaux" },
+    { "id": "lille", "nameFr": "Lille", "nameEn": "Lille" }
+  ],
+  "US": [
+    { "id": "new-york", "nameFr": "New York", "nameEn": "New York" },
+    { "id": "los-angeles", "nameFr": "Los Angeles", "nameEn": "Los Angeles" },
+    { "id": "chicago", "nameFr": "Chicago", "nameEn": "Chicago" },
+    { "id": "miami", "nameFr": "Miami", "nameEn": "Miami" },
+    { "id": "san-francisco", "nameFr": "San Francisco", "nameEn": "San Francisco" }
+  ],
+  "CA": [
+    { "id": "montreal", "nameFr": "Montréal", "nameEn": "Montreal" },
+    { "id": "toronto", "nameFr": "Toronto", "nameEn": "Toronto" },
+    { "id": "vancouver", "nameFr": "Vancouver", "nameEn": "Vancouver" }
+  ],
+  "NG": [
+    { "id": "lagos", "nameFr": "Lagos", "nameEn": "Lagos" },
+    { "id": "abuja", "nameFr": "Abuja", "nameEn": "Abuja" },
+    { "id": "port-harcourt", "nameFr": "Port Harcourt", "nameEn": "Port Harcourt" }
+  ],
+  "CM": [
+    { "id": "douala", "nameFr": "Douala", "nameEn": "Douala" },
+    { "id": "yaounde", "nameFr": "Yaoundé", "nameEn": "Yaounde" }
+  ],
+  "MA": [
+    { "id": "casablanca", "nameFr": "Casablanca", "nameEn": "Casablanca" },
+    { "id": "rabat", "nameFr": "Rabat", "nameEn": "Rabat" },
+    { "id": "marrakech", "nameFr": "Marrakech", "nameEn": "Marrakech" }
+  ]
+}

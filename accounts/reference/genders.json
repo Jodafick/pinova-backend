@@ -1,0 +1,7 @@
+[
+  { "id": "", "nameFr": "Ne pas préciser", "nameEn": "Prefer not to say", "nameFon": "Mà ɖò fɔ́" },
+  { "id": "woman", "nameFr": "Femme", "nameEn": "Woman", "nameFon": "Ayí" },
+  { "id": "man", "nameFr": "Homme", "nameEn": "Man", "nameFon": "Ènɔ̀" },
+  { "id": "non_binary", "nameFr": "Non-binaire", "nameEn": "Non-binary", "nameFon": "Non-binaire" },
+  { "id": "other", "nameFr": "Autre", "nameEn": "Other", "nameFon": "Bubú" }
+]

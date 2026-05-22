@@ -1,0 +1,11 @@
+[
+  { "id": "rose", "hex": "#e11d48", "nameFr": "Rose Pinova", "nameEn": "Pinova Rose", "nameFon": "Rose Pinova" },
+  { "id": "pink", "hex": "#ec4899", "nameFr": "Rose clair", "nameEn": "Light pink", "nameFon": "Rose kpɛ́kpɛ́" },
+  { "id": "violet", "hex": "#8b5cf6", "nameFr": "Violet", "nameEn": "Violet", "nameFon": "Violet" },
+  { "id": "indigo", "hex": "#6366f1", "nameFr": "Indigo", "nameEn": "Indigo", "nameFon": "Indigo" },
+  { "id": "blue", "hex": "#3b82f6", "nameFr": "Bleu", "nameEn": "Blue", "nameFon": "Sín" },
+  { "id": "cyan", "hex": "#06b6d4", "nameFr": "Cyan", "nameEn": "Cyan", "nameFon": "Cyan" },
+  { "id": "emerald", "hex": "#10b981", "nameFr": "Émeraude", "nameEn": "Emerald", "nameFon": "Émeraude" },
+  { "id": "amber", "hex": "#f59e0b", "nameFr": "Ambre", "nameEn": "Amber", "nameFon": "Ambre" },
+  { "id": "orange", "hex": "#f97316", "nameFr": "Orange", "nameEn": "Orange", "nameFon": "Orange" }
+]

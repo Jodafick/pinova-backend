@@ -1,0 +1,7 @@
+[
+  { "id": "", "nameFr": "Ne pas préciser", "nameEn": "Prefer not to say", "nameFon": "Mà ɖò fɔ́" },
+  { "id": "il", "nameFr": "Il / Lui", "nameEn": "He / Him", "nameFon": "È / Ènyɔ̀" },
+  { "id": "elle", "nameFr": "Elle / Elle", "nameEn": "She / Her", "nameFon": "Ayí / Ayí" },
+  { "id": "iel", "nameFr": "Iel / Ellui", "nameEn": "They / Them", "nameFon": "Alɔ / Alɔ" },
+  { "id": "custom", "nameFr": "Personnalisé", "nameEn": "Custom", "nameFon": "Tɔ́n tɔ́n" }
+]
