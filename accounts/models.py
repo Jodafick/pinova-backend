@@ -73,6 +73,8 @@ class Profile(models.Model):
     sensitive_media_blur_by_default = models.BooleanField(default=True)
     # Majeur vérifié : masque les pins d’autrui marquées sensibles (flux, tableau, détail renvoie 404).
     hide_sensitive_pins = models.BooleanField(default=False)
+    ad_ads_enabled = models.BooleanField(default=True)
+    partner_ads_enabled = models.BooleanField(default=True)
 
     # --- Identité étendue ---
     first_name = models.CharField(max_length=80, blank=True, default='')

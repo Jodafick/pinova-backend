@@ -121,6 +121,7 @@ INSTALLED_APPS = [
     'notifications',
     'contests',
     'referrals',
+    'monetization',
 ]
 
 SITE_ID = 1

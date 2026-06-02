@@ -402,6 +402,15 @@ class PinViewSet(viewsets.ModelViewSet):
             queryset = queryset.annotate(_saved_at=Subquery(saved_at_sub)).order_by('-_saved_at')
         return exclude_ephemeral_story_only(queryset)
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        topic = (request.query_params.get('topic') or '').strip()
+        from monetization.services import apply_boost_to_pin_queryset
+
+        if getattr(self, 'action', None) == 'list' and not (request.query_params.get('author') or '').strip():
+            queryset = apply_boost_to_pin_queryset(queryset)
+        return self._feed_response_with_ads(request, queryset, topic=topic)
+
     def create(self, request, *args, **kwargs):
         existing = self._idempotent_upload_response(request)
         if existing is not None:
@@ -1163,17 +1172,24 @@ class PinViewSet(viewsets.ModelViewSet):
 
         return Response({'status': 'liked', 'likes_count': comment.comment_likes.count()})
 
+    def _feed_response_with_ads(self, request, page_items, topic: str = ''):
+        from monetization.feed_response import build_feed_paginated_response
+
+        page = self.paginate_queryset(page_items)
+        if page is not None:
+            return build_feed_paginated_response(self, request, page, topic=topic)
+        serializer = self.get_serializer(page_items, many=True)
+        from monetization.services import interleave_partner_ads
+
+        results = interleave_partner_ads(request, list(serializer.data), topic=topic, page_number=1)
+        return Response(results)
+
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):
         base_queryset = self.get_queryset().exclude(author=request.user)
         recommendations = rank_recommendations_for_user(request.user, base_queryset)
-        page = self.paginate_queryset(recommendations)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-
-        serializer = self.get_serializer(recommendations, many=True)
-        return Response(serializer.data)
+        topic = (request.query_params.get('topic') or '').strip()
+        return self._feed_response_with_ads(request, recommendations, topic=topic)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def following(self, request):
@@ -1185,12 +1201,8 @@ class PinViewSet(viewsets.ModelViewSet):
             .exclude(author=request.user)
             .order_by('media_sensitive_blur', '-created_at')
         )
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        topic = (request.query_params.get('topic') or '').strip()
+        return self._feed_response_with_ads(request, queryset, topic=topic)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='discover')
     def discover(self, request):
@@ -1203,12 +1215,10 @@ class PinViewSet(viewsets.ModelViewSet):
         q_disc = (request.query_params.get('q') or '').strip()
         if q_disc:
             queryset = queryset.filter(broad_pin_q(q_disc))
-        page = self.paginate_queryset(queryset.order_by('media_sensitive_blur', '-created_at'))
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        from monetization.services import apply_boost_to_pin_queryset
+
+        queryset = apply_boost_to_pin_queryset(queryset)
+        return self._feed_response_with_ads(request, queryset, topic=topic)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='header-search')
     def header_search(self, request):
@@ -1483,15 +1493,7 @@ class PinViewSet(viewsets.ModelViewSet):
         if not following_items:
             mixed = discover_items
 
-        # Correction : Pagination directe sur le QuerySet ou la liste
-        page = self.paginate_queryset(mixed)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-
-        # Fallback (si pagination désactivée ou échouée sur la liste)
-        serializer = self.get_serializer(mixed, many=True)
-        return Response(serializer.data)
+        return self._feed_response_with_ads(request, mixed, topic=topic)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def topics(self, request):

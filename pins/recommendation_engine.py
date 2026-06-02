@@ -131,6 +131,19 @@ def update_user_embedding(user) -> None:
     )
 
 
+def _boost_bonus(pin: Pin) -> float:
+    from monetization.models import PinBoost
+    from django.utils import timezone
+
+    if PinBoost.objects.filter(
+        pin=pin,
+        status=PinBoost.STATUS_ACTIVE,
+        ends_at__gt=timezone.now(),
+    ).exists():
+        return 0.35
+    return 0.0
+
+
 def recommendation_score(pin: Pin, user, user_vector: list[float], followed_creator_ids: set[int]) -> float:
     emb_obj = getattr(pin, "embedding_profile", None)
     pin_vec = emb_obj.embedding if emb_obj and emb_obj.embedding else []
@@ -144,12 +157,23 @@ def recommendation_score(pin: Pin, user, user_vector: list[float], followed_crea
     engagement = min(1.0, (getattr(pin, "_views_total", 0) / 600.0))
     affinity = 1.0 if pin.author_id in followed_creator_ids else 0.0
 
+    boost_bonus = 0.0
+    from monetization.models import PinBoost
+
+    if PinBoost.objects.filter(
+        pin=pin,
+        status=PinBoost.STATUS_ACTIVE,
+        ends_at__gt=now,
+    ).exists():
+        boost_bonus = 0.35
+
     score = (
         similarity * 0.50
         + popularity * 0.15
         + freshness * 0.15
         + affinity * 0.10
         + engagement * 0.10
+        + boost_bonus
     )
     return score
 

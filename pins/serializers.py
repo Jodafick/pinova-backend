@@ -394,6 +394,7 @@ class PinSerializer(serializers.ModelSerializer):
     is_liked = serializers.SerializerMethodField()
     is_saved = serializers.SerializerMethodField()
     viewer_has_reported = serializers.SerializerMethodField()
+    is_boosted = serializers.SerializerMethodField()
     hashtags = serializers.SerializerMethodField()
     private_tags = serializers.SerializerMethodField()
     private_tags_input = serializers.ListField(
@@ -452,6 +453,7 @@ class PinSerializer(serializers.ModelSerializer):
             'is_saved',
             'viewer_has_reported',
             'media_sensitive_blur',
+            'is_boosted',
         ]
         read_only_fields = ['story_expires_at', 'needs_review', 'story_ephemeral']
         extra_kwargs = {
@@ -666,6 +668,19 @@ class PinSerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated:
             return False
         return ContentReport.objects.filter(reporter=request.user, pin=obj).exists()
+
+    def get_is_boosted(self, obj):
+        from monetization.models import PinBoost
+        from django.utils import timezone
+
+        now = timezone.now()
+        if hasattr(obj, '_is_boosted_cached'):
+            return bool(obj._is_boosted_cached)
+        return PinBoost.objects.filter(
+            pin=obj,
+            status=PinBoost.STATUS_ACTIVE,
+            ends_at__gt=now,
+        ).exists()
 
     def get_hashtags(self, obj):
         return [f"#{h.name}" for h in obj.hashtags.all()]

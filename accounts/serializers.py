@@ -138,6 +138,8 @@ class ProfileSerializer(serializers.ModelSerializer):
             'birth_date',
             'sensitive_media_blur_by_default',
             'hide_sensitive_pins',
+            'ad_ads_enabled',
+            'partner_ads_enabled',
         ]
         read_only_fields = [
             'username', 'email', 'followers_count', 'following_count', 'is_following',
@@ -275,6 +277,7 @@ class UserSerializer(serializers.ModelSerializer):
     pins_count = serializers.SerializerMethodField()
     blocked_usernames = serializers.SerializerMethodField()
     viewer_has_reported_profile = serializers.SerializerMethodField()
+    is_staff = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -289,6 +292,7 @@ class UserSerializer(serializers.ModelSerializer):
             'pins_count',
             'blocked_usernames',
             'viewer_has_reported_profile',
+            'is_staff',
         ]
 
     def get_pins_count(self, obj):
@@ -422,6 +426,8 @@ class UserSerializer(serializers.ModelSerializer):
                 True,
             ),
             'hide_sensitive_pins': bool(getattr(profile, 'hide_sensitive_pins', False)),
+            'ad_ads_enabled': bool(getattr(profile, 'ad_ads_enabled', True)),
+            'partner_ads_enabled': bool(getattr(profile, 'partner_ads_enabled', True)),
         }
         from .subscription_seats import max_invitees_for_bundle, owner_eligible_as_seat_hub
 

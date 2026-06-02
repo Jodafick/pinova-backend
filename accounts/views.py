@@ -1153,6 +1153,22 @@ class UserMeView(APIView):
                 str(mutable_data.get('sensitive_media_blur_by_default')).lower() == 'true'
             )
 
+        if profile.subscription_plan == Profile.PLAN_FREE:
+            mutable_data.pop('ad_ads_enabled', None)
+            mutable_data.pop('partner_ads_enabled', None)
+        elif profile.subscription_plan == Profile.PLAN_PLUS:
+            mutable_data.pop('partner_ads_enabled', None)
+            if 'ad_ads_enabled' in mutable_data:
+                mutable_data['ad_ads_enabled'] = str(mutable_data.get('ad_ads_enabled')).lower() in (
+                    'true',
+                    '1',
+                    'yes',
+                )
+        else:
+            for ad_key in ('ad_ads_enabled', 'partner_ads_enabled'):
+                if ad_key in mutable_data:
+                    mutable_data[ad_key] = str(mutable_data.get(ad_key)).lower() in ('true', '1', 'yes')
+
         if 'hide_sensitive_pins' in mutable_data:
             from pins.visibility import profile_is_verified_adult as _profile_verified_adult
 
@@ -1917,13 +1933,19 @@ class SubscriptionWebhookView(APIView):
         if not tx_id:
             return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         status_value = _fedapay_webhook_status(dict(request.data))
+        approved_statuses = {'approved', 'success', 'successful', 'completed'}
         payment = SubscriptionPayment.objects.filter(fedapay_transaction_id=tx_id).select_related('user', 'user__profile').first()
         if not payment:
+            if status_value in approved_statuses:
+                from monetization.views import approve_boost_payment
+
+                boost_status = approve_boost_payment(tx_id, dict(request.data))
+                if boost_status == 'approved':
+                    return Response({'status': 'boost_approved'})
             return Response({'status': 'ignored_unknown_transaction'}, status=status.HTTP_202_ACCEPTED)
         payload = dict(payment.fedapay_payload or {})
         payload['webhook'] = request.data
         payment.fedapay_payload = payload
-        approved_statuses = {'approved', 'success', 'successful', 'completed'}
         if status_value in approved_statuses:
             seat_bundle_pay = _normalized_seat_bundle(payment.promo_bundle)
             catalog = _catalog_entry(payment.plan, payment.billing_cycle, seat_bundle_pay)
