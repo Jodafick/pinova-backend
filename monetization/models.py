@@ -104,3 +104,110 @@ class PinBoost(models.Model):
         if self.ends_at and timezone.now() > self.ends_at:
             return False
         return True
+
+
+class TipPlatformConfig(models.Model):
+    """Singleton — commission et limites pourboires internes."""
+
+    commission_percent = models.PositiveSmallIntegerField(
+        default=10,
+        help_text='Part prélevée par Pinova sur chaque pourboire (ex. 10 = 10 %).',
+    )
+    min_tip_amount = models.PositiveIntegerField(default=500)
+    max_tip_amount = models.PositiveIntegerField(default=500_000)
+    min_withdrawal_amount = models.PositiveIntegerField(default=5000)
+    currency_iso = models.CharField(max_length=10, default='XOF')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Tip platform config'
+
+    def __str__(self):
+        return f'Tip config ({self.commission_percent} %)'
+
+    @classmethod
+    def load(cls) -> 'TipPlatformConfig':
+        row, _ = cls.objects.get_or_create(pk=1)
+        return row
+
+
+class CreatorWallet(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='creator_wallet')
+    balance_available = models.PositiveIntegerField(default=0)
+    balance_reserved = models.PositiveIntegerField(default=0)
+    currency_iso = models.CharField(max_length=10, default='XOF')
+    total_received_gross = models.PositiveBigIntegerField(default=0)
+    total_received_net = models.PositiveBigIntegerField(default=0)
+    total_withdrawn = models.PositiveBigIntegerField(default=0)
+    payout_phone = models.CharField(max_length=32, blank=True, default='')
+    payout_label = models.CharField(max_length=80, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Creator wallet'
+
+    def __str__(self):
+        return f'wallet:{self.user_id}:{self.balance_available}'
+
+
+class TipTransaction(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_FAILED = 'failed'
+    STATUS_CANCELED = 'canceled'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_CANCELED, 'Canceled'),
+    ]
+
+    donor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tips_sent')
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tips_received')
+    pin = models.ForeignKey('pins.Pin', null=True, blank=True, on_delete=models.SET_NULL, related_name='tips')
+    amount_gross = models.PositiveIntegerField()
+    commission_amount = models.PositiveIntegerField()
+    amount_net = models.PositiveIntegerField()
+    currency_iso = models.CharField(max_length=10, default='XOF')
+    message = models.CharField(max_length=280, blank=True, default='')
+    fedapay_transaction_id = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    fedapay_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'tip:{self.id}:{self.status}'
+
+
+class TipWithdrawal(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_PAID = 'paid'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+        (STATUS_PAID, 'Paid'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tip_withdrawals')
+    amount = models.PositiveIntegerField()
+    currency_iso = models.CharField(max_length=10, default='XOF')
+    payout_phone = models.CharField(max_length=32)
+    payout_label = models.CharField(max_length=80, blank=True, default='')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    admin_note = models.CharField(max_length=400, blank=True, default='')
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'withdraw:{self.user_id}:{self.amount}:{self.status}'

@@ -74,6 +74,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     followers_count = serializers.SerializerMethodField()
     following_count = serializers.SerializerMethodField()
     is_following = serializers.SerializerMethodField()
+    tips_internal_enabled = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
@@ -125,7 +126,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'preferred_currency',
             'country_code',
             'tips_enabled',
-            'tips_url',
+            'tips_internal_enabled',
             'private_profile',
             'notifications_followers',
             'notifications_saves',
@@ -228,6 +229,9 @@ class ProfileSerializer(serializers.ModelSerializer):
             return request.user.profile.following.filter(id=obj.id).exists()
         return False
 
+    def get_tips_internal_enabled(self, obj):
+        return obj.subscription_plan == Profile.PLAN_PRO and bool(obj.tips_enabled)
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get('request')
@@ -244,6 +248,7 @@ class ProfileSerializer(serializers.ModelSerializer):
                 data['avatar'] = build_versioned_media_url(request, instance.avatar)
             if getattr(instance, 'cover_image', None) and getattr(instance.cover_image, 'name', None):
                 data['cover_image'] = build_versioned_media_url(request, instance.cover_image)
+        data.pop('tips_url', None)
         return data
 
 

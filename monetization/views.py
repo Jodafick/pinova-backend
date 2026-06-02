@@ -1,17 +1,15 @@
 import logging
 import os
 
-import requests
 from django.conf import settings
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import Profile
 from pins.models import Pin
 
+from .fedapay_client import create_fedapay_checkout, fedapay_headers, payments_sandbox_allowed
 from .models import BoostPackage, PartnerCampaign, PinBoost
 from .serializers import (
     BoostPackageSerializer,
@@ -111,9 +109,9 @@ class PinBoostCheckoutView(APIView):
             status=PinBoost.STATUS_PENDING,
         )
 
-        secret = os.environ.get('FEDAPAY_SECRET_KEY', '').strip()
+        secret = fedapay_headers()
         if not secret:
-            if settings.DEBUG or os.environ.get('BOOST_SANDBOX_ACTIVATE', '').lower() == 'true':
+            if payments_sandbox_allowed():
                 activate_pin_boost(boost)
                 return Response({
                     'status': 'active',
@@ -123,7 +121,14 @@ class PinBoostCheckoutView(APIView):
                 })
             return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        checkout = _create_fedapay_boost_checkout(request, boost, package)
+        checkout = create_fedapay_checkout(
+            request=request,
+            description=f'Pinova boost · {package.label} · pin {boost.pin.slug}',
+            amount=int(package.amount),
+            currency_iso=package.currency_iso,
+            callback_url=os.environ.get('FEDAPAY_BOOST_CALLBACK_URL')
+            or f"{str(settings.FRONTEND_URL).rstrip('/')}/profile/{request.user.username}",
+        )
         if checkout.get('error'):
             boost.status = PinBoost.STATUS_CANCELED
             boost.save(update_fields=['status', 'updated_at'])
@@ -136,88 +141,6 @@ class PinBoostCheckoutView(APIView):
             'checkout_url': checkout.get('checkout_url'),
             'transaction_id': checkout['transaction_id'],
         })
-
-
-def _fedapay_base_url():
-    env = os.environ.get('FEDAPAY_ENV', 'sandbox').strip().lower()
-    if env == 'live':
-        return 'https://api.fedapay.com/v1'
-    return 'https://sandbox-api.fedapay.com/v1'
-
-
-def _create_fedapay_boost_checkout(request, boost: PinBoost, package: BoostPackage) -> dict:
-    secret = os.environ.get('FEDAPAY_SECRET_KEY', '').strip()
-    headers = {
-        'Authorization': f'Bearer {secret}',
-        'Content-Type': 'application/json',
-    }
-    default_callback = f"{str(settings.FRONTEND_URL).rstrip('/')}/profile/{request.user.username}"
-    callback_url = os.environ.get('FEDAPAY_BOOST_CALLBACK_URL') or default_callback
-    payload = {
-        'description': f'Pinova boost · {package.label} · pin {boost.pin.slug}',
-        'amount': int(package.amount),
-        'currency': {'iso': package.currency_iso},
-        'callback_url': callback_url,
-        'customer': {
-            'email': request.user.email or f'{request.user.username}@pinova.local',
-            'firstname': request.user.username[:50],
-            'lastname': 'Pinova',
-        },
-    }
-    try:
-        create_resp = requests.post(
-            f'{_fedapay_base_url()}/transactions',
-            json=payload,
-            headers=headers,
-            timeout=30,
-        )
-        if create_resp.status_code >= 400:
-            logger.error('FedaPay boost create failed: %s', create_resp.text)
-            return {'error': 'FedaPay transaction create failed'}
-        body = create_resp.json()
-        tx_id = _extract_tx_id(body)
-        if not tx_id:
-            return {'error': 'Invalid FedaPay response'}
-        token_resp = requests.post(
-            f'{_fedapay_base_url()}/transactions/{tx_id}/token',
-            headers=headers,
-            timeout=30,
-        )
-        checkout_url = None
-        if token_resp.status_code < 400:
-            token_body = token_resp.json()
-            checkout_url = _extract_checkout_url(token_body)
-        return {'transaction_id': str(tx_id), 'checkout_url': checkout_url}
-    except requests.RequestException as exc:
-        logger.exception('FedaPay boost request failed: %s', exc)
-        return {'error': 'FedaPay unavailable'}
-
-
-def _extract_tx_id(payload):
-    if not isinstance(payload, dict):
-        return None
-    if payload.get('id'):
-        return payload.get('id')
-    for key in ('transaction', 'data', 'v1/transaction'):
-        nested = payload.get(key)
-        if isinstance(nested, dict) and nested.get('id'):
-            return nested.get('id')
-    return None
-
-
-def _extract_checkout_url(payload):
-    if not isinstance(payload, dict):
-        return None
-    for key in ('url', 'payment_url', 'redirect_url'):
-        if payload.get(key):
-            return payload.get(key)
-    for key in ('token', 'data'):
-        nested = payload.get(key)
-        if isinstance(nested, dict):
-            for nk in ('url', 'payment_url', 'redirect_url'):
-                if nested.get(nk):
-                    return nested.get(nk)
-    return None
 
 
 def approve_boost_payment(transaction_id: str, webhook_payload: dict) -> str:

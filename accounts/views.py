@@ -1126,10 +1126,10 @@ class UserMeView(APIView):
             profile.save(update_fields=['onboarding_completed_at'])
             mutable_data.pop('complete_onboarding', None)
 
-        # Tips & monetization are reserved for Pro.
+        # Tips internes : plus de lien externe.
         if profile.subscription_plan != Profile.PLAN_PRO:
             mutable_data['tips_enabled'] = False
-            mutable_data['tips_url'] = ''
+        mutable_data.pop('tips_url', None)
 
         if 'private_profile' in mutable_data:
             mutable_data['private_profile'] = str(mutable_data.get('private_profile')).lower() == 'true'
@@ -1937,6 +1937,11 @@ class SubscriptionWebhookView(APIView):
         payment = SubscriptionPayment.objects.filter(fedapay_transaction_id=tx_id).select_related('user', 'user__profile').first()
         if not payment:
             if status_value in approved_statuses:
+                from monetization.tip_views import approve_tip_payment_by_tx
+
+                tip_status = approve_tip_payment_by_tx(tx_id, dict(request.data))
+                if tip_status == 'approved':
+                    return Response({'status': 'tip_approved'})
                 from monetization.views import approve_boost_payment
 
                 boost_status = approve_boost_payment(tx_id, dict(request.data))

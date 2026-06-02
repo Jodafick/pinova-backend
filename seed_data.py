@@ -28,6 +28,8 @@ CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent 
 ExpoPushToken (jeton factice mobile, idempotent par user id).
 Stories : finalisation alignée sur `pins/active-stories` (éphémères + `story_expires_at` futur).
 Concours parrainage : `ReferrerReferralScore` + `ReferralLeaderboardEvent` (scores ≥ seuil API).
+Monétisation : `BoostPackage` ; `PartnerCampaign` (pubs fil) ; `PinBoost` (pins boostés actifs / expirés).
+Préférences pub sur `Profile` : `ad_ads_enabled`, `partner_ads_enabled` (selon plan).
 
 Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
 """
@@ -91,6 +93,16 @@ from contests.models import (
     PinContestScore,
 )
 from referrals.models import ReferralContestSettings, ReferralLeaderboardEvent, ReferrerReferralScore
+from monetization.models import (
+    BoostPackage,
+    CreatorWallet,
+    PartnerCampaign,
+    PinBoost,
+    TipPlatformConfig,
+    TipTransaction,
+    TipWithdrawal,
+)
+from monetization.tip_services import approve_tip_payment, get_or_create_wallet, split_tip_amount, tip_config
 from referrals.referral_contest_cache import invalidate_referral_leaderboard_cache
 from referrals.services import MIN_REFERRAL_LEADERBOARD_SCORE
 from contests.services import (
@@ -463,6 +475,279 @@ def cleanup_relational_data():
     PinContestScore.objects.all().delete()
     ContestInteractionEvent.objects.all().delete()
     ContestSettings.objects.all().delete()
+
+    TipWithdrawal.objects.all().delete()
+    TipTransaction.objects.all().delete()
+    CreatorWallet.objects.all().delete()
+    PinBoost.objects.all().delete()
+    PartnerCampaign.objects.all().delete()
+
+
+def seed_boost_packages() -> None:
+    """Catalogue boost (aligné migration monetization 0002)."""
+    catalog = [
+        ('24h', 'Boost 24 h', 24, 1500),
+        ('72h', 'Boost 3 jours', 72, 3500),
+        ('7d', 'Boost 7 jours', 168, 7500),
+    ]
+    for slug, label, hours, amount in catalog:
+        BoostPackage.objects.update_or_create(
+            slug=slug,
+            defaults={
+                'label': label,
+                'duration_hours': hours,
+                'amount': amount,
+                'currency_iso': 'XOF',
+                'is_active': True,
+            },
+        )
+    logger.info('BoostPackage à jour.')
+
+
+def attach_partner_campaign_image(campaign: PartnerCampaign, seed_key: str, skip_network: bool) -> None:
+    temp_img, fname = fetch_seed_image_file(seed_key, skip_network)
+    try:
+        if temp_img:
+            campaign.image.save(fname or f'{seed_key}.jpg', File(temp_img), save=True)
+        elif skip_network:
+            campaign.image.save(
+                f'{seed_key}.png',
+                ContentFile(placeholder_png_bytes(seed_key)),
+                save=True,
+            )
+    finally:
+        if temp_img:
+            temp_img.close()
+
+
+def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_network: bool) -> None:
+    """Campagnes partenaire visibles dans les fils (démo)."""
+    now = dj_tz.now()
+    frontend = str(getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:5174').rstrip('/')
+    specs = [
+        {
+            'title': 'Pinova Plus — printemps créatif',
+            'body': 'Passez en Plus : moins de pubs réseau, tags privés illimités et boards collaboratifs.',
+            'sponsor_name': 'Pinova',
+            'cta_label': 'Voir les offres',
+            'cta_url': f'{frontend}/premium',
+            'topic_slug': '',
+            'priority': 30,
+            'impressions': 240,
+            'clicks': 19,
+            'seed_key': 'partner_pinova_plus',
+        },
+        {
+            'title': 'Atelier déco — mobilier afro-contemporain',
+            'body': 'Nouvelle collection limitée : textiles, lampes et accessoires faits main.',
+            'sponsor_name': 'Atelier Kente Home',
+            'cta_label': 'Découvrir',
+            'cta_url': 'https://example.com/kente-home',
+            'topic_slug': 'Maison et déco',
+            'priority': 22,
+            'impressions': 88,
+            'clicks': 6,
+            'seed_key': 'partner_deco',
+        },
+        {
+            'title': 'Voyages — circuits Afrique de l’Ouest',
+            'body': 'Dakar, Accra, Lomé : petits groupes, guides locaux, départs toute l’année.',
+            'sponsor_name': 'Teranga Routes',
+            'cta_label': 'Réserver',
+            'cta_url': 'https://example.com/teranga-routes',
+            'topic_slug': 'Voyages',
+            'priority': 20,
+            'impressions': 64,
+            'clicks': 4,
+            'seed_key': 'partner_travel',
+        },
+        {
+            'title': 'Campagne expirée (seed)',
+            'body': 'Ne doit pas apparaître dans le fil.',
+            'sponsor_name': 'Archive',
+            'cta_label': 'Lien',
+            'cta_url': 'https://example.com/expired',
+            'topic_slug': '',
+            'priority': 5,
+            'impressions': 400,
+            'clicks': 0,
+            'is_active': True,
+            'ends_at': now - timedelta(days=2),
+            'seed_key': 'partner_expired',
+        },
+        {
+            'title': 'Campagne désactivée (seed)',
+            'body': 'is_active=False — test admin.',
+            'sponsor_name': 'Off',
+            'cta_label': '—',
+            'cta_url': 'https://example.com/off',
+            'topic_slug': '',
+            'priority': 1,
+            'is_active': False,
+            'seed_key': 'partner_inactive',
+        },
+    ]
+    for row in specs:
+        topic_slug = row['topic_slug']
+        if topic_slug and topic_slug not in topics_by_name:
+            topic_slug = ''
+        campaign, created = PartnerCampaign.objects.update_or_create(
+            title=row['title'],
+            defaults={
+                'body': row['body'],
+                'sponsor_name': row['sponsor_name'],
+                'cta_label': row['cta_label'],
+                'cta_url': row['cta_url'],
+                'topic_slug': topic_slug,
+                'priority': row['priority'],
+                'is_active': row.get('is_active', True),
+                'starts_at': row.get('starts_at', now - timedelta(days=7)),
+                'ends_at': row.get('ends_at', now + timedelta(days=60)),
+                'impressions': row.get('impressions', 0),
+                'clicks': row.get('clicks', 0),
+                'created_by': admin,
+            },
+        )
+        if created or not campaign.image:
+            attach_partner_campaign_image(campaign, row['seed_key'], skip_network)
+    logger.info('PartnerCampaign : %d campagnes seed.', PartnerCampaign.objects.filter(is_active=True).count())
+
+
+def seed_pin_boosts(public_pins: list[Pin]) -> None:
+    """Pins boostés pour tester badge fil + ranking discover."""
+    pkg_24 = BoostPackage.objects.filter(slug='24h', is_active=True).first()
+    pkg_72 = BoostPackage.objects.filter(slug='72h', is_active=True).first()
+    if not pkg_24:
+        logger.warning('PinBoost seed ignoré (BoostPackage 24h absent).')
+        return
+
+    now = dj_tz.now()
+    boosts_created = 0
+
+    def _pin_candidates(username: str, limit: int = 6) -> list[Pin]:
+        author = User.objects.filter(username=username).first()
+        if not author:
+            return []
+        return [
+            p
+            for p in public_pins
+            if p.author_id == author.id and not p.is_story and p.visibility == Pin.VISIBILITY_PUBLIC
+        ][:limit]
+
+    david = User.objects.filter(username='david1anato').first()
+    if david:
+        for pin in _pin_candidates('david1anato', 4)[:3]:
+            PinBoost.objects.create(
+                pin=pin,
+                owner=david,
+                package=pkg_24,
+                status=PinBoost.STATUS_ACTIVE,
+                starts_at=now - timedelta(hours=3),
+                ends_at=now + timedelta(hours=21),
+            )
+            boosts_created += 1
+        extra = _pin_candidates('david1anato', 5)
+        if len(extra) > 3 and pkg_72:
+            PinBoost.objects.create(
+                pin=extra[3],
+                owner=david,
+                package=pkg_72,
+                status=PinBoost.STATUS_EXPIRED,
+                starts_at=now - timedelta(days=4),
+                ends_at=now - timedelta(days=1),
+            )
+            boosts_created += 1
+
+    for uname in ('clara', 'max', 'emma'):
+        author = User.objects.filter(username=uname).first()
+        if not author:
+            continue
+        pins_u = _pin_candidates(uname, 2)
+        if not pins_u:
+            continue
+        PinBoost.objects.create(
+            pin=pins_u[0],
+            owner=author,
+            package=pkg_24,
+            status=PinBoost.STATUS_ACTIVE,
+            starts_at=now - timedelta(hours=1),
+            ends_at=now + timedelta(hours=23),
+        )
+        boosts_created += 1
+
+    logger.info('PinBoost : %d entrées seed (actifs + expiré).', boosts_created)
+
+
+def seed_profile_ad_preferences(profiles_by_username: dict[str, Profile]) -> None:
+    """Préférences publicitaires démo (cohérentes avec les plans)."""
+    for uname, profile in profiles_by_username.items():
+        plan = profile.subscription_plan
+        if plan == Profile.PLAN_FREE:
+            profile.ad_ads_enabled = True
+            profile.partner_ads_enabled = True
+        elif plan == Profile.PLAN_PLUS:
+            profile.ad_ads_enabled = uname in ('leo', 'sofia')
+            profile.partner_ads_enabled = True
+        else:
+            profile.ad_ads_enabled = uname in ('max',)
+            profile.partner_ads_enabled = uname not in ('clara', 'david1anato')
+        profile.save(update_fields=['ad_ads_enabled', 'partner_ads_enabled'])
+    logger.info('Préférences publicitaires profils seed à jour.')
+
+
+def seed_internal_tips(public_pins: list[Pin]) -> None:
+    """Portefeuilles et pourboires internes approuvés (démo)."""
+    TipPlatformConfig.load()
+    david = User.objects.filter(username='david1anato').first()
+    clara = User.objects.filter(username='clara').first()
+    max_user = User.objects.filter(username='max').first()
+    if not david:
+        return
+    cfg = tip_config()
+    wallet = get_or_create_wallet(david)
+    wallet.payout_phone = '+22990123456'
+    wallet.payout_label = 'Mobile Money'
+    wallet.save(update_fields=['payout_phone', 'payout_label', 'updated_at'])
+
+    donors = [u for u in (clara, max_user) if u]
+    pin = next((p for p in public_pins if p.author_id == david.id), None)
+    amounts = [1000, 2500, 5000]
+    for donor, amount in zip(donors, amounts[: len(donors)]):
+        commission, net = split_tip_amount(amount, cfg.commission_percent)
+        tip = TipTransaction.objects.create(
+            donor=donor,
+            recipient=david,
+            pin=pin,
+            amount_gross=amount,
+            commission_amount=commission,
+            amount_net=net,
+            currency_iso=cfg.currency_iso,
+            message='Merci pour ton travail !',
+            fedapay_transaction_id=f'seed_tip_{donor.id}_{amount}',
+            status=TipTransaction.STATUS_PENDING,
+        )
+        approve_tip_payment(tip)
+    wallet.refresh_from_db()
+    logger.info(
+        'Pourboires internes seed : wallet david solde=%s %s.',
+        wallet.balance_available,
+        wallet.currency_iso,
+    )
+
+
+def seed_monetization(
+    admin: User,
+    public_pins: list[Pin],
+    topics_by_name: dict[str, Topic],
+    profiles_by_username: dict[str, Profile],
+    skip_network: bool,
+) -> None:
+    logger.info('Monétisation (boost, pubs partenaire, prefs pub, pourboires)…')
+    seed_boost_packages()
+    seed_profile_ad_preferences(profiles_by_username)
+    seed_partner_campaigns(admin, topics_by_name, skip_network)
+    seed_pin_boosts(public_pins)
+    seed_internal_tips(public_pins)
 
 
 def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None:
@@ -1307,8 +1592,7 @@ def seed_data():
         if plan == Profile.PLAN_PRO:
             profile.translation_quota_monthly = 5000
             profile.tips_enabled = random.choice([True, False])
-            if profile.tips_enabled:
-                profile.tips_url = f'https://ko-fi.com/{uname}'
+            profile.tips_url = ''
             profile.subscription_renewal_at = dj_tz.now() + timedelta(days=20)
         elif plan == Profile.PLAN_PLUS:
             profile.translation_quota_monthly = 200
@@ -1341,7 +1625,7 @@ def seed_data():
     dprof.private_profile = False
     dprof.birth_date = date(1995, 6, 15)
     dprof.tips_enabled = True
-    dprof.tips_url = 'https://ko-fi.com/david1anato'
+    dprof.tips_url = ''
     dprof.save()
     profiles_by_username['david1anato'] = dprof
     users.append(david_user)
@@ -1828,6 +2112,14 @@ def seed_data():
                 CommentLike.objects.get_or_create(user=lc, comment=c)
 
     seed_contest_data(public_pins, regular_users)
+
+    seed_monetization(
+        admin,
+        public_pins,
+        topics_by_name,
+        profiles_by_username,
+        skip_network,
+    )
 
     seed_content_sample_reports(public_pins, regular_users)
     seed_user_blocks_sample()
