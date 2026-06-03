@@ -41,7 +41,8 @@ def _campaign_matches_user(campaign: PartnerCampaign, user, topic: str) -> bool:
             return False
     if campaign.topic_slug:
         t = (topic or '').strip().lower()
-        if not t or campaign.topic_slug.strip().lower() != t:
+        # Sans filtre topic actif, les campagnes générales + ciblées peuvent s'afficher.
+        if t and campaign.topic_slug.strip().lower() != t:
             return False
     return True
 
