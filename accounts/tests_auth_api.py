@@ -136,3 +136,15 @@ class AuthTokenRefreshApiTests(APITestCase):
         r = self.client.post(self.refresh_url, {'refresh': refresh}, format='json')
         self.assertEqual(r.status_code, status.HTTP_200_OK, r.content)
         self.assertIn('access', r.data)
+
+    def test_refresh_returns_401_when_user_deleted(self):
+        login = self.client.post(
+            self.login_url,
+            {'email': 'refreshuser@example.com', 'password': self.password},
+            format='json',
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK)
+        refresh = login.data.get('refresh')
+        self.user.delete()
+        r = self.client.post(self.refresh_url, {'refresh': refresh}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED, r.content)

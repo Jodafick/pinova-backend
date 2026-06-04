@@ -429,6 +429,7 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'TOKEN_REFRESH_SERIALIZER': 'accounts.jwt_serializers.PinovaTokenRefreshSerializer',
 }
 
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 365  # 1 an

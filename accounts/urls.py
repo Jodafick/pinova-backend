@@ -27,6 +27,7 @@ from .views import (
     SubscriptionInvoiceReceiptView,
     SupportTicketView,
 )
+from .jwt_views import get_pinova_refresh_view
 from .reference_views import ReferenceInterestsView
 from .subscription_seat_views import (
     SubscriptionSeatAdminRevokeHubView,
@@ -86,7 +87,8 @@ urlpatterns = [
     ),
     path('support/tickets/', SupportTicketView.as_view(), name='support-tickets'),
     
-    # Auth endpoints
+    # Auth endpoints (refresh Pinova avant include dj-rest-auth pour priorité URL)
+    path('auth/token/refresh/', get_pinova_refresh_view().as_view(), name='pinova_token_refresh'),
     path('auth/', include('dj_rest_auth.urls')),
     path('auth/registration/', include('dj_rest_auth.registration.urls')),
     path('auth/social/google/', GoogleLogin.as_view(), name='google_login'),
