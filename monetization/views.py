@@ -197,9 +197,12 @@ class PinPromoCampaignListCreateView(APIView):
                 return Response({**out.data, 'status': 'active', 'sandbox': True}, status=status.HTTP_201_CREATED)
             return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+        promo_label = (campaign.headline or '').strip() or (
+            f'pin {campaign.pin.slug}' if campaign.pin_id else 'campagne'
+        )
         checkout = create_fedapay_checkout(
             request=request,
-            description=f'Pinova promo · {package.label} · pin {campaign.pin.slug}',
+            description=f'Pinova promo · {package.label} · {promo_label}',
             amount=int(package.amount),
             currency_iso=package.currency_iso,
             callback_url=os.environ.get('FEDAPAY_PROMO_CALLBACK_URL')
@@ -240,14 +243,19 @@ class PinPromoCampaignClickView(APIView):
     def post(self, request, campaign_id: int):
         from django.db.models import F
 
-        updated = PinPromoCampaign.objects.filter(
+        campaign = PinPromoCampaign.objects.select_related('pin').filter(
             pk=campaign_id,
             status=PinPromoCampaign.STATUS_ACTIVE,
-        ).update(clicks=F('clicks') + 1, pin_views=F('pin_views') + 1)
-        if not updated:
+        ).first()
+        if not campaign:
             return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-        campaign = PinPromoCampaign.objects.select_related('pin').filter(pk=campaign_id).first()
-        return Response({'ok': True, 'pin_slug': campaign.pin.slug if campaign else ''})
+        updates = {'clicks': F('clicks') + 1}
+        if campaign.pin_id:
+            updates['pin_views'] = F('pin_views') + 1
+        PinPromoCampaign.objects.filter(pk=campaign_id).update(**updates)
+        cta_url = (campaign.cta_url or '').strip()
+        pin_slug = campaign.pin.slug if campaign.pin_id else ''
+        return Response({'ok': True, 'pin_slug': pin_slug, 'cta_url': cta_url})
 
 
 def approve_boost_payment(transaction_id: str, webhook_payload: dict) -> str:

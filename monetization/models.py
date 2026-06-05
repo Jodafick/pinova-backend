@@ -107,7 +107,7 @@ class PinBoost(models.Model):
 
 
 class PinPromoCampaign(models.Model):
-    """Campagne publicitaire créée par un utilisateur pour promouvoir son pin."""
+    """Campagne publicitaire créée par un utilisateur (contenu autonome, sans pin obligatoire)."""
 
     STATUS_PENDING = 'pending'
     STATUS_ACTIVE = 'active'
@@ -123,10 +123,19 @@ class PinPromoCampaign(models.Model):
     ]
 
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_promo_campaigns')
-    pin = models.ForeignKey('pins.Pin', on_delete=models.CASCADE, related_name='promo_campaigns')
+    pin = models.ForeignKey(
+        'pins.Pin',
+        on_delete=models.CASCADE,
+        related_name='promo_campaigns',
+        null=True,
+        blank=True,
+    )
     package = models.ForeignKey(BoostPackage, on_delete=models.PROTECT, related_name='pin_promo_campaigns')
     headline = models.CharField(max_length=120, blank=True, default='')
     body = models.CharField(max_length=400, blank=True, default='')
+    image = models.ImageField(upload_to='creator_ads/', blank=True, null=True)
+    cta_label = models.CharField(max_length=40, default='En savoir plus', blank=True)
+    cta_url = models.URLField(max_length=500, blank=True, default='')
     topic_slug = models.CharField(max_length=80, blank=True, default='')
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
     starts_at = models.DateTimeField(null=True, blank=True)
@@ -142,7 +151,8 @@ class PinPromoCampaign(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'promo:{self.pin_id}:{self.status}'
+        label = self.headline or (f'pin:{self.pin_id}' if self.pin_id else 'standalone')
+        return f'promo:{label}:{self.status}'
 
     def is_live(self) -> bool:
         if self.status != self.STATUS_ACTIVE:

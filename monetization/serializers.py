@@ -83,9 +83,9 @@ class PinBoostHistorySerializer(serializers.ModelSerializer):
 
 
 class PinPromoCampaignSerializer(serializers.ModelSerializer):
-    pin_slug = serializers.CharField(source='pin.slug', read_only=True)
-    pin_title = serializers.CharField(source='pin.title', read_only=True)
-    pin_image_url = serializers.SerializerMethodField()
+    pin_slug = serializers.SerializerMethodField()
+    pin_title = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
     package_label = serializers.CharField(source='package.label', read_only=True)
     package_slug = serializers.CharField(source='package.slug', read_only=True)
     ctr = serializers.SerializerMethodField()
@@ -96,9 +96,11 @@ class PinPromoCampaignSerializer(serializers.ModelSerializer):
             'id',
             'pin_slug',
             'pin_title',
-            'pin_image_url',
+            'image_url',
             'headline',
             'body',
+            'cta_label',
+            'cta_url',
             'topic_slug',
             'package_slug',
             'package_label',
@@ -112,11 +114,21 @@ class PinPromoCampaignSerializer(serializers.ModelSerializer):
             'created_at',
         ]
 
-    def get_pin_image_url(self, obj):
+    def get_pin_slug(self, obj):
+        return obj.pin.slug if obj.pin_id else ''
+
+    def get_pin_title(self, obj):
+        return obj.pin.title if obj.pin_id else ''
+
+    def get_image_url(self, obj):
         request = self.context.get('request')
-        if not obj.pin.image or not request:
+        if not request:
             return ''
-        return request.build_absolute_uri(obj.pin.image.url)
+        if obj.image:
+            return request.build_absolute_uri(obj.image.url)
+        if obj.pin_id and obj.pin.image:
+            return request.build_absolute_uri(obj.pin.image.url)
+        return ''
 
     def get_ctr(self, obj):
         if obj.impressions <= 0:
@@ -129,28 +141,35 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
         slug_field='slug',
         queryset=BoostPackage.objects.filter(is_active=True),
     )
-    pin_slug = serializers.SlugField(write_only=True)
 
     class Meta:
         model = PinPromoCampaign
-        fields = ['pin_slug', 'package', 'headline', 'body', 'topic_slug']
+        fields = [
+            'package',
+            'headline',
+            'body',
+            'topic_slug',
+            'image',
+            'cta_label',
+            'cta_url',
+        ]
 
-    def validate_pin_slug(self, value):
-        from pins.models import Pin
-
-        user = self.context['request'].user
-        pin = Pin.objects.filter(slug=value).first()
-        if not pin or pin.author_id != user.id:
-            raise serializers.ValidationError('Pin introuvable ou non autorisé.')
-        return value
+    def validate(self, attrs):
+        headline = (attrs.get('headline') or '').strip()
+        cta_url = (attrs.get('cta_url') or '').strip()
+        if not headline:
+            raise serializers.ValidationError({'headline': 'Titre requis.'})
+        if not cta_url:
+            raise serializers.ValidationError({'cta_url': 'Lien de destination requis.'})
+        attrs['headline'] = headline
+        attrs['cta_url'] = cta_url
+        if not (attrs.get('cta_label') or '').strip():
+            attrs['cta_label'] = 'En savoir plus'
+        return attrs
 
     def create(self, validated_data):
-        from pins.models import Pin
-
-        pin_slug = validated_data.pop('pin_slug')
-        pin = Pin.objects.get(slug=pin_slug)
         return PinPromoCampaign.objects.create(
             owner=self.context['request'].user,
-            pin=pin,
+            pin=None,
             **validated_data,
         )

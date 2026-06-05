@@ -102,24 +102,56 @@ def pick_pin_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[PinP
     return candidates[:limit]
 
 
+def _campaign_image_url(campaign: PinPromoCampaign, request) -> str:
+    if campaign.image:
+        return request.build_absolute_uri(campaign.image.url)
+    if campaign.pin_id:
+        return _pin_image_url(campaign.pin, request)
+    return ''
+
+
 def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[str, Any]:
-    pin = campaign.pin
-    title = (campaign.headline or pin.title or '').strip()
-    body = (campaign.body or (pin.description or '')[:400]).strip()
-    username = pin.author.username if pin.author_id else ''
+    owner_username = campaign.owner.username if campaign.owner_id else ''
+    if campaign.pin_id:
+        pin = campaign.pin
+        title = (campaign.headline or pin.title or '').strip()
+        body = (campaign.body or (pin.description or '')[:400]).strip()
+        username = pin.author.username if pin.author_id else owner_username
+        cta_url = (campaign.cta_url or '').strip()
+        cta_label = (campaign.cta_label or '').strip() or ('Voir le pin' if not cta_url else 'En savoir plus')
+        return {
+            'feed_type': 'pin_promo',
+            'id': f'pin-promo-{campaign.id}',
+            'campaign_id': campaign.id,
+            'pin_slug': pin.slug,
+            'pin_id': pin.id,
+            'title': title,
+            'body': body,
+            'sponsor_name': f'@{username}' if username else '',
+            'username': username,
+            'image_url': _campaign_image_url(campaign, request),
+            'cta_label': cta_label,
+            'cta_url': cta_url,
+            'topic': getattr(pin, 'topic', '') or campaign.topic_slug or '',
+        }
+    title = (campaign.headline or '').strip()
+    body = (campaign.body or '').strip()
+    cta_url = (campaign.cta_url or '').strip()
+    cta_label = (campaign.cta_label or '').strip() or 'En savoir plus'
     return {
         'feed_type': 'pin_promo',
         'id': f'pin-promo-{campaign.id}',
         'campaign_id': campaign.id,
-        'pin_slug': pin.slug,
-        'pin_id': pin.id,
+        'pin_slug': '',
+        'pin_id': 0,
         'title': title,
         'body': body,
-        'sponsor_name': f'@{username}' if username else '',
-        'username': username,
-        'image_url': _pin_image_url(pin, request),
-        'cta_label': 'Voir le pin',
-        'topic': getattr(pin, 'topic', '') or '',
+        'sponsor_name': f'@{owner_username}' if owner_username else '',
+        'username': owner_username,
+        'image_url': _campaign_image_url(campaign, request),
+        'cta_label': cta_label,
+        'cta_url': cta_url,
+        'topic': campaign.topic_slug or '',
     }
 
 
@@ -253,17 +285,18 @@ def activate_pin_promo_campaign(campaign: PinPromoCampaign) -> None:
     campaign.starts_at = now
     campaign.ends_at = now + timedelta(hours=duration)
     campaign.save(update_fields=['status', 'starts_at', 'ends_at', 'updated_at'])
-    PinPromoCampaign.objects.filter(
-        pin=campaign.pin,
-        status=PinPromoCampaign.STATUS_ACTIVE,
-    ).exclude(pk=campaign.pk).update(status=PinPromoCampaign.STATUS_EXPIRED)
-    boost = PinBoost.objects.create(
-        pin=campaign.pin,
-        owner=campaign.owner,
-        package=campaign.package,
-        status=PinBoost.STATUS_PENDING,
-    )
-    activate_pin_boost(boost)
+    if campaign.pin_id:
+        PinPromoCampaign.objects.filter(
+            pin=campaign.pin,
+            status=PinPromoCampaign.STATUS_ACTIVE,
+        ).exclude(pk=campaign.pk).update(status=PinPromoCampaign.STATUS_EXPIRED)
+        boost = PinBoost.objects.create(
+            pin=campaign.pin,
+            owner=campaign.owner,
+            package=campaign.package,
+            status=PinBoost.STATUS_PENDING,
+        )
+        activate_pin_boost(boost)
 
 
 def activate_pin_boost(boost: PinBoost) -> None:
