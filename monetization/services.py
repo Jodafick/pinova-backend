@@ -10,6 +10,7 @@ from django.utils import timezone
 from accounts.models import Profile
 
 from .models import PartnerCampaign, PinBoost, PinPromoCampaign
+from .targeting import user_matches_targeting
 
 FEED_PARTNER_AD_EVERY_N = 8
 
@@ -32,19 +33,41 @@ def effective_ad_policy(profile: Profile | None) -> dict[str, bool]:
     }
 
 
+def _profile_for_user(user):
+    if not user or not getattr(user, 'is_authenticated', False) or not user.is_authenticated:
+        return None
+    try:
+        return user.profile
+    except Exception:
+        return None
+
+
 def _campaign_matches_user(campaign: PartnerCampaign, user, topic: str) -> bool:
     if not campaign.is_live():
         return False
-    if campaign.country_code and user and user.is_authenticated:
-        cc = (getattr(user.profile, 'country_code', None) or '').upper()
-        if cc and cc != campaign.country_code.upper():
-            return False
-    if campaign.topic_slug:
-        t = (topic or '').strip().lower()
-        # Sans filtre topic actif, les campagnes générales + ciblées peuvent s'afficher.
-        if t and campaign.topic_slug.strip().lower() != t:
-            return False
-    return True
+    return user_matches_targeting(
+        user,
+        _profile_for_user(user),
+        topic_context=topic,
+        spec=getattr(campaign, 'targeting', None),
+        legacy_topic_slug=campaign.topic_slug,
+        legacy_country_code=campaign.country_code,
+    )
+
+
+def _pin_promo_matches_user(campaign: PinPromoCampaign, user, topic: str) -> bool:
+    if not campaign.is_live():
+        return False
+    if campaign.owner_id == getattr(user, 'id', None):
+        return False
+    return user_matches_targeting(
+        user,
+        _profile_for_user(user),
+        topic_context=topic,
+        spec=getattr(campaign, 'targeting', None),
+        legacy_topic_slug=campaign.topic_slug,
+        legacy_country_code='',
+    )
 
 
 def pick_partner_campaigns(user, topic: str = '', limit: int = 2) -> list[PartnerCampaign]:
@@ -86,28 +109,24 @@ def pick_pin_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[PinP
         .select_related('pin', 'owner', 'pin__author')
     )
     candidates: list[PinPromoCampaign] = []
-    t = (topic or '').strip().lower()
-    for row in qs[:80]:
-        if not row.is_live():
-            continue
-        if row.owner_id == getattr(user, 'id', None):
-            continue
-        if row.topic_slug:
-            if t and row.topic_slug.strip().lower() != t:
-                continue
-        candidates.append(row)
+    for row in qs[:120]:
+        if _pin_promo_matches_user(row, user, topic):
+            candidates.append(row)
     if not candidates:
         return []
     random.shuffle(candidates)
     return candidates[:limit]
 
 
-def _campaign_image_url(campaign: PinPromoCampaign, request) -> str:
-    if campaign.image:
-        return request.build_absolute_uri(campaign.image.url)
+def _campaign_media(campaign: PinPromoCampaign, request) -> tuple[str, str]:
+    media_type = getattr(campaign, 'media_type', None) or PinPromoCampaign.MEDIA_IMAGE
+    if campaign.media and request:
+        return request.build_absolute_uri(campaign.media.url), media_type
+    if campaign.image and request:
+        return request.build_absolute_uri(campaign.image.url), PinPromoCampaign.MEDIA_IMAGE
     if campaign.pin_id:
-        return _pin_image_url(campaign.pin, request)
-    return ''
+        return _pin_image_url(campaign.pin, request), PinPromoCampaign.MEDIA_IMAGE
+    return '', PinPromoCampaign.MEDIA_IMAGE
 
 
 def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[str, Any]:
@@ -119,6 +138,7 @@ def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[st
         username = pin.author.username if pin.author_id else owner_username
         cta_url = (campaign.cta_url or '').strip()
         cta_label = (campaign.cta_label or '').strip() or ('Voir le pin' if not cta_url else 'En savoir plus')
+        media_url, media_type = _campaign_media(campaign, request)
         return {
             'feed_type': 'pin_promo',
             'id': f'pin-promo-{campaign.id}',
@@ -129,7 +149,9 @@ def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[st
             'body': body,
             'sponsor_name': f'@{username}' if username else '',
             'username': username,
-            'image_url': _campaign_image_url(campaign, request),
+            'image_url': media_url,
+            'media_url': media_url,
+            'media_type': media_type,
             'cta_label': cta_label,
             'cta_url': cta_url,
             'topic': getattr(pin, 'topic', '') or campaign.topic_slug or '',
@@ -138,6 +160,7 @@ def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[st
     body = (campaign.body or '').strip()
     cta_url = (campaign.cta_url or '').strip()
     cta_label = (campaign.cta_label or '').strip() or 'En savoir plus'
+    media_url, media_type = _campaign_media(campaign, request)
     return {
         'feed_type': 'pin_promo',
         'id': f'pin-promo-{campaign.id}',
@@ -148,7 +171,9 @@ def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[st
         'body': body,
         'sponsor_name': f'@{owner_username}' if owner_username else '',
         'username': owner_username,
-        'image_url': _campaign_image_url(campaign, request),
+        'image_url': media_url,
+        'media_url': media_url,
+        'media_type': media_type,
         'cta_label': cta_label,
         'cta_url': cta_url,
         'topic': campaign.topic_slug or '',

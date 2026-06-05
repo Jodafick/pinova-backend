@@ -20,6 +20,7 @@ from .serializers import (
     PinPromoCampaignWriteSerializer,
 )
 from .services import activate_pin_boost, activate_pin_promo_campaign, pick_contextual_ad
+from .targeting import targeting_options_payload
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,21 @@ class ContextualAdView(APIView):
         if not row:
             return Response({'ad': None})
         return Response({'ad': row})
+
+
+class CampaignTargetingOptionsView(APIView):
+    """Dimensions de ciblage disponibles pour les campagnes créateur."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from pins.models import Topic
+
+        topics = [
+            {'slug': t.name.strip().lower(), 'name': t.name}
+            for t in Topic.objects.order_by('name')[:80]
+        ]
+        return Response(targeting_options_payload(topics))
 
 
 class PinPromoCampaignListCreateView(APIView):

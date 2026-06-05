@@ -28,7 +28,8 @@ CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent 
 ExpoPushToken (jeton factice mobile, idempotent par user id).
 Stories : finalisation alignée sur `pins/active-stories` (éphémères + `story_expires_at` futur).
 Concours parrainage : `ReferrerReferralScore` + `ReferralLeaderboardEvent` (scores ≥ seuil API).
-Monétisation : `BoostPackage` ; `PartnerCampaign` (pubs fil) ; `PinBoost` (pins boostés actifs / expirés).
+Monétisation : `BoostPackage` ; `PartnerCampaign` (pubs fil + ciblage) ; `PinPromoCampaign` (campagnes créateur) ;
+`PinBoost` (pins boostés actifs / expirés).
 Préférences pub sur `Profile` : `ad_ads_enabled`, `partner_ads_enabled` (selon plan).
 
 Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
@@ -98,6 +99,7 @@ from monetization.models import (
     CreatorWallet,
     PartnerCampaign,
     PinBoost,
+    PinPromoCampaign,
     TipPlatformConfig,
     TipTransaction,
     TipWithdrawal,
@@ -172,6 +174,108 @@ TOPIC_COLORS = [
     '#F97316',
     '#22C55E',
 ]
+
+PROFILE_DEMO_TRAITS: dict[str, dict] = {
+    'clara': {
+        'country_code': 'SN',
+        'gender': 'woman',
+        'city': 'Dakar',
+        'preferred_currency': 'XOF',
+        'interests': ['déco', 'design', 'mode'],
+        'hobbies': ['photographie', 'voyage'],
+        'birth_date': date(1993, 4, 12),
+    },
+    'leo': {
+        'country_code': 'FR',
+        'gender': 'man',
+        'city': 'Paris',
+        'preferred_currency': 'EUR',
+        'interests': ['tech', 'design'],
+        'hobbies': ['gaming', 'lecture'],
+        'birth_date': date(1998, 9, 3),
+    },
+    'aya': {
+        'country_code': 'CI',
+        'gender': 'woman',
+        'city': 'Abidjan',
+        'preferred_currency': 'XOF',
+        'interests': ['cuisine', 'voyage'],
+        'hobbies': ['cuisine', 'yoga'],
+        'birth_date': date(2001, 1, 20),
+    },
+    'max': {
+        'country_code': 'BJ',
+        'gender': 'man',
+        'city': 'Cotonou',
+        'preferred_currency': 'XOF',
+        'interests': ['architecture', 'photo'],
+        'hobbies': ['photographie', 'randonnée'],
+        'birth_date': date(1990, 7, 8),
+    },
+    'zoe': {
+        'country_code': 'FR',
+        'gender': 'woman',
+        'city': 'Lyon',
+        'preferred_currency': 'EUR',
+        'interests': ['mode', 'voyage'],
+        'hobbies': ['couture'],
+        'birth_date': date(1996, 11, 30),
+    },
+    'nina': {
+        'country_code': 'TG',
+        'gender': 'woman',
+        'city': 'Lomé',
+        'preferred_currency': 'XOF',
+        'interests': ['écologie', 'jardinage'],
+        'hobbies': ['jardinage'],
+        'birth_date': date(2003, 5, 14),
+    },
+    'emma': {
+        'country_code': 'GH',
+        'gender': 'woman',
+        'city': 'Accra',
+        'preferred_currency': 'XOF',
+        'interests': ['voyage', 'photo'],
+        'hobbies': ['photographie'],
+        'birth_date': date(1994, 8, 22),
+    },
+    'karim': {
+        'country_code': 'ML',
+        'gender': 'man',
+        'city': 'Bamako',
+        'preferred_currency': 'XOF',
+        'interests': ['sport', 'musique'],
+        'hobbies': ['football'],
+        'birth_date': date(1999, 2, 2),
+    },
+    'sofia': {
+        'country_code': 'SN',
+        'gender': 'woman',
+        'city': 'Saint-Louis',
+        'preferred_currency': 'XOF',
+        'interests': ['déco', 'voyage'],
+        'hobbies': ['bricolage'],
+        'birth_date': date(1997, 6, 18),
+    },
+    'lucas': {
+        'country_code': 'FR',
+        'gender': 'man',
+        'city': 'Marseille',
+        'preferred_currency': 'EUR',
+        'interests': ['sport', 'tech'],
+        'hobbies': ['gaming'],
+        'birth_date': date(2000, 12, 5),
+    },
+    'david1anato': {
+        'country_code': 'BJ',
+        'gender': 'man',
+        'city': 'Cotonou',
+        'preferred_currency': 'XOF',
+        'interests': ['design', 'photo', 'voyage'],
+        'hobbies': ['photographie', 'randonnée'],
+        'birth_date': date(1995, 6, 15),
+    },
+}
 
 USER_SPECS = [
     # (Prénom affiché, plan)
@@ -544,6 +648,12 @@ def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_n
             'cta_label': 'Découvrir',
             'cta_url': 'https://example.com/kente-home',
             'topic_slug': 'Maison et déco',
+            'targeting': {
+                'countries': ['SN', 'BJ', 'CI'],
+                'languages': ['fr'],
+                'interests': ['déco', 'design'],
+                'topics': ['maison et déco'],
+            },
             'priority': 22,
             'impressions': 88,
             'clicks': 6,
@@ -556,6 +666,14 @@ def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_n
             'cta_label': 'Réserver',
             'cta_url': 'https://example.com/teranga-routes',
             'topic_slug': 'Voyages',
+            'targeting': {
+                'countries': ['SN', 'FR', 'GH'],
+                'languages': ['fr', 'en'],
+                'topics': ['voyages'],
+                'age_min': 22,
+                'age_max': 45,
+                'interests': ['voyage'],
+            },
             'priority': 20,
             'impressions': 64,
             'clicks': 4,
@@ -599,6 +717,7 @@ def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_n
                 'cta_label': row['cta_label'],
                 'cta_url': row['cta_url'],
                 'topic_slug': topic_slug,
+                'targeting': row.get('targeting', {}),
                 'priority': row['priority'],
                 'is_active': row.get('is_active', True),
                 'starts_at': row.get('starts_at', now - timedelta(days=7)),
@@ -678,6 +797,126 @@ def seed_pin_boosts(public_pins: list[Pin]) -> None:
     logger.info('PinBoost : %d entrées seed (actifs + expiré).', boosts_created)
 
 
+def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, skip_network: bool) -> None:
+    temp_img, fname = fetch_seed_image_file(seed_key, skip_network)
+    try:
+        if temp_img:
+            campaign.media.save(fname or f'{seed_key}.jpg', File(temp_img), save=False)
+            campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
+            campaign.save(update_fields=['media', 'media_type', 'updated_at'])
+        elif skip_network:
+            campaign.media.save(
+                f'{seed_key}.png',
+                ContentFile(placeholder_png_bytes(seed_key)),
+                save=False,
+            )
+            campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
+            campaign.save(update_fields=['media', 'media_type', 'updated_at'])
+    finally:
+        if temp_img:
+            temp_img.close()
+
+
+def seed_pin_promo_campaigns(
+    david: User | None,
+    topics_by_name: dict[str, Topic],
+    skip_network: bool,
+) -> None:
+    """Campagnes publicitaires créateur (autonomes, ciblage précis)."""
+    if not david:
+        return
+    pkg = BoostPackage.objects.filter(slug='72h', is_active=True).first()
+    if not pkg:
+        pkg = BoostPackage.objects.filter(is_active=True).first()
+    if not pkg:
+        logger.warning('PinPromoCampaign seed ignoré (aucun BoostPackage).')
+        return
+
+    now = dj_tz.now()
+    frontend = str(getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:5174').rstrip('/')
+    deco_topic = 'Maison et déco'
+    travel_topic = 'Voyages'
+    specs = [
+        {
+            'headline': 'Studio David — presets Lightroom Afrique',
+            'body': 'Pack de 12 presets pour paysages et portraits, optimisé mobile.',
+            'cta_label': 'Acheter',
+            'cta_url': f'{frontend}/profile/david1anato',
+            'topic_slug': deco_topic if deco_topic in topics_by_name else '',
+            'targeting': {
+                'countries': ['BJ', 'SN', 'CI'],
+                'languages': ['fr'],
+                'plans': ['free', 'plus'],
+                'interests': ['photo', 'design'],
+                'age_min': 18,
+                'age_max': 40,
+            },
+            'impressions': 156,
+            'clicks': 11,
+            'seed_key': 'creator_david_presets',
+        },
+        {
+            'headline': 'Atelier voyage — carnets créatifs',
+            'body': 'Carnets illustrés pour créateurs en déplacement en Afrique de l’Ouest.',
+            'cta_label': 'Découvrir',
+            'cta_url': 'https://example.com/carnets-voyage',
+            'topic_slug': travel_topic if travel_topic in topics_by_name else '',
+            'targeting': {
+                'countries': ['SN', 'FR', 'GH'],
+                'languages': ['fr'],
+                'topics': [travel_topic.lower()] if travel_topic in topics_by_name else [],
+                'interests': ['voyage'],
+                'genders': ['woman', 'man'],
+                'age_min': 20,
+                'age_max': 50,
+            },
+            'impressions': 92,
+            'clicks': 7,
+            'seed_key': 'creator_travel_notebooks',
+        },
+        {
+            'headline': 'Formation Pro — monétiser sa création',
+            'body': 'Webinaire gratuit : boosts, campagnes et pourboires sur Pinova.',
+            'cta_label': "S'inscrire",
+            'cta_url': f'{frontend}/premium',
+            'topic_slug': '',
+            'targeting': {
+                'plans': ['pro'],
+                'languages': ['fr'],
+                'currencies': ['XOF', 'EUR'],
+            },
+            'impressions': 34,
+            'clicks': 5,
+            'seed_key': 'creator_pro_webinar',
+        },
+    ]
+    for row in specs:
+        campaign, created = PinPromoCampaign.objects.update_or_create(
+            owner=david,
+            headline=row['headline'],
+            defaults={
+                'body': row['body'],
+                'cta_label': row['cta_label'],
+                'cta_url': row['cta_url'],
+                'topic_slug': row.get('topic_slug', ''),
+                'targeting': row.get('targeting', {}),
+                'package': pkg,
+                'status': PinPromoCampaign.STATUS_ACTIVE,
+                'starts_at': now - timedelta(days=2),
+                'ends_at': now + timedelta(days=30),
+                'impressions': row.get('impressions', 0),
+                'clicks': row.get('clicks', 0),
+                'pin': None,
+            },
+        )
+        if created or not campaign.media:
+            attach_creator_campaign_media(campaign, row['seed_key'], skip_network)
+    logger.info(
+        'PinPromoCampaign : %d campagnes créateur seed.',
+        PinPromoCampaign.objects.filter(owner=david, status=PinPromoCampaign.STATUS_ACTIVE).count(),
+    )
+
+
 def seed_profile_ad_preferences(profiles_by_username: dict[str, Profile]) -> None:
     """Préférences publicitaires démo (cohérentes avec les plans)."""
     for uname, profile in profiles_by_username.items():
@@ -747,6 +986,8 @@ def seed_monetization(
     seed_profile_ad_preferences(profiles_by_username)
     seed_partner_campaigns(admin, topics_by_name, skip_network)
     seed_pin_boosts(public_pins)
+    david = User.objects.filter(username='david1anato').first()
+    seed_pin_promo_campaigns(david, topics_by_name, skip_network)
     seed_internal_tips(public_pins)
 
 
@@ -1603,6 +1844,16 @@ def seed_data():
         # Un profil privé pour tester les règles de visibilité
         if uname == 'nina':
             profile.private_profile = True
+        traits = PROFILE_DEMO_TRAITS.get(uname, {})
+        if traits:
+            profile.country_code = traits.get('country_code', profile.country_code)
+            profile.gender = traits.get('gender', profile.gender)
+            profile.city = traits.get('city', profile.city)
+            profile.preferred_currency = traits.get('preferred_currency', profile.preferred_currency)
+            profile.interests = traits.get('interests', profile.interests or [])
+            profile.hobbies = traits.get('hobbies', profile.hobbies or [])
+            if traits.get('birth_date'):
+                profile.birth_date = traits['birth_date']
         profile.save()
         profiles_by_username[uname] = profile
         users.append(user)
@@ -1623,7 +1874,14 @@ def seed_data():
     dprof.translation_quota_monthly = 5000
     dprof.subscription_renewal_at = dj_tz.now() + timedelta(days=25)
     dprof.private_profile = False
-    dprof.birth_date = date(1995, 6, 15)
+    david_traits = PROFILE_DEMO_TRAITS.get('david1anato', {})
+    dprof.country_code = david_traits.get('country_code', 'BJ')
+    dprof.gender = david_traits.get('gender', 'man')
+    dprof.city = david_traits.get('city', 'Cotonou')
+    dprof.preferred_currency = david_traits.get('preferred_currency', 'XOF')
+    dprof.interests = david_traits.get('interests', ['design', 'photo', 'voyage'])
+    dprof.hobbies = david_traits.get('hobbies', ['photographie'])
+    dprof.birth_date = david_traits.get('birth_date', date(1995, 6, 15))
     dprof.tips_enabled = True
     dprof.tips_url = ''
     dprof.save()

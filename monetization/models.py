@@ -19,6 +19,7 @@ class PartnerCampaign(models.Model):
         help_text='Optionnel : cibler un topic (slug ou nom). Vide = tous les sujets.',
     )
     country_code = models.CharField(max_length=2, blank=True, default='')
+    targeting = models.JSONField(default=dict, blank=True)
     priority = models.PositiveSmallIntegerField(default=10)
     is_active = models.BooleanField(default=True)
     starts_at = models.DateTimeField(null=True, blank=True)
@@ -134,9 +135,18 @@ class PinPromoCampaign(models.Model):
     headline = models.CharField(max_length=120, blank=True, default='')
     body = models.CharField(max_length=400, blank=True, default='')
     image = models.ImageField(upload_to='creator_ads/', blank=True, null=True)
+    media = models.FileField(upload_to='creator_ads/media/', blank=True, null=True)
+    MEDIA_IMAGE = 'image'
+    MEDIA_VIDEO = 'video'
+    MEDIA_TYPE_CHOICES = [
+        (MEDIA_IMAGE, 'Image'),
+        (MEDIA_VIDEO, 'Video'),
+    ]
+    media_type = models.CharField(max_length=8, choices=MEDIA_TYPE_CHOICES, default=MEDIA_IMAGE)
     cta_label = models.CharField(max_length=40, default='En savoir plus', blank=True)
     cta_url = models.URLField(max_length=500, blank=True, default='')
     topic_slug = models.CharField(max_length=80, blank=True, default='')
+    targeting = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
     starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
