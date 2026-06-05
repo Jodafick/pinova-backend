@@ -3,10 +3,15 @@ from django.urls import path
 from .tip_views import TipCheckoutView, TipConfigView, TipWalletView, TipWithdrawView
 from .views import (
     BoostPackageListView,
+    ContextualAdView,
+    MyPinBoostsView,
     PartnerCampaignClickView,
     PartnerCampaignDetailView,
     PartnerCampaignListCreateView,
     PinBoostCheckoutView,
+    PinPromoCampaignClickView,
+    PinPromoCampaignDetailView,
+    PinPromoCampaignListCreateView,
 )
 
 urlpatterns = [
@@ -19,4 +24,9 @@ urlpatterns = [
     path('monetization/partner-campaigns/<int:campaign_id>/click/', PartnerCampaignClickView.as_view()),
     path('monetization/boost-packages/', BoostPackageListView.as_view()),
     path('monetization/pins/<slug:pin_slug>/boost/', PinBoostCheckoutView.as_view()),
+    path('monetization/my-boosts/', MyPinBoostsView.as_view()),
+    path('monetization/contextual-ad/', ContextualAdView.as_view()),
+    path('monetization/pin-promo-campaigns/', PinPromoCampaignListCreateView.as_view()),
+    path('monetization/pin-promo-campaigns/<int:campaign_id>/', PinPromoCampaignDetailView.as_view()),
+    path('monetization/pin-promo-campaigns/<int:campaign_id>/click/', PinPromoCampaignClickView.as_view()),
 ]

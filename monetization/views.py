@@ -10,13 +10,16 @@ from rest_framework.views import APIView
 from pins.models import Pin
 
 from .fedapay_client import create_fedapay_checkout, fedapay_headers, payments_sandbox_allowed
-from .models import BoostPackage, PartnerCampaign, PinBoost
+from .models import BoostPackage, PartnerCampaign, PinBoost, PinPromoCampaign
 from .serializers import (
     BoostPackageSerializer,
     PartnerCampaignSerializer,
     PartnerCampaignWriteSerializer,
+    PinBoostHistorySerializer,
+    PinPromoCampaignSerializer,
+    PinPromoCampaignWriteSerializer,
 )
-from .services import activate_pin_boost
+from .services import activate_pin_boost, activate_pin_promo_campaign, pick_contextual_ad
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +146,116 @@ class PinBoostCheckoutView(APIView):
         })
 
 
+class MyPinBoostsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rows = (
+            PinBoost.objects.filter(owner=request.user)
+            .select_related('pin', 'package')
+            .order_by('-created_at')[:50]
+        )
+        ser = PinBoostHistorySerializer(rows, many=True)
+        return Response({'results': ser.data})
+
+
+class ContextualAdView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        placement = (request.query_params.get('placement') or 'pin_detail').strip()
+        topic = (request.query_params.get('topic') or '').strip()
+        row = pick_contextual_ad(request, placement=placement, topic=topic)
+        if not row:
+            return Response({'ad': None})
+        return Response({'ad': row})
+
+
+class PinPromoCampaignListCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rows = (
+            PinPromoCampaign.objects.filter(owner=request.user)
+            .select_related('pin', 'package')
+            .order_by('-created_at')[:100]
+        )
+        ser = PinPromoCampaignSerializer(rows, many=True, context={'request': request})
+        return Response({'results': ser.data})
+
+    def post(self, request):
+        ser = PinPromoCampaignWriteSerializer(data=request.data, context={'request': request})
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        campaign = ser.save()
+        package = campaign.package
+        secret = fedapay_headers()
+        if not secret:
+            if payments_sandbox_allowed():
+                activate_pin_promo_campaign(campaign)
+                out = PinPromoCampaignSerializer(campaign, context={'request': request})
+                return Response({**out.data, 'status': 'active', 'sandbox': True}, status=status.HTTP_201_CREATED)
+            return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        checkout = create_fedapay_checkout(
+            request=request,
+            description=f'Pinova promo · {package.label} · pin {campaign.pin.slug}',
+            amount=int(package.amount),
+            currency_iso=package.currency_iso,
+            callback_url=os.environ.get('FEDAPAY_PROMO_CALLBACK_URL')
+            or f"{str(settings.FRONTEND_URL).rstrip('/')}/promote/campaigns",
+        )
+        if checkout.get('error'):
+            campaign.status = PinPromoCampaign.STATUS_CANCELED
+            campaign.save(update_fields=['status', 'updated_at'])
+            return Response(checkout, status=status.HTTP_502_BAD_GATEWAY)
+        campaign.fedapay_transaction_id = checkout['transaction_id']
+        campaign.save(update_fields=['fedapay_transaction_id', 'updated_at'])
+        out = PinPromoCampaignSerializer(campaign, context={'request': request})
+        return Response({
+            **out.data,
+            'status': 'pending',
+            'checkout_url': checkout.get('checkout_url'),
+            'transaction_id': checkout['transaction_id'],
+        }, status=status.HTTP_201_CREATED)
+
+
+class PinPromoCampaignDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, campaign_id: int):
+        campaign = get_object_or_404(PinPromoCampaign, pk=campaign_id, owner=request.user)
+        if 'status' in request.data:
+            new_status = str(request.data.get('status') or '').strip()
+            if new_status in (PinPromoCampaign.STATUS_PAUSED, PinPromoCampaign.STATUS_ACTIVE):
+                campaign.status = new_status
+                campaign.save(update_fields=['status', 'updated_at'])
+        ser = PinPromoCampaignSerializer(campaign, context={'request': request})
+        return Response(ser.data)
+
+
+class PinPromoCampaignClickView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, campaign_id: int):
+        from django.db.models import F
+
+        updated = PinPromoCampaign.objects.filter(
+            pk=campaign_id,
+            status=PinPromoCampaign.STATUS_ACTIVE,
+        ).update(clicks=F('clicks') + 1, pin_views=F('pin_views') + 1)
+        if not updated:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        campaign = PinPromoCampaign.objects.select_related('pin').filter(pk=campaign_id).first()
+        return Response({'ok': True, 'pin_slug': campaign.pin.slug if campaign else ''})
+
+
 def approve_boost_payment(transaction_id: str, webhook_payload: dict) -> str:
     """Appelé depuis le webhook FedaPay global."""
+    promo = PinPromoCampaign.objects.filter(fedapay_transaction_id=transaction_id).first()
+    if promo:
+        activate_pin_promo_campaign(promo)
+        return 'approved'
     boost = PinBoost.objects.filter(fedapay_transaction_id=transaction_id).first()
     if not boost:
         return 'ignored'

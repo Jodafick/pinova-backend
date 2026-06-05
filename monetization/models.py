@@ -106,6 +106,55 @@ class PinBoost(models.Model):
         return True
 
 
+class PinPromoCampaign(models.Model):
+    """Campagne publicitaire créée par un utilisateur pour promouvoir son pin."""
+
+    STATUS_PENDING = 'pending'
+    STATUS_ACTIVE = 'active'
+    STATUS_PAUSED = 'paused'
+    STATUS_EXPIRED = 'expired'
+    STATUS_CANCELED = 'canceled'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_PAUSED, 'Paused'),
+        (STATUS_EXPIRED, 'Expired'),
+        (STATUS_CANCELED, 'Canceled'),
+    ]
+
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_promo_campaigns')
+    pin = models.ForeignKey('pins.Pin', on_delete=models.CASCADE, related_name='promo_campaigns')
+    package = models.ForeignKey(BoostPackage, on_delete=models.PROTECT, related_name='pin_promo_campaigns')
+    headline = models.CharField(max_length=120, blank=True, default='')
+    body = models.CharField(max_length=400, blank=True, default='')
+    topic_slug = models.CharField(max_length=80, blank=True, default='')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    fedapay_transaction_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    impressions = models.PositiveIntegerField(default=0)
+    clicks = models.PositiveIntegerField(default=0)
+    pin_views = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'promo:{self.pin_id}:{self.status}'
+
+    def is_live(self) -> bool:
+        if self.status != self.STATUS_ACTIVE:
+            return False
+        now = timezone.now()
+        if self.starts_at and now < self.starts_at:
+            return False
+        if self.ends_at and now > self.ends_at:
+            return False
+        return True
+
+
 class TipPlatformConfig(models.Model):
     """Singleton — commission et limites pourboires internes."""
 
