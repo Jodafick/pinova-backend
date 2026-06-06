@@ -176,11 +176,9 @@ class TipCheckoutView(APIView):
             tip.save(update_fields=['status', 'updated_at'])
             return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        callback = None
-        if pin_slug:
-            from django.conf import settings
+        from accounts.auth_tokens import checkout_return_url
 
-            callback = f"{str(settings.FRONTEND_URL).rstrip('/')}/pin/{pin_slug}"
+        callback = checkout_return_url('tip', request=request)
         checkout = create_fedapay_checkout(
             request=request,
             description=f'Pourboire @{recipient.username} via Pinova',

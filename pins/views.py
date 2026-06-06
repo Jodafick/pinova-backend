@@ -1187,7 +1187,10 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):
         base_queryset = self.get_queryset().exclude(author=request.user)
-        recommendations = rank_recommendations_for_user(request.user, base_queryset)
+        if getattr(request.user.profile, 'notifications_recommendations', False):
+            recommendations = rank_recommendations_for_user(request.user, base_queryset)
+        else:
+            recommendations = base_queryset.order_by('media_sensitive_blur', '-created_at')
         topic = (request.query_params.get('topic') or '').strip()
         return self._feed_response_with_ads(request, recommendations, topic=topic)
 
@@ -1336,7 +1339,9 @@ class PinViewSet(viewsets.ModelViewSet):
             boards_data.append(payload)
 
         rec_data = []
-        if request.user.is_authenticated:
+        if request.user.is_authenticated and getattr(
+            request.user.profile, 'notifications_recommendations', False
+        ):
             rec_base = self.get_queryset().exclude(author=request.user)
             topic_scores = self._build_topic_scores(request.user)
             ranked = self._ordered_by_topic_score(rec_base, topic_scores)
@@ -1472,13 +1477,19 @@ class PinViewSet(viewsets.ModelViewSet):
             following_queryset = self._apply_topic_filter(following_queryset, topic)
             discover_queryset = self._apply_topic_filter(discover_queryset, topic)
 
-        topic_scores = self._build_topic_scores(request.user)
+        reco_on = getattr(request.user.profile, 'notifications_recommendations', False)
+        topic_scores = self._build_topic_scores(request.user) if reco_on else {}
         following_items = list(
             following_queryset.order_by('media_sensitive_blur', '-created_at')[:FEED_INTERLEAVE_SOURCE_CAP]
         )
-        discover_items = self._ordered_by_topic_score(
-            discover_queryset, topic_scores, cap=FEED_INTERLEAVE_SOURCE_CAP
-        )
+        if reco_on and topic_scores:
+            discover_items = self._ordered_by_topic_score(
+                discover_queryset, topic_scores, cap=FEED_INTERLEAVE_SOURCE_CAP
+            )
+        else:
+            discover_items = list(
+                discover_queryset.order_by('media_sensitive_blur', '-created_at')[:FEED_INTERLEAVE_SOURCE_CAP]
+            )
 
         mixed = []
         follow_idx = 0

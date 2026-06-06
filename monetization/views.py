@@ -19,7 +19,9 @@ from .serializers import (
     PinPromoCampaignSerializer,
     PinPromoCampaignWriteSerializer,
 )
+from .boost_estimate import estimate_boost_reach
 from .services import activate_pin_boost, activate_pin_promo_campaign, pick_contextual_ad
+from .social_proof import enrich_boost_packages
 from .targeting import targeting_options_payload
 
 logger = logging.getLogger(__name__)
@@ -90,8 +92,29 @@ class BoostPackageListView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        rows = BoostPackage.objects.filter(is_active=True)
-        return Response({'results': BoostPackageSerializer(rows, many=True).data})
+        rows = list(BoostPackage.objects.filter(is_active=True))
+        return Response({'results': enrich_boost_packages(rows, request.user)})
+
+
+class BoostReachEstimateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pin_slug: str):
+        pin = get_object_or_404(Pin, slug=pin_slug)
+        if pin.author_id != request.user.id:
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        package_slug = (request.query_params.get('package') or request.query_params.get('package_slug') or '').strip()
+        package = BoostPackage.objects.filter(slug=package_slug, is_active=True).first()
+        duration_hours = package.duration_hours if package else 72
+        if not package:
+            try:
+                duration_hours = max(1, int(request.query_params.get('duration_hours') or 72))
+            except (TypeError, ValueError):
+                duration_hours = 72
+        payload = estimate_boost_reach(pin, duration_hours)
+        if package:
+            payload['package_slug'] = package.slug
+        return Response(payload)
 
 
 class PinBoostCheckoutView(APIView):
@@ -125,13 +148,14 @@ class PinBoostCheckoutView(APIView):
                 })
             return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+        from accounts.auth_tokens import checkout_return_url
+
         checkout = create_fedapay_checkout(
             request=request,
             description=f'Pinova boost · {package.label} · pin {boost.pin.slug}',
             amount=int(package.amount),
             currency_iso=package.currency_iso,
-            callback_url=os.environ.get('FEDAPAY_BOOST_CALLBACK_URL')
-            or f"{str(settings.FRONTEND_URL).rstrip('/')}/profile/{request.user.username}",
+            callback_url=os.environ.get('FEDAPAY_BOOST_CALLBACK_URL') or checkout_return_url('boost', request=request),
         )
         if checkout.get('error'):
             boost.status = PinBoost.STATUS_CANCELED
@@ -216,13 +240,14 @@ class PinPromoCampaignListCreateView(APIView):
         promo_label = (campaign.headline or '').strip() or (
             f'pin {campaign.pin.slug}' if campaign.pin_id else 'campagne'
         )
+        from accounts.auth_tokens import checkout_return_url
+
         checkout = create_fedapay_checkout(
             request=request,
             description=f'Pinova promo · {package.label} · {promo_label}',
             amount=int(package.amount),
             currency_iso=package.currency_iso,
-            callback_url=os.environ.get('FEDAPAY_PROMO_CALLBACK_URL')
-            or f"{str(settings.FRONTEND_URL).rstrip('/')}/promote/campaigns",
+            callback_url=os.environ.get('FEDAPAY_PROMO_CALLBACK_URL') or checkout_return_url('campaign', request=request),
         )
         if checkout.get('error'):
             campaign.status = PinPromoCampaign.STATUS_CANCELED

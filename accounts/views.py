@@ -593,7 +593,12 @@ class VerifyOTPView(APIView):
 
             finalize_referral_on_email_verified(user)
 
-            return Response({'message': 'Email validé avec succès'}, status=status.HTTP_200_OK)
+            from .auth_tokens import build_jwt_auth_payload
+
+            return Response(
+                build_jwt_auth_payload(user, request, message='Email validé avec succès'),
+                status=status.HTTP_200_OK,
+            )
 
         except (User.DoesNotExist, EmailOTP.DoesNotExist):
             return Response({'error': 'Code OTP invalide'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1097,6 +1102,9 @@ class UserMeView(APIView):
         from referrals.services import build_me_referral_payload
 
         data['referral'] = build_me_referral_payload(request.user, request)
+        from .discovery_streak import discovery_streak_payload
+
+        data['discovery_streak'] = discovery_streak_payload(request.user.profile)
         return Response(data)
 
     def patch(self, request):
@@ -1121,10 +1129,13 @@ class UserMeView(APIView):
         if mutable_data is None:
             return Response({bad_json_key: ['Invalid JSON']}, status=status.HTTP_400_BAD_REQUEST)
 
+        onboarding_completed = False
         if str(mutable_data.get('complete_onboarding', '')).lower() in ('true', '1', 'yes'):
             profile.onboarding_completed_at = timezone.now()
             profile.save(update_fields=['onboarding_completed_at'])
+            onboarding_completed = True
             mutable_data.pop('complete_onboarding', None)
+        interests_updated = 'interests' in mutable_data
 
         # Tips internes : plus de lien externe.
         if profile.subscription_plan != Profile.PLAN_PRO:
@@ -1201,6 +1212,13 @@ class UserMeView(APIView):
         profile_serializer = ProfileSerializer(profile, data=mutable_data, partial=True)
         if profile_serializer.is_valid():
             profile_serializer.save()
+            from .notification_defaults import apply_smart_notification_defaults
+
+            apply_smart_notification_defaults(
+                profile,
+                interests_updated=interests_updated,
+                onboarding_completed=onboarding_completed,
+            )
             _resolve_user_currency(request)
             from pins.me_hydration import build_me_hydration_bundle
 
@@ -1226,8 +1244,22 @@ class UserMeView(APIView):
             if _rattr:
                 try_complete_referral_rewards(_rattr)
             payload['referral'] = build_me_referral_payload(request.user, request)
+            from .discovery_streak import discovery_streak_payload
+
+            payload['discovery_streak'] = discovery_streak_payload(request.user.profile)
             return Response(payload)
         return Response(profile_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DiscoveryStreakView(APIView):
+    """Enregistre une visite Discover (streak non punitive)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .discovery_streak import record_discovery_visit
+
+        return Response(record_discovery_visit(request.user.profile))
 
 
 class SetInitialPasswordView(APIView):
@@ -1387,9 +1419,10 @@ class SubscriptionCheckoutView(APIView):
             currency_iso = target_currency
             conversion_applied = True
 
-        default_callback_url = f"{str(settings.FRONTEND_URL).rstrip('/')}/premium"
+        from .auth_tokens import checkout_return_url
+
         callback_url = _normalize_url_path_slashes(
-            os.environ.get('FEDAPAY_CALLBACK_URL') or default_callback_url
+            os.environ.get('FEDAPAY_CALLBACK_URL') or checkout_return_url('premium', request=request)
         )
         first_name, last_name = _fedapay_checkout_customer_names(request.user)
 

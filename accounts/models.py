@@ -75,6 +75,10 @@ class Profile(models.Model):
     hide_sensitive_pins = models.BooleanField(default=False)
     ad_ads_enabled = models.BooleanField(default=True)
     partner_ads_enabled = models.BooleanField(default=True)
+    # Streak découverte (non punitive — pause douce après grace_days).
+    discovery_streak_count = models.PositiveIntegerField(default=0)
+    discovery_streak_best = models.PositiveIntegerField(default=0)
+    discovery_streak_last_date = models.DateField(null=True, blank=True)
 
     # --- Identité étendue ---
     first_name = models.CharField(max_length=80, blank=True, default='')
