@@ -75,9 +75,9 @@ else:
     )
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = (*default_headers, 'x-pinova-device-binding', 'x-pinova-lang')
+CORS_ALLOW_HEADERS = (*default_headers, 'x-pinova-device-binding', 'x-pinova-lang', 'x-request-id')
 # Permet au navigateur de lire l’en-tête du compteur notifications (axios / fetch).
-CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications', 'X-Cache']
+CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications', 'X-Cache', 'X-Request-ID']
 
 _csrf_origins = os.environ.get('CSRF_TRUSTED_ORIGINS', '').strip()
 if _csrf_origins:

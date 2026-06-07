@@ -77,3 +77,20 @@ class RequestIdMiddlewareTests(SimpleTestCase):
         rid = response.headers.get('X-Request-ID')
         self.assertTrue(rid)
         self.assertGreater(len(rid), 8)
+
+
+@override_settings(
+    CORS_ALLOWED_ORIGINS=['https://pinova-three.vercel.app'],
+    CORS_ALLOW_ALL_ORIGINS=False,
+)
+class CorsRequestIdHeaderTests(SimpleTestCase):
+    def test_preflight_allows_x_request_id(self):
+        response = self.client.options(
+            reverse('health'),
+            HTTP_ORIGIN='https://pinova-three.vercel.app',
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD='GET',
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS='x-request-id,authorization',
+        )
+        self.assertEqual(response.status_code, 200)
+        allowed = response.headers.get('Access-Control-Allow-Headers', '')
+        self.assertIn('x-request-id', allowed.lower())
