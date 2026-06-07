@@ -2,12 +2,14 @@
 Seed complet pour développement / démo Pinova.
 
 Usage :
+  python seed_data.py
   python scripts/seed_data.py
 
 Variables d'environnement optionnelles :
   SEED_SUPERUSER_USERNAME / SEED_SUPERUSER_EMAIL / SEED_SUPERUSER_PASSWORD
-  SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420)
+  SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420 ; 120 sur Render)
   SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG uniquement en local.
+                              Activé par défaut sur Render (variable RENDER=true).
 
   David Anato (david1anato) : la vague « fans » (followers, likes, PinViewEvent) est toujours exécutée
   après création des pins ; volumes modérés pour le dev (voir constantes SEED_DAVID_FAN_* en tête de
@@ -48,6 +50,12 @@ from datetime import timedelta, date
 from pathlib import Path
 import re
 from urllib.parse import quote
+
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import django
 
@@ -584,6 +592,7 @@ def cleanup_relational_data():
     TipTransaction.objects.all().delete()
     CreatorWallet.objects.all().delete()
     PinBoost.objects.all().delete()
+    PinPromoCampaign.objects.all().delete()
     PartnerCampaign.objects.all().delete()
 
 
@@ -732,16 +741,80 @@ def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_n
     logger.info('PartnerCampaign : %d campagnes seed.', PartnerCampaign.objects.filter(is_active=True).count())
 
 
-def seed_pin_boosts(public_pins: list[Pin]) -> None:
-    """Pins boostés pour tester badge fil + ranking discover."""
+def _david_public_pins(public_pins: list[Pin], limit: int = 16) -> list[Pin]:
+    """Pins publics non-story de david1anato (boosts + promos liées)."""
+    david = User.objects.filter(username='david1anato').first()
+    if not david:
+        return []
+    return [
+        p
+        for p in public_pins
+        if p.author_id == david.id and not p.is_story and p.visibility == Pin.VISIBILITY_PUBLIC
+    ][:limit]
+
+
+def seed_david_pin_boosts(public_pins: list[Pin]) -> int:
+    """Boosts actifs / expirés / en attente pour david1anato."""
     pkg_24 = BoostPackage.objects.filter(slug='24h', is_active=True).first()
     pkg_72 = BoostPackage.objects.filter(slug='72h', is_active=True).first()
+    pkg_7d = BoostPackage.objects.filter(slug='7d', is_active=True).first()
     if not pkg_24:
-        logger.warning('PinBoost seed ignoré (BoostPackage 24h absent).')
-        return
+        logger.warning('Boosts David ignorés (BoostPackage 24h absent).')
+        return 0
+
+    david = User.objects.filter(username='david1anato').first()
+    if not david:
+        return 0
+
+    david_pins = _david_public_pins(public_pins, limit=20)
+    if not david_pins:
+        logger.warning('Boosts David ignorés (aucun pin public).')
+        return 0
 
     now = dj_tz.now()
     boosts_created = 0
+    boost_specs: list[tuple[int, BoostPackage, str, timedelta, timedelta]] = [
+        (0, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=5), timedelta(hours=19)),
+        (1, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=2), timedelta(hours=22)),
+        (2, pkg_72, PinBoost.STATUS_ACTIVE, timedelta(hours=8), timedelta(hours=64)),
+        (3, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=1), timedelta(hours=23)),
+        (4, pkg_7d or pkg_72, PinBoost.STATUS_ACTIVE, timedelta(days=1), timedelta(days=6)),
+        (5, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=12), timedelta(hours=12)),
+        (6, pkg_72, PinBoost.STATUS_EXPIRED, timedelta(days=5), timedelta(days=2)),
+        (7, pkg_24, PinBoost.STATUS_EXPIRED, timedelta(days=3), timedelta(days=2)),
+        (8, pkg_24, PinBoost.STATUS_PENDING, timedelta(hours=0), timedelta(hours=24)),
+    ]
+    for pin_idx, package, status, started_ago, ends_in in boost_specs:
+        if pin_idx >= len(david_pins):
+            break
+        if package is None:
+            continue
+        PinBoost.objects.create(
+            pin=david_pins[pin_idx],
+            owner=david,
+            package=package,
+            status=status,
+            starts_at=now - started_ago,
+            ends_at=now + ends_in if status == PinBoost.STATUS_ACTIVE else now - ends_in,
+            fedapay_transaction_id=f'seed_boost_david_{pin_idx}_{uuid.uuid4().hex[:12]}',
+        )
+        boosts_created += 1
+
+    logger.info('David — PinBoost : %d entrées (actifs, expirés, pending).', boosts_created)
+    return boosts_created
+
+
+def seed_pin_boosts(public_pins: list[Pin]) -> None:
+    """Pins boostés pour tester badge fil + ranking discover."""
+    boosts_created = seed_david_pin_boosts(public_pins)
+
+    pkg_24 = BoostPackage.objects.filter(slug='24h', is_active=True).first()
+    if not pkg_24:
+        if boosts_created == 0:
+            logger.warning('PinBoost seed ignoré (BoostPackage 24h absent).')
+        return
+
+    now = dj_tz.now()
 
     def _pin_candidates(username: str, limit: int = 6) -> list[Pin]:
         author = User.objects.filter(username=username).first()
@@ -752,30 +825,6 @@ def seed_pin_boosts(public_pins: list[Pin]) -> None:
             for p in public_pins
             if p.author_id == author.id and not p.is_story and p.visibility == Pin.VISIBILITY_PUBLIC
         ][:limit]
-
-    david = User.objects.filter(username='david1anato').first()
-    if david:
-        for pin in _pin_candidates('david1anato', 4)[:3]:
-            PinBoost.objects.create(
-                pin=pin,
-                owner=david,
-                package=pkg_24,
-                status=PinBoost.STATUS_ACTIVE,
-                starts_at=now - timedelta(hours=3),
-                ends_at=now + timedelta(hours=21),
-            )
-            boosts_created += 1
-        extra = _pin_candidates('david1anato', 5)
-        if len(extra) > 3 and pkg_72:
-            PinBoost.objects.create(
-                pin=extra[3],
-                owner=david,
-                package=pkg_72,
-                status=PinBoost.STATUS_EXPIRED,
-                starts_at=now - timedelta(days=4),
-                ends_at=now - timedelta(days=1),
-            )
-            boosts_created += 1
 
     for uname in ('clara', 'max', 'emma'):
         author = User.objects.filter(username=uname).first()
@@ -794,7 +843,7 @@ def seed_pin_boosts(public_pins: list[Pin]) -> None:
         )
         boosts_created += 1
 
-    logger.info('PinBoost : %d entrées seed (actifs + expiré).', boosts_created)
+    logger.info('PinBoost : %d entrées seed (David + autres créateurs).', boosts_created)
 
 
 def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, skip_network: bool) -> None:
@@ -819,23 +868,28 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
 
 def seed_pin_promo_campaigns(
     david: User | None,
+    public_pins: list[Pin],
     topics_by_name: dict[str, Topic],
     skip_network: bool,
 ) -> None:
-    """Campagnes publicitaires créateur (autonomes, ciblage précis)."""
+    """Campagnes publicitaires créateur David (autonomes + liées à des pins)."""
     if not david:
         return
     pkg = BoostPackage.objects.filter(slug='72h', is_active=True).first()
+    pkg_7d = BoostPackage.objects.filter(slug='7d', is_active=True).first()
     if not pkg:
         pkg = BoostPackage.objects.filter(is_active=True).first()
     if not pkg:
         logger.warning('PinPromoCampaign seed ignoré (aucun BoostPackage).')
         return
 
+    david_pins = _david_public_pins(public_pins, limit=12)
     now = dj_tz.now()
     frontend = str(getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:5174').rstrip('/')
     deco_topic = 'Maison et déco'
     travel_topic = 'Voyages'
+    photo_topic = 'Photographie'
+    design_topic = 'Inspiration design'
     specs = [
         {
             'headline': 'Studio David — presets Lightroom Afrique',
@@ -853,7 +907,50 @@ def seed_pin_promo_campaigns(
             },
             'impressions': 156,
             'clicks': 11,
+            'pin_views': 420,
             'seed_key': 'creator_david_presets',
+            'package': pkg,
+            'status': PinPromoCampaign.STATUS_ACTIVE,
+        },
+        {
+            'headline': 'Shoot Cotonou — série urbaine 2026',
+            'body': 'Nouvelle série photo : rues, textures et portraits au golden hour.',
+            'cta_label': 'Voir la série',
+            'cta_url': f'{frontend}/profile/david1anato',
+            'topic_slug': photo_topic if photo_topic in topics_by_name else '',
+            'targeting': {
+                'countries': ['BJ', 'TG', 'SN'],
+                'languages': ['fr'],
+                'interests': ['photo', 'voyage'],
+                'genders': ['woman', 'man'],
+            },
+            'impressions': 312,
+            'clicks': 28,
+            'pin_views': 890,
+            'pin_index': 0,
+            'seed_key': 'creator_david_cotonou',
+            'package': pkg_7d or pkg,
+            'status': PinPromoCampaign.STATUS_ACTIVE,
+        },
+        {
+            'headline': 'Portfolio David — UI/UX & photo',
+            'body': 'Découvrez mes dernières créations : interfaces, moodboards et shootings.',
+            'cta_label': 'Explorer',
+            'cta_url': f'{frontend}/profile/david1anato',
+            'topic_slug': design_topic if design_topic in topics_by_name else '',
+            'targeting': {
+                'countries': ['BJ', 'FR', 'CI'],
+                'languages': ['fr', 'en'],
+                'plans': ['free', 'plus', 'pro'],
+                'interests': ['design', 'photo'],
+            },
+            'impressions': 245,
+            'clicks': 19,
+            'pin_views': 610,
+            'pin_index': 2,
+            'seed_key': 'creator_david_portfolio',
+            'package': pkg,
+            'status': PinPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Atelier voyage — carnets créatifs',
@@ -872,7 +969,30 @@ def seed_pin_promo_campaigns(
             },
             'impressions': 92,
             'clicks': 7,
+            'pin_views': 180,
             'seed_key': 'creator_travel_notebooks',
+            'package': pkg,
+            'status': PinPromoCampaign.STATUS_ACTIVE,
+        },
+        {
+            'headline': 'Masterclass — retouche mobile Pro',
+            'body': 'Session live : workflow Lightroom mobile + export pour Pinova.',
+            'cta_label': "S'inscrire",
+            'cta_url': f'{frontend}/profile/david1anato',
+            'topic_slug': photo_topic if photo_topic in topics_by_name else '',
+            'targeting': {
+                'countries': ['BJ', 'SN'],
+                'languages': ['fr'],
+                'plans': ['plus', 'pro'],
+                'interests': ['photo'],
+            },
+            'impressions': 78,
+            'clicks': 9,
+            'pin_views': 95,
+            'pin_index': 4,
+            'seed_key': 'creator_david_masterclass',
+            'package': pkg_7d or pkg,
+            'status': PinPromoCampaign.STATUS_PAUSED,
         },
         {
             'headline': 'Formation Pro — monétiser sa création',
@@ -887,10 +1007,52 @@ def seed_pin_promo_campaigns(
             },
             'impressions': 34,
             'clicks': 5,
+            'pin_views': 42,
             'seed_key': 'creator_pro_webinar',
+            'package': pkg,
+            'status': PinPromoCampaign.STATUS_ACTIVE,
+        },
+        {
+            'headline': 'Textures Afrique — pack HD',
+            'body': '50 textures haute résolution pour vos moodboards et mockups.',
+            'cta_label': 'Télécharger',
+            'cta_url': f'{frontend}/profile/david1anato',
+            'topic_slug': design_topic if design_topic in topics_by_name else '',
+            'targeting': {
+                'countries': ['BJ', 'CI', 'GH', 'SN'],
+                'languages': ['fr'],
+                'interests': ['design', 'architecture'],
+            },
+            'impressions': 201,
+            'clicks': 16,
+            'pin_views': 340,
+            'pin_index': 6,
+            'seed_key': 'creator_david_textures',
+            'package': pkg,
+            'status': PinPromoCampaign.STATUS_ACTIVE,
+        },
+        {
+            'headline': 'Campagne expirée — soldes presets',
+            'body': 'Offre terminée (seed) — ne doit plus apparaître dans le fil.',
+            'cta_label': 'Archives',
+            'cta_url': f'{frontend}/profile/david1anato',
+            'topic_slug': '',
+            'targeting': {'languages': ['fr']},
+            'impressions': 500,
+            'clicks': 40,
+            'pin_views': 0,
+            'seed_key': 'creator_david_expired',
+            'package': pkg,
+            'status': PinPromoCampaign.STATUS_EXPIRED,
+            'starts_at': now - timedelta(days=45),
+            'ends_at': now - timedelta(days=5),
         },
     ]
-    for row in specs:
+    for idx, row in enumerate(specs):
+        pin = None
+        pin_index = row.get('pin_index')
+        if pin_index is not None and pin_index < len(david_pins):
+            pin = david_pins[pin_index]
         campaign, created = PinPromoCampaign.objects.update_or_create(
             owner=david,
             headline=row['headline'],
@@ -900,20 +1062,23 @@ def seed_pin_promo_campaigns(
                 'cta_url': row['cta_url'],
                 'topic_slug': row.get('topic_slug', ''),
                 'targeting': row.get('targeting', {}),
-                'package': pkg,
-                'status': PinPromoCampaign.STATUS_ACTIVE,
-                'starts_at': now - timedelta(days=2),
-                'ends_at': now + timedelta(days=30),
+                'package': row.get('package', pkg),
+                'status': row.get('status', PinPromoCampaign.STATUS_ACTIVE),
+                'starts_at': row.get('starts_at', now - timedelta(days=2)),
+                'ends_at': row.get('ends_at', now + timedelta(days=30)),
                 'impressions': row.get('impressions', 0),
                 'clicks': row.get('clicks', 0),
-                'pin': None,
+                'pin_views': row.get('pin_views', 0),
+                'pin': pin,
+                'fedapay_transaction_id': f'seed_promo_david_{idx}_{uuid.uuid4().hex[:12]}',
             },
         )
         if created or not campaign.media:
             attach_creator_campaign_media(campaign, row['seed_key'], skip_network)
     logger.info(
-        'PinPromoCampaign : %d campagnes créateur seed.',
+        'David — PinPromoCampaign : %d campagnes actives, %d au total.',
         PinPromoCampaign.objects.filter(owner=david, status=PinPromoCampaign.STATUS_ACTIVE).count(),
+        PinPromoCampaign.objects.filter(owner=david).count(),
     )
 
 
@@ -987,7 +1152,7 @@ def seed_monetization(
     seed_partner_campaigns(admin, topics_by_name, skip_network)
     seed_pin_boosts(public_pins)
     david = User.objects.filter(username='david1anato').first()
-    seed_pin_promo_campaigns(david, topics_by_name, skip_network)
+    seed_pin_promo_campaigns(david, public_pins, topics_by_name, skip_network)
     seed_internal_tips(public_pins)
 
 
@@ -1763,7 +1928,17 @@ def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> b
     return True
 
 
+def _apply_deploy_defaults() -> None:
+    """Sur Render : seed sans téléchargement d'images et volume pins modéré."""
+    on_render = os.environ.get('RENDER', '').lower() in ('true', '1', 'yes')
+    if not on_render:
+        return
+    os.environ.setdefault('SEED_SKIP_NETWORK', '1')
+    os.environ.setdefault('SEED_PIN_COUNT', '120')
+
+
 def seed_data():
+    _apply_deploy_defaults()
     logger.info('Mise à jour complète de la base de données (seed)…')
     skip_network = os.environ.get('SEED_SKIP_NETWORK', '').lower() in ('1', 'true', 'yes')
     pin_target = int(os.environ.get('SEED_PIN_COUNT', '420'))
