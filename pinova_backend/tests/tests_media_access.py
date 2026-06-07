@@ -10,7 +10,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from pinova_backend.media.access import build_media_signature
+from pinova_backend.media_serving.access import build_media_signature
 from pins.models import Pin
 
 

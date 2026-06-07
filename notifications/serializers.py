@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from pins.topic_i18n import SUPPORTED_TOPIC_LANGS
 
-from pinova_backend.media.cache import build_versioned_media_url
+from pinova_backend.media_serving.cache import build_versioned_media_url
 
 from .models import Notification, PushSubscription
 

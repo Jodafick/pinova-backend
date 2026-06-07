@@ -2,7 +2,7 @@
 
 from django.http import JsonResponse
 
-from pinova_backend.media.access import evaluate_media_access
+from pinova_backend.media_serving.access import evaluate_media_access
 
 
 class MediaAccessMiddleware:

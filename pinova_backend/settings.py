@@ -404,7 +404,7 @@ if USE_S3_MEDIA:
     }
     STORAGES = {
         'default': {
-            'BACKEND': 'pinova_backend.media.storage.PinovaMediaStorage',
+            'BACKEND': 'pinova_backend.media_serving.storage.PinovaMediaStorage',
         },
         'staticfiles': {
             'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',

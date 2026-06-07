@@ -19,7 +19,7 @@ from django.utils import timezone
 from datetime import timedelta
 from .currency_utils import normalize_currency
 from notifications.notification_i18n import create_localized_notification
-from pinova_backend.media.cache import build_versioned_media_url
+from pinova_backend.media_serving.cache import build_versioned_media_url
 from pins.moderation import validate_clean_text_fields
 from pins.api_locale import api_locale_from_request
 from accounts.password_policy import format_password_validation_errors, validate_pinova_password

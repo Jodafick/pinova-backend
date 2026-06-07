@@ -52,7 +52,7 @@ from .models import (
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
-from pinova_backend.media.cache import build_versioned_media_url
+from pinova_backend.media_serving.cache import build_versioned_media_url
 from pinova_backend.security.ratelimit_helpers import ratelimit_post
 
 from .serializers import (

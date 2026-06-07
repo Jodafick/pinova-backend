@@ -150,6 +150,6 @@ cython_debug/
 # OS
 .DS_Store
 
-# Media
-media/
+# Media uploads (MEDIA_ROOT at project root — distinct from pinova_backend/media_serving/ package)
+/media/
 staticfiles/

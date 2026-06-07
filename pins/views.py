@@ -28,7 +28,7 @@ from accounts.preference_utils import (
 )
 from accounts.subscription_utils import _enforce_subscription_state
 from accounts.user_invite_lookup import resolve_user_for_invite_identifier
-from pinova_backend.media.cache import append_version_using_media_path, build_versioned_media_url
+from pinova_backend.media_serving.cache import append_version_using_media_path, build_versioned_media_url
 from pinova_backend.security.throttling import client_ip_from_request
 import re
 import uuid

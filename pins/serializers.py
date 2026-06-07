@@ -21,7 +21,7 @@ from .models import (
     ContentReport,
 )
 
-from pinova_backend.media.cache import build_versioned_media_url
+from pinova_backend.media_serving.cache import build_versioned_media_url
 
 from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
