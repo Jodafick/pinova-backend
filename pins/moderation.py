@@ -1,4 +1,4 @@
-"""Modération serveur : profanité (better-profanity), rate limits (cache), flood identique."""
+"""Modération serveur : blocklist ciblée (insultes violentes / porno explicite), rate limits, flood."""
 
 from __future__ import annotations
 
@@ -11,10 +11,9 @@ from django.core.cache import cache
 from django.db.models import F
 from rest_framework import serializers
 
-try:
-    from better_profanity import profanity
-except ImportError:
-    profanity = None
+from .text_blocklist import contains_blocked_text
+
+_TEXT_MODERATION_ENABLED = getattr(settings, 'MODERATION_TEXT_ENABLED', True)
 
 MSG_PROFANITY_TITLE = getattr(
     settings,
@@ -145,7 +144,9 @@ def enforce_identical_content_flood(user_id: int, kind: str, fingerprint: str) -
 
 
 def _profanity_in(text: str) -> bool:
-    return bool(text and profanity and profanity.contains_profanity(text))
+    if not _TEXT_MODERATION_ENABLED or not text:
+        return False
+    return contains_blocked_text(text)
 
 
 def validate_pin_text(
@@ -155,7 +156,7 @@ def validate_pin_text(
     private_tags: list[str] | None = None,
 ) -> None:
     """Lève ValidationError avec une clé par champ (compatibles avec le serializer)."""
-    if not profanity:
+    if not _TEXT_MODERATION_ENABLED:
         return
     errors: dict[str, list[str]] = {}
     if _profanity_in(title or ''):
@@ -190,7 +191,7 @@ def sanitize_comment_plain_text(text: str) -> str:
 
 
 def validate_comment_text(text: str) -> None:
-    if not profanity:
+    if not _TEXT_MODERATION_ENABLED:
         return
     if _profanity_in(text or ''):
         raise serializers.ValidationError({
@@ -205,7 +206,7 @@ def validate_clean_text_fields(
     message: str = 'Ce champ contient un contenu inapproprie.',
 ) -> None:
     """Validation generique anti-contenu par champ (erreurs DRF mappees par cle de champ)."""
-    if not profanity:
+    if not _TEXT_MODERATION_ENABLED:
         return
     errors: dict[str, list[str]] = {}
     for field_name, raw_value in fields.items():

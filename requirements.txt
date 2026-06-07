@@ -53,7 +53,6 @@ psycopg2-binary
 gunicorn
 
 # Moderation & limits
-better-profanity
 django-ratelimit
 
 # Médias / modération (échantillon vidéo + optional ONNX NSFW)
