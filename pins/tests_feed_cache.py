@@ -101,3 +101,14 @@ class FeedCacheTests(TestCase):
         self.client.get('/api/pins/home-feed/?page=1&page_size=10')
         r = self.client.get('/api/pins/home-feed/?page=1&page_size=10&no_cache=1')
         self.assertEqual(r['X-Cache'], 'MISS')
+
+    def test_public_endpoints_allow_invalid_bearer(self):
+        """Invité avec JWT périmé en localStorage : endpoints publics restent accessibles."""
+        headers = {'HTTP_AUTHORIZATION': 'Bearer invalid.jwt.token'}
+        for path in (
+            '/api/pins/discover/?page=1&page_size=5',
+            '/api/pins/topics/?limit=5',
+            '/api/pins/explore-boards/?page=1&page_size=5',
+        ):
+            r = self.client.get(path, **headers)
+            self.assertEqual(r.status_code, 200, msg=path)
