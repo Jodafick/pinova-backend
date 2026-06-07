@@ -2451,7 +2451,12 @@ class BoardViewSet(viewsets.ModelViewSet):
                 title_fr='Invitation tableau',
                 message_fr=f"{request.user.username} vous invite à collaborer sur « {board.name} ».",
                 action_url='/profile',
-                metadata={'invite_id': invite.id, 'board_id': board.id},
+                metadata={
+                'invite_id': invite.id,
+                'board_id': board.id,
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
+            },
             )
             return Response({'status': 'invited', 'invite_id': invite.id, 'collaborator_count': board.collaborators.count()})
 
@@ -2641,6 +2646,24 @@ class BoardCollaborationInviteViewSet(mixins.ListModelMixin, viewsets.GenericVie
             recipient=request.user,
             notification_type='board_invite',
         ).filter(metadata__invite_id=invite.id).update(is_read=True)
+        create_localized_notification(
+            recipient=invite.board.user,
+            sender=request.user,
+            notification_type='system',
+            title_fr='Invitation acceptée',
+            message_fr=(
+                f'{request.user.username} a accepté votre invitation sur '
+                f'« {invite.board.name} ».'
+            ),
+            action_url=f'/profile/{request.user.username}',
+            metadata={
+                'kind': 'board_invite_accepted',
+                'board_id': invite.board_id,
+                'invite_id': invite.id,
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
+            },
+        )
         return Response({'status': 'accepted', 'board_id': invite.board_id})
 
     @action(detail=True, methods=['post'])

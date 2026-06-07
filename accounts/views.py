@@ -1793,6 +1793,8 @@ class SubscriptionConfirmView(APIView):
                 'transaction_id': payment.fedapay_transaction_id,
                 'plan': payment.plan,
                 'billing_cycle': payment.billing_cycle,
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
             },
         )
         if previous_plan != payment.plan:
@@ -1807,6 +1809,8 @@ class SubscriptionConfirmView(APIView):
                     'from_plan': previous_plan,
                     'to_plan': payment.plan,
                     'transaction_id': payment.fedapay_transaction_id,
+                    'delivery_mode': 'ws_and_push',
+                    'in_app_toast': True,
                 },
             )
 

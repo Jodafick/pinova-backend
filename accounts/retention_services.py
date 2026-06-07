@@ -60,7 +60,7 @@ def send_streak_reminder_for_profile(profile: Profile) -> bool:
         title_fr='Ton streak découverte est en jeu 🔥',
         message_fr=f'Visite l’onglet Explorer pour garder ton streak de {count} jour(s).',
         action_url='/',
-        metadata={'kind': 'discovery_streak_reminder', 'streak_count': count},
+        metadata={'kind': 'discovery_streak_reminder', 'streak_count': count, 'delivery_mode': 'ws_and_push', 'in_app_toast': True},
     )
     profile.discovery_streak_reminder_sent_date = today
     profile.save(update_fields=['discovery_streak_reminder_sent_date'])

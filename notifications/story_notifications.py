@@ -33,6 +33,7 @@ def notify_followers_new_story(*, author: User, pin: Pin, limit: int = 400) -> N
             metadata={
                 'kind': 'story_new_from_following',
                 'is_story': True,
-                'delivery_mode': 'ws_fallback_push',
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
             },
         )

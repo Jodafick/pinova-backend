@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.contrib.auth.models import User
 
+from notifications.delivery import DELIVERY_WS_AND_PUSH
 from notifications.notification_i18n import create_localized_notification
 
 from .referral_notify_throttle import allow_referral_rank_notification
@@ -14,7 +15,12 @@ def notify_referrer_filleul_validated(*, referrer: User, referee_username: str, 
         title_fr='Nouveau filleul validé',
         message_fr=f'{referee_username} a validé son inscription grâce à votre parrainage ({contest_key}).',
         action_url='/referrals/contest',
-        metadata={'kind': 'referral_filleul_validated', 'contest_key': contest_key},
+        metadata={
+            'kind': 'referral_filleul_validated',
+            'contest_key': contest_key,
+            'delivery_mode': DELIVERY_WS_AND_PUSH,
+            'in_app_toast': True,
+        },
     )
 
 
@@ -25,7 +31,12 @@ def notify_referrer_reward_unlocked(*, referrer: User, contest_key: str, message
         title_fr='Progression parrainage',
         message_fr=message_fr,
         action_url='/referrals/contest',
-        metadata={'kind': 'referral_reward', 'contest_key': contest_key},
+        metadata={
+            'kind': 'referral_reward',
+            'contest_key': contest_key,
+            'delivery_mode': DELIVERY_WS_AND_PUSH,
+            'in_app_toast': True,
+        },
     )
 
 
@@ -84,6 +95,8 @@ def maybe_notify_referral_leaderboard_rank(
             'rank': new_rank,
             'previous_rank': prev_rank,
             'total_score': total_score,
+            'delivery_mode': DELIVERY_WS_AND_PUSH,
+            'in_app_toast': True,
         },
     )
 
@@ -95,7 +108,13 @@ def notify_referral_contest_month_closed(*, recipient: User, contest_key: str, r
         title_fr='Concours parrainage terminé',
         message_fr=f'Le mois {contest_key} est clos. Votre classement final : #{rank} ({score:.1f} pts).',
         action_url='/referrals/contest/archives',
-        metadata={'kind': 'referral_contest_closed', 'contest_key': contest_key, 'rank': rank},
+        metadata={
+            'kind': 'referral_contest_closed',
+            'contest_key': contest_key,
+            'rank': rank,
+            'delivery_mode': DELIVERY_WS_AND_PUSH,
+            'in_app_toast': True,
+        },
     )
 
 
@@ -109,7 +128,8 @@ def notify_referral_new_month(*, recipient: User, new_contest_key: str) -> None:
         metadata={
             'kind': 'referral_contest_new_month',
             'contest_key': new_contest_key,
-            'delivery_mode': 'ws_and_push',
+            'delivery_mode': DELIVERY_WS_AND_PUSH,
+            'in_app_toast': True,
         },
     )
 

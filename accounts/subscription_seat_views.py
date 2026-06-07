@@ -214,6 +214,8 @@ class SubscriptionSeatInviteCreateView(APIView):
                 'seat_invite_id': str(inv.id),
                 'kind': 'subscription_seat_invite',
                 'seat_bundle': bundle_kind or profile.subscription_seat_bundle,
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
             },
         )
         # token_hash conserve une empreinte en base pour d’éventuels audits ; l’acceptation

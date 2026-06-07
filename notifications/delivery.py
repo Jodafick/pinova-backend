@@ -27,16 +27,34 @@ DELIVERY_WS_FALLBACK_PUSH = 'ws_fallback_push'
 DELIVERY_WS_AND_PUSH = 'ws_and_push'
 
 CRITICAL_PUSH_TYPES = frozenset({'payment', 'plan_change', 'board_invite'})
-CRITICAL_METADATA_KINDS = frozenset({
+# Engagement / rétention : push systématique + toast in-app.
+ENGAGEMENT_PUSH_KINDS = frozenset({
     'campaign_started',
     'campaign_boost_started',
     'contest_new_month',
+    'contest_milestone_top100',
+    'contest_milestone_top10',
+    'contest_milestone_winner',
+    'contest_winner',
+    'contest_final_rank',
+    'contest_month_closed',
     'referral_contest_new_month',
+    'referral_contest_rank',
+    'referral_contest_closed',
+    'referral_filleul_validated',
+    'referral_reward',
     'story_new_from_following',
+    'discovery_streak_reminder',
+    'subscription_seat_invite',
+    'board_invite_accepted',
+    'scheduled_publish',
 })
+
+CRITICAL_METADATA_KINDS = ENGAGEMENT_PUSH_KINDS
 
 SILENT_IN_APP_KINDS = frozenset({'contest_display_rank_change'})
 SILENT_IN_APP_TYPES = frozenset({'digest'})
+WS_ONLY_KINDS = frozenset({'contest_display_rank_change'})
 
 COALESCABLE_PUSH_TYPES = frozenset({'like', 'save', 'comment', 'follow'})
 PUSH_COALESCE_TTL_SEC = 120
@@ -60,9 +78,47 @@ def resolve_delivery_mode(notification) -> str:
     ntype = str(getattr(notification, 'notification_type', '') or '').strip().lower()
     if ntype in CRITICAL_PUSH_TYPES:
         return DELIVERY_WS_AND_PUSH
-    if ntype in SILENT_IN_APP_TYPES or kind in SILENT_IN_APP_KINDS:
+    if kind in WS_ONLY_KINDS:
+        return DELIVERY_WS_ONLY
+    if ntype in SILENT_IN_APP_TYPES:
         return DELIVERY_WS_ONLY
     return DELIVERY_WS_FALLBACK_PUSH
+
+
+def enrich_notification_metadata(
+    metadata: dict[str, Any] | None,
+    *,
+    notification_type: str = '',
+) -> dict[str, Any]:
+    """
+    Complète metadata avec delivery_mode / in_app_toast si absents
+    (appelé depuis create_localized_notification).
+    """
+    md = dict(metadata or {})
+    kind = str(md.get('kind') or '').strip().lower()
+    ntype = str(notification_type or '').strip().lower()
+
+    if 'delivery_mode' not in md:
+        if kind in ENGAGEMENT_PUSH_KINDS or kind in WS_ONLY_KINDS:
+            md['delivery_mode'] = (
+                DELIVERY_WS_ONLY if kind in WS_ONLY_KINDS else DELIVERY_WS_AND_PUSH
+            )
+        elif kind in CRITICAL_METADATA_KINDS or ntype in CRITICAL_PUSH_TYPES:
+            md['delivery_mode'] = DELIVERY_WS_AND_PUSH
+        elif ntype in SILENT_IN_APP_TYPES:
+            md['delivery_mode'] = DELIVERY_WS_ONLY
+        else:
+            md['delivery_mode'] = DELIVERY_WS_FALLBACK_PUSH
+
+    if 'in_app_toast' not in md:
+        if kind in SILENT_IN_APP_KINDS or ntype in SILENT_IN_APP_TYPES:
+            md['in_app_toast'] = False
+        elif kind in ENGAGEMENT_PUSH_KINDS or ntype in CRITICAL_PUSH_TYPES:
+            md['in_app_toast'] = True
+        else:
+            md['in_app_toast'] = True
+
+    return md
 
 
 def resolve_in_app_toast(notification) -> bool:

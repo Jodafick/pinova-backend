@@ -216,8 +216,9 @@ def _maybe_send_contest_display_rank_notifications(
         comments_delta=comments_delta,
         views_total=views_total,
     )
+    from contests.contest_notifications import contest_rank_change_metadata
+
     md = {
-        'kind': 'contest_display_rank_change',
         'contest_key': settings.contest_key,
         'pin_id': representative_row.pin_id,
         'pin_slug': representative_row.pin.slug,
@@ -225,6 +226,13 @@ def _maybe_send_contest_display_rank_notifications(
         'previous_display_rank': prev_display_rank,
         'creator_id': recipient.id,
     }
+    md.update(
+        contest_rank_change_metadata(
+            settings,
+            prev_rank=prev_display_rank,
+            new_rank=new_display_rank,
+        )
+    )
     create_localized_notification(
         recipient=recipient,
         notification_type='system',
@@ -478,3 +486,6 @@ def finalize_contest(contest: ContestSettings) -> None:
         ContestWinnerPayout.objects.filter(contest=contest, source=ContestWinnerPayout.SOURCE_PINS).delete()
         if payout_rows:
             ContestWinnerPayout.objects.bulk_create(payout_rows)
+    from contests.contest_notifications import notify_pin_contest_month_closed
+
+    notify_pin_contest_month_closed(contest, winners)

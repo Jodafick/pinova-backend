@@ -54,6 +54,9 @@ def publish_due_scheduled_pins(queryset, *, limit: int = 1000) -> int:
                     'event': 'scheduled_publish',
                     'published_at_iso': now_iso,
                     'is_story': pin.is_story,
+                    'kind': 'scheduled_publish',
+                    'delivery_mode': 'ws_and_push',
+                    'in_app_toast': True,
                 },
             )
 

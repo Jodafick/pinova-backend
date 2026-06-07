@@ -66,11 +66,14 @@ def localized_pairs_for_recipient(title_fr: str, body_fr: str, recipient: User) 
 
 def create_localized_notification(*, recipient: User, title_fr: str = '', message_fr: str, **notification_fields):
     """Notification avec title/message pour `recipient_language`; FR canonique conservé dans metadata."""
+    from notifications.delivery import enrich_notification_metadata
     from notifications.models import Notification
 
     md = notification_fields.pop('metadata', None) or {}
     if not isinstance(md, dict):
         md = {}
+    ntype = str(notification_fields.get('notification_type') or '')
+    md = enrich_notification_metadata(md, notification_type=ntype)
 
     tit_fr_raw = (title_fr or '')[:NOTIFICATION_TITLE_MAX]
     msg_fr_raw = (message_fr or '')[:NOTIFICATION_MESSAGE_MAX]

@@ -5,24 +5,52 @@
 | Canal | Rôle | Quand |
 |-------|------|--------|
 | **WebSocket** | Sync temps réel (badge, liste, payload complet) | Toujours à la création |
-| **Toast in-app** | Bannière légère si l’utilisateur a l’app ouverte | Événements **nouveaux** après connexion ; regroupés par rafale (~900 ms) ; respecte `in_app_toast` |
-| **Push Web / Expo** | Alerte OS quand l’app est fermée ou WS indisponible | Selon `delivery_mode` + anti-spam par groupe |
+| **Toast in-app** | Bannière si l’app est ouverte | Événements **nouveaux** ; `in_app_toast: true` |
+| **Push Web / Expo** | Alerte OS (app fermée / WS down) | Selon `delivery_mode` |
 
 ## Modes (`metadata.delivery_mode`)
 
-- **`ws_fallback_push`** (défaut social : like, save, comment, follow)  
-  WS + toast in-app si connecté. Push **uniquement** si WS indisponible (hors ligne / dégradé).
+| Mode | Push | Usage |
+|------|------|--------|
+| `ws_fallback_push` | Si WS indisponible | Social (like, save, comment, follow) — défaut |
+| `ws_and_push` | Toujours | Concours, parrainage, paiement, rétention, campagnes |
+| `ws_only` | Jamais | Micro-mouvements de rang concours, digest |
 
-- **`ws_and_push`** (critique : paiement, plan, invite tableau, campagnes, concours)  
-  WS + toast + push systématique.
+`create_localized_notification` appelle `enrich_notification_metadata()` si `delivery_mode` / `in_app_toast` sont absents.
 
-- **`ws_only`** (discret : digest, changement de rang concours affiché)  
-  Centre de notifications + badge ; **pas** de push ni toast.
+## Concours & engagement (push systématique)
 
-## Regroupement push (backend)
+- Nouveau mois concours / parrainage
+- Jalons : top 100, top 10, 1ère place (pins + parrainage)
+- Changement de rang **prioritaire** (podium, entrée/sortie top 10 affiché)
+- Fin de mois : podium + classement final participants
+- Stories des abonnés, streak découverte, campagnes promo
 
-Types sociaux : une seule push par **fenêtre 120 s** et par **clé de groupe**  
-(ex. `like:pin:42`, `follow:user:7`). Les notifications restent toutes en base + WS.
+Micro-changements de rang concours → `ws_only`, pas de toast (badge uniquement).
+
+## Regroupement push social
+
+Types `like`, `save`, `comment`, `follow` : 1 push / 120 s / groupe (ex. `like:pin:42`).
+
+## Audit couverture (backend)
+
+| Domaine | Statut |
+|---------|--------|
+| Like / save / comment / follow | OK |
+| Comment like, mentions | OK |
+| Board invite + acceptation invitant | OK (accept ajouté) |
+| Siège abonnement famille/équipe | OK + push |
+| Paiement / plan / essai Plus | OK + push |
+| Publication planifiée | OK + push |
+| Campagnes / boost créateur | OK |
+| Stories abonnés | OK + push |
+| Streak découverte | OK + push |
+| Concours pins (rang, jalons, clôture) | OK (jalons + finalize ajoutés) |
+| Concours parrainage | OK + push explicite |
+| Bienvenue / OTP | in-app, push si hors ligne |
+| Digest hebdo PRO | email + notif `ws_only` |
+| Emails réactivation J+7/J+30 | email seul (volontaire) |
+| Signalement contenu / modération | pas de notif utilisateur (volontaire) |
 
 ## Overrides création
 
@@ -30,15 +58,9 @@ Types sociaux : une seule push par **fenêtre 120 s** et par **clé de groupe**
 create_localized_notification(
     ...,
     metadata={
-        'delivery_mode': 'ws_only',      # optionnel
-        'in_app_toast': False,           # optionnel
-        'kind': 'contest_display_rank_change',
+        'kind': 'contest_milestone_top10',
+        'delivery_mode': 'ws_and_push',
+        'in_app_toast': True,
     },
 )
 ```
-
-## Client (PWA)
-
-- Curseur `sessionStorage` : pas de toast pour l’historique au login/reconnexion.
-- Rafales : un toast résumé « N nouvelles notifications ».
-- Style : surface `notification`, haut mobile / bas-droite desktop, glass blur, coins ~18px.
