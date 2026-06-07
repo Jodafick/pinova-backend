@@ -14,6 +14,8 @@ def notifications_group_name(user_id: int) -> str:
 
 
 def notification_ws_payload(notification) -> dict:
+    from .delivery import resolve_in_app_toast
+
     metadata = notification.metadata if isinstance(notification.metadata, dict) else {}
     return {
         'id': notification.id,
@@ -29,6 +31,7 @@ def notification_ws_payload(notification) -> dict:
         'created_at': notification.created_at.isoformat(),
         'sender_id': notification.sender_id,
         'recipient_id': notification.recipient_id,
+        'in_app_toast': resolve_in_app_toast(notification),
     }
 
 

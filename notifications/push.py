@@ -274,12 +274,12 @@ def _send_expo_mobile_for_user(recipient_user, payload_dict):
         _send_expo_batch(chunk, payload_dict, headers)
 
 
-def send_notification_push(notification):
+def send_notification_push(notification, payload_dict=None):
     """
     Envoi Web Push (PWA — VAPID) + Expo Push (applications mobiles).
     Chaque canal est traité indépendamment selon les abonnements actifs du destinataire.
     """
-    payload_dict = _notification_payload_dict(notification)
+    payload_dict = payload_dict or _notification_payload_dict(notification)
     recipient_user = notification.recipient
     _send_web_push_for_user(recipient_user, payload_dict)
     _send_expo_mobile_for_user(recipient_user, payload_dict)
