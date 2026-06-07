@@ -210,8 +210,22 @@ class PinViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = PinFeedPagination
 
+    # Actions @action(..., permission_classes=[AllowAny]) — get_permissions() doit les inclure
+    # (sinon seuls list/retrieve sont publics et discover/topics renvoient 401 invité).
+    _PUBLIC_ACTIONS = frozenset({
+        'list',
+        'retrieve',
+        'discover',
+        'topics',
+        'header_search',
+        'explore_boards',
+        'comments',
+        'comment_replies',
+        'provenance',
+    })
+
     def get_permissions(self):
-        if self.action in ('list', 'retrieve'):
+        if self.action in self._PUBLIC_ACTIONS:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
@@ -2219,7 +2233,7 @@ class BoardViewSet(viewsets.ModelViewSet):
     pagination_class = BoardListPagination
 
     def get_permissions(self):
-        if self.action == 'retrieve':
+        if self.action in ('retrieve', 'platform_policy'):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 

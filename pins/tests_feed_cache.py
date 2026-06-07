@@ -104,11 +104,23 @@ class FeedCacheTests(TestCase):
 
     def test_public_endpoints_allow_invalid_bearer(self):
         """Invité avec JWT périmé en localStorage : endpoints publics restent accessibles."""
+        anon = APIClient()
         headers = {'HTTP_AUTHORIZATION': 'Bearer invalid.jwt.token'}
         for path in (
             '/api/pins/discover/?page=1&page_size=5',
             '/api/pins/topics/?limit=5',
             '/api/pins/explore-boards/?page=1&page_size=5',
         ):
-            r = self.client.get(path, **headers)
+            r = anon.get(path, **headers)
+            self.assertEqual(r.status_code, 200, msg=path)
+
+    def test_public_endpoints_allow_anonymous_guest(self):
+        """Visiteur sans aucun token : discover / topics / explore-boards."""
+        anon = APIClient()
+        for path in (
+            '/api/pins/discover/?page=1&page_size=5',
+            '/api/pins/topics/?limit=5',
+            '/api/pins/explore-boards/?page=1&page_size=5',
+        ):
+            r = anon.get(path)
             self.assertEqual(r.status_code, 200, msg=path)
