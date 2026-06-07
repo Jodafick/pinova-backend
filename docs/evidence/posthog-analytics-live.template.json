@@ -1,0 +1,17 @@
+{
+  "note": "Genere par: python pinova-backend/scripts/setup_posthog_business_dashboard.py",
+  "deployed_at": null,
+  "posthog_host": "https://eu.posthog.com",
+  "project_id": "REMPLACER",
+  "dashboard": {
+    "id": null,
+    "name": "PINOVA — Business",
+    "url": "https://eu.posthog.com/project/REMPLACER/dashboard/REMPLACER"
+  },
+  "events_validation": {
+    "ok": false,
+    "required_count": 19,
+    "present_count": 0,
+    "missing_events": []
+  }
+}

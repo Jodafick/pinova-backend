@@ -5,7 +5,11 @@ from referrals.services import grant_retention_bonus_if_eligible
 
 
 class Command(BaseCommand):
-    help = 'Attribue les bonus rétention referral (filleuls actifs après 7 j). À planifier en cron (ex. quotidien).'
+    help = (
+        'Attribue les bonus rétention referral (filleuls actifs après 7 j). '
+        'Production : Celery Beat referrals-retention-scan (quotidien 04:00 UTC). '
+        'Secours : manage.py referral_retention_scan'
+    )
 
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=2000)

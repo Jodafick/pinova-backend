@@ -1,8 +1,8 @@
 """
 Supprime les comptes dont la date account_scheduled_deletion_at est dépassée.
 
-Planifier en cron (ex. quotidien) :
-  cd /path/pinova-backend && .venv/bin/python manage.py purge_scheduled_account_deletions
+Production : Celery Beat `accounts-purge-deletions` (quotidien 03:00 UTC).
+Secours : python manage.py purge_scheduled_account_deletions
 """
 
 from django.contrib.auth.models import User

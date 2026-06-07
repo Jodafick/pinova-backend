@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from accounts.blocking import blocked_mutual_user_ids
 
-from pinova_backend.unread_notifications_middleware import invalidate_unread_notifications_header_cache
+from pinova_backend.middleware.unread_notifications import invalidate_unread_notifications_header_cache
 
 from .models import ExpoPushToken, Notification, PushSubscription
 from .serializers import (
@@ -15,6 +15,7 @@ from .serializers import (
 )
 from .push import get_vapid_public_key, is_push_configured
 from .pagination import NotificationPagination
+from .realtime import notification_ws_payload
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
@@ -57,6 +58,25 @@ class NotificationViewSet(viewsets.ModelViewSet):
     def unread_count(self, request):
         count = self.get_queryset().filter(is_read=False).count()
         return Response({'count': count})
+
+    @action(detail=False, methods=['get'], url_path='events')
+    def events(self, request):
+        """
+        Polling HTTP complémentaire au WebSocket `/api/notifications/ws`.
+        Aligné sur `contest/leaderboard/events` : deltas depuis `since_id`.
+        """
+        since_id = int(request.query_params.get('since_id', 0) or 0)
+        limit = min(max(int(request.query_params.get('limit', 100) or 100), 1), 300)
+        qs = self.get_queryset().order_by('id')
+        if since_id > 0:
+            qs = qs.filter(id__gt=since_id)
+        rows = list(qs[:limit])
+        return Response(
+            {
+                'results': [notification_ws_payload(row) for row in rows],
+                'last_id': rows[-1].id if rows else since_id,
+            }
+        )
 
     @action(detail=True, methods=['post'])
     def mark_as_read(self, request, pk=None):

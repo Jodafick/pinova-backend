@@ -6,23 +6,19 @@ from urllib.parse import quote
 import requests
 from pywebpush import WebPushException, webpush
 
+from pinova_backend.security.resilience import ExternalRetryableError, external_call
 from .models import ExpoPushToken, PushSubscription
 
 logger = logging.getLogger(__name__)
 
 EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send'
+EXPO_PUSH_BATCH_SIZE = 100
 
 _EXPO_TOKEN_PREFIX = 'ExponentPushToken['
-
-# Limite prudente pour les logs (évite des fichiers énormes si Expo renvoie une erreur verbose).
 _EXPO_LOG_BODY_MAX = 16000
 
 
 def _expo_ticket_from_send_response(body):
-    """
-    Pour une requête « un seul message », Expo renvoie `data` comme objet ticket,
-    pas toujours comme tableau — ne jamais présumer len(data) == nombre de jetons.
-    """
     if not isinstance(body, dict):
         return None
     data = body.get('data')
@@ -31,6 +27,16 @@ def _expo_ticket_from_send_response(body):
     if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
         return data[0]
     return None
+
+
+def _expo_tickets_from_batch_response(body):
+    if not isinstance(body, dict):
+        return []
+    data = body.get('data')
+    if isinstance(data, list):
+        return [t for t in data if isinstance(t, dict)]
+    ticket = _expo_ticket_from_send_response(body)
+    return [ticket] if ticket else []
 
 
 def _expo_should_deactivate_token(ticket):
@@ -45,7 +51,6 @@ def _expo_should_deactivate_token(ticket):
 
 
 def _push_action_url(notification):
-    """URL de navigation lorsque notification.action_url est vide (ex. like / comment)."""
     au = (getattr(notification, 'action_url', None) or '').strip()
     if au:
         return au
@@ -137,7 +142,6 @@ def _expo_serializable_data(payload_dict):
 
 
 def _normalize_expo_push_tokens(tokens):
-    """Ne garde que les jetons au format Expo attendu (évite des POST inutiles / erreurs silencieuses)."""
     out = []
     skipped = 0
     for t in tokens:
@@ -156,117 +160,106 @@ def _expo_push_request_headers():
     headers = {
         'Accept': 'application/json',
         'Accept-Encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
     }
     if expo_access:
         headers['Authorization'] = f'Bearer {expo_access}'
     return headers
 
 
-def _send_single_expo_notification(token, payload_dict, headers):
-    """
-    Une requête HTTP = une notification (payload objet unique, pas tableau).
-    Utilise json= pour que requests impose Content-Type application/json et sérialise comme Expo le attend.
-    """
-    data_payload = _expo_serializable_data(payload_dict)
-    # Pas de channelId arbitraire : si absent, Expo gère le canal Default (voir doc Expo Push).
-    message = {
+def _build_expo_message(token: str, payload_dict: dict) -> dict:
+    return {
         'to': token,
         'title': str(payload_dict.get('title') or 'PINOVA'),
         'body': str(payload_dict.get('body') or ''),
         'sound': 'default',
         'priority': 'high',
-        'data': data_payload,
+        'data': _expo_serializable_data(payload_dict),
     }
-    token_hint = token[-16:] if len(token) > 16 else token
 
-    try:
-        resp = requests.post(
-            EXPO_PUSH_API_URL,
-            json=message,
-            headers=headers,
-            timeout=25,
-        )
-    except requests.RequestException as exc:
-        logger.warning('Expo push requête échouée (jeton …%s): %s', token_hint, exc)
-        return
 
+def _expo_post_messages(messages: list[dict], headers: dict) -> requests.Response:
+    def _do() -> requests.Response:
+        resp = requests.post(EXPO_PUSH_API_URL, json=messages, headers=headers, timeout=25)
+        if resp.status_code >= 500 or resp.status_code == 429:
+            raise ExternalRetryableError(f'Expo push HTTP {resp.status_code}')
+        return resp
+
+    batch_size = len(messages)
+    return external_call(
+        service='expo_push',
+        operation=f'push/send batch={batch_size}',
+        fn=_do,
+        max_attempts=4,
+    )
+
+
+def _process_expo_response(body, resp, tokens_in_batch: list[str]) -> None:
     raw_text = resp.text
     text_snip = raw_text[:_EXPO_LOG_BODY_MAX] + ('…' if len(raw_text) > _EXPO_LOG_BODY_MAX else '')
 
-    try:
-        body = resp.json()
-    except ValueError:
-        logger.warning(
-            'Expo push HTTP %s — corps non JSON (jeton …%s) — texte brut: %s',
-            resp.status_code,
-            token_hint,
-            text_snip,
-        )
-        return
-
-    # Détail complet réservé au niveau DEBUG (évite de saturer les logs en prod).
-    logger.debug(
-        'Expo push réponse brute HTTP %s | jeton …%s | JSON: %s | texte: %s',
-        resp.status_code,
-        token_hint,
-        body,
-        text_snip,
-    )
-
     if isinstance(body, dict) and body.get('errors'):
         logger.warning(
-            'Expo push erreurs globales (jeton …%s): %s | HTTP %s | JSON complet: %s | texte brut: %s',
-            token_hint,
+            'Expo push erreurs globales batch=%s: %s | HTTP %s',
+            len(tokens_in_batch),
             body['errors'],
             resp.status_code,
-            body,
-            text_snip,
         )
         return
 
     if not resp.ok:
         logger.warning(
-            'Expo push HTTP non OK (jeton …%s) | status=%s | JSON complet: %s | texte brut: %s',
-            token_hint,
+            'Expo push HTTP non OK batch=%s | status=%s | JSON: %s',
+            len(tokens_in_batch),
             resp.status_code,
             body,
+        )
+        return
+
+    tickets = _expo_tickets_from_batch_response(body)
+    if not tickets:
+        logger.warning(
+            'Expo push réponse sans tickets batch=%s | HTTP %s | texte: %s',
+            len(tokens_in_batch),
+            resp.status_code,
             text_snip,
         )
         return
 
-    ticket = _expo_ticket_from_send_response(body)
-    if ticket is None:
-        logger.warning(
-            'Expo push réponse sans ticket exploitable (jeton …%s) | HTTP %s | JSON complet: %s | texte brut: %s',
-            token_hint,
-            resp.status_code,
-            body,
-            text_snip,
-        )
+    for idx, ticket in enumerate(tickets):
+        token = tokens_in_batch[idx] if idx < len(tokens_in_batch) else None
+        token_hint = token[-16:] if token and len(token) > 16 else token
+        if ticket.get('status') == 'ok':
+            logger.debug(
+                'Expo push OK batch | jeton …%s | id=%s',
+                token_hint,
+                ticket.get('id'),
+            )
+        else:
+            logger.warning(
+                'Expo push ticket erreur batch | jeton …%s | ticket: %s',
+                token_hint,
+                ticket,
+            )
+        if token and _expo_should_deactivate_token(ticket):
+            ExpoPushToken.objects.filter(token=token).update(is_active=False)
+
+
+def _send_expo_batch(tokens: list[str], payload_dict: dict, headers: dict) -> None:
+    messages = [_build_expo_message(tok, payload_dict) for tok in tokens]
+    try:
+        resp = _expo_post_messages(messages, headers)
+    except requests.RequestException as exc:
+        logger.warning('Expo push batch échoué (%s jetons): %s', len(tokens), exc)
         return
 
-    ticket_status = ticket.get('status')
-    ticket_id = ticket.get('id')
-    if ticket_status == 'ok':
-        logger.info(
-            'Expo push OK | HTTP %s | jeton …%s | ticket status=%s | id=%s',
-            resp.status_code,
-            token_hint,
-            ticket_status,
-            ticket_id,
-        )
-    else:
-        logger.warning(
-            'Expo push ticket erreur (jeton …%s) | HTTP %s | ticket: %s | JSON complet: %s | texte brut: %s',
-            token_hint,
-            resp.status_code,
-            ticket,
-            body,
-            text_snip,
-        )
+    try:
+        body = resp.json()
+    except ValueError:
+        logger.warning('Expo push batch — corps non JSON | HTTP %s', resp.status_code)
+        return
 
-    if _expo_should_deactivate_token(ticket):
-        ExpoPushToken.objects.filter(token=token).update(is_active=False)
+    _process_expo_response(body, resp, tokens)
 
 
 def _send_expo_mobile_for_user(recipient_user, payload_dict):
@@ -276,8 +269,9 @@ def _send_expo_mobile_for_user(recipient_user, payload_dict):
     if not token_list:
         return
     headers = _expo_push_request_headers()
-    for tok in token_list:
-        _send_single_expo_notification(tok, payload_dict, headers)
+    for i in range(0, len(token_list), EXPO_PUSH_BATCH_SIZE):
+        chunk = token_list[i : i + EXPO_PUSH_BATCH_SIZE]
+        _send_expo_batch(chunk, payload_dict, headers)
 
 
 def send_notification_push(notification):

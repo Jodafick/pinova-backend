@@ -23,14 +23,17 @@ class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
     callback_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5174') + "/login"
     client_class = OAuth2Client
+    permission_classes = [permissions.AllowAny]
 
 class FacebookLogin(SocialLoginView):
     adapter_class = FacebookOAuth2Adapter
     callback_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5174') + "/login"
     client_class = OAuth2Client
+    permission_classes = [permissions.AllowAny]
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 from rest_framework.authtoken.models import Token
 from django.contrib.auth.models import User
 from django.db import models
@@ -49,7 +52,8 @@ from .models import (
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
-from pinova_backend.media_cache import build_versioned_media_url
+from pinova_backend.media.cache import build_versioned_media_url
+from pinova_backend.security.ratelimit_helpers import ratelimit_post
 
 from .serializers import (
     ProfileSerializer,
@@ -75,6 +79,7 @@ from .currency_utils import (
 )
 
 from .preference_utils import interest_slugs_for_user
+from notifications.notification_i18n import create_localized_notification
 
 logger = logging.getLogger(__name__)
 
@@ -552,74 +557,187 @@ def _subscription_catalog(target_currency: str, seat_bundle: str = SUBSCRIPTION_
     return data
 
 
+@ratelimit_post(group='otp_verify', setting_name='API_RATELIMIT_OTP_VERIFY', default='10/minute')
 class VerifyOTPView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = []  # throttle dédié via get_throttles (voir audit permissions)
+
+    def get_throttles(self):
+        from accounts.otp_throttling import OtpVerifyIPThrottle
+
+        return [OtpVerifyIPThrottle()]
 
     def post(self, request):
-        email = request.data.get('email')
-        otp_code = request.data.get('otp')
+        from accounts.otp_security import (
+            CODE_OTP_LOCKED,
+            clear_verify_security,
+            lockout_status,
+            normalize_otp_email,
+            register_verify_failure,
+        )
+        from pins.api_locale import localize_api_user_message
+
+        email = normalize_otp_email(request.data.get('email'))
+        otp_code = str(request.data.get('otp') or '').strip()
 
         if not email or not otp_code:
-            return Response({'error': 'Email et code OTP requis'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': localize_api_user_message('Email et code OTP requis.', request)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        locked, retry_after = lockout_status(email)
+        if locked:
+            payload = {
+                'error': localize_api_user_message('Code invalide ou expiré.', request),
+                'code': CODE_OTP_LOCKED,
+                'attempts_remaining': 0,
+                'retry_after_seconds': retry_after,
+                'locked_until': (
+                    timezone.now() + timedelta(seconds=retry_after)
+                ).isoformat(),
+            }
+            return Response(payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            payload = register_verify_failure(email)
+            payload['error'] = localize_api_user_message(payload['error'], request)
+            status_code = (
+                status.HTTP_429_TOO_MANY_REQUESTS
+                if payload.get('code') == 'pinova_otp_locked'
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response(payload, status=status_code)
 
         try:
-            user = User.objects.get(email=email)
-            otp = EmailOTP.objects.get(user=user, otp_code=otp_code)
-
-            if otp.is_expired():
-                return Response({'error': 'Code OTP expiré'}, status=status.HTTP_400_BAD_REQUEST)
-
-            email_address, created = EmailAddress.objects.get_or_create(
-                user=user,
-                email=email,
-                defaults={'verified': True, 'primary': True}
+            otp = EmailOTP.objects.get(user=user)
+        except EmailOTP.DoesNotExist:
+            payload = register_verify_failure(email)
+            payload['error'] = localize_api_user_message(payload['error'], request)
+            status_code = (
+                status.HTTP_429_TOO_MANY_REQUESTS
+                if payload.get('code') == 'pinova_otp_locked'
+                else status.HTTP_400_BAD_REQUEST
             )
-            if not email_address.verified:
-                email_address.verified = True
-                email_address.save()
+            return Response(payload, status=status_code)
 
-            create_localized_notification(
-                recipient=user,
-                notification_type='welcome',
-                title_fr='Compte valide',
-                message_fr=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé.",
-                action_url='/',
-                metadata={'stage': 'account_verified'},
+        if otp.is_expired() or otp.otp_code != otp_code:
+            otp.failed_attempts = min(otp.failed_attempts + 1, 9999)
+            otp.save(update_fields=['failed_attempts'])
+            payload = register_verify_failure(email)
+            payload['error'] = localize_api_user_message(payload['error'], request)
+            status_code = (
+                status.HTTP_429_TOO_MANY_REQUESTS
+                if payload.get('code') == 'pinova_otp_locked'
+                else status.HTTP_400_BAD_REQUEST
             )
+            return Response(payload, status=status_code)
 
-            otp.delete()
+        email_address, created = EmailAddress.objects.get_or_create(
+            user=user,
+            email=email,
+            defaults={'verified': True, 'primary': True},
+        )
+        if not email_address.verified:
+            email_address.verified = True
+            email_address.save()
 
-            from referrals.services import finalize_referral_on_email_verified
+        create_localized_notification(
+            recipient=user,
+            notification_type='welcome',
+            title_fr='Compte valide',
+            message_fr=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé.",
+            action_url='/',
+            metadata={'stage': 'account_verified'},
+        )
 
-            finalize_referral_on_email_verified(user)
+        clear_verify_security(email)
+        otp.delete()
 
-            from .auth_tokens import build_jwt_auth_payload
+        from referrals.services import finalize_referral_on_email_verified
 
-            return Response(
-                build_jwt_auth_payload(user, request, message='Email validé avec succès'),
-                status=status.HTTP_200_OK,
-            )
+        finalize_referral_on_email_verified(user)
 
-        except (User.DoesNotExist, EmailOTP.DoesNotExist):
-            return Response({'error': 'Code OTP invalide'}, status=status.HTTP_400_BAD_REQUEST)
+        from .auth_tokens import build_jwt_auth_payload
 
+        return Response(
+            build_jwt_auth_payload(user, request, message='Email validé avec succès'),
+            status=status.HTTP_200_OK,
+        )
+
+
+@ratelimit_post(group='otp_resend', setting_name='API_RATELIMIT_OTP_RESEND', default='3/minute')
 class ResendOTPView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = []
+
+    def get_throttles(self):
+        from accounts.otp_throttling import OtpResendEmailThrottle
+
+        return [OtpResendEmailThrottle()]
 
     def post(self, request):
-        email = request.data.get('email')
-        if not email:
-            return Response({'error': 'Email requis'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(email=email)
-            # Vérifier si l'email est déjà vérifié
-            if EmailAddress.objects.filter(user=user, email=email, verified=True).exists():
-                return Response({'error': 'Cet email est déjà vérifié'}, status=status.HTTP_400_BAD_REQUEST)
-            
-            otp, created = EmailOTP.objects.get_or_create(user=user, defaults={'expires_at': timezone.now() + timedelta(minutes=10)})
-            otp.generate_otp()
+        from accounts.otp_security import (
+            CODE_OTP_RESEND_COOLDOWN,
+            CODE_OTP_RESEND_LIMIT,
+            MAX_RESENDS_PER_HOUR,
+            OTP_GENERIC_RESEND_OK_FR,
+            RESEND_COOLDOWN_SECONDS,
+            RESEND_HOUR_WINDOW,
+            increment_resend_hourly,
+            mark_resend_sent,
+            normalize_otp_email,
+            resend_cooldown_remaining,
+            resend_hourly_count,
+        )
+        from pins.api_locale import localize_api_user_message
 
+        email = normalize_otp_email(request.data.get('email'))
+        if not email:
+            return Response(
+                {'error': localize_api_user_message('Email requis.', request)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cooldown = resend_cooldown_remaining(email)
+        if cooldown > 0:
+            return Response(
+                {
+                    'error': localize_api_user_message(
+                        'Veuillez patienter avant de demander un nouveau code.',
+                        request,
+                    ),
+                    'code': CODE_OTP_RESEND_COOLDOWN,
+                    'retry_after_seconds': cooldown,
+                    'resend_cooldown_seconds': cooldown,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        if resend_hourly_count(email) >= MAX_RESENDS_PER_HOUR:
+            return Response(
+                {
+                    'error': localize_api_user_message(
+                        'Limite de renvois atteinte. Réessayez plus tard.',
+                        request,
+                    ),
+                    'code': CODE_OTP_RESEND_LIMIT,
+                    'retry_after_seconds': RESEND_HOUR_WINDOW,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        mark_resend_sent(email)
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user and not EmailAddress.objects.filter(user=user, email=email, verified=True).exists():
+            increment_resend_hourly(email)
+            otp, created = EmailOTP.objects.get_or_create(
+                user=user,
+                defaults={'expires_at': timezone.now() + timedelta(minutes=10)},
+            )
+            otp.generate_otp()
             try:
                 send_pinova_mail(
                     'Nouveau code de validation PINOVA',
@@ -635,14 +753,25 @@ class ResendOTPView(APIView):
                     },
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-            return Response({'message': 'Nouveau code envoyé'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Utilisateur introuvable'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(
+            {
+                'message': localize_api_user_message(OTP_GENERIC_RESEND_OK_FR, request),
+                'resend_cooldown_seconds': RESEND_COOLDOWN_SECONDS,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class ProfileViewSet(viewsets.ModelViewSet):
     queryset = Profile.objects.all()
     serializer_class = ProfileSerializer
     lookup_field = 'user__username'
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('retrieve', 'list'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         qs = Profile.objects.select_related('user')
@@ -857,6 +986,12 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserSerializer
     filter_backends = [QTextSearchFilter]
     search_fields = ['username', 'profile__display_name']
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('retrieve', 'list', 'mentions'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def mentions(self, request):
@@ -1070,13 +1205,31 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         ]
         return Response({'results': data})
 
+
+class PasswordRulesView(APIView):
+    """Règles mot de passe Pinova pour affichage UX côté client."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from pins.api_locale import api_locale_from_request
+        from accounts.password_policy import get_password_rules_payload
+
+        lang = api_locale_from_request(request)
+        return Response(get_password_rules_payload(lang))
+
+
+@ratelimit_post(group='auth_register', setting_name='API_RATELIMIT_REGISTER', default='5/minute')
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
+        serializer = RegisterSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            user = serializer.save()
+            try:
+                user = serializer.save(request)
+            except ValidationError as exc:
+                return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
             token, created = Token.objects.get_or_create(user=user)
             return Response({
                 'token': token.key,
@@ -1150,6 +1303,14 @@ class UserMeView(APIView):
             mutable_data['notifications_saves'] = str(mutable_data.get('notifications_saves')).lower() == 'true'
         if 'notifications_recommendations' in mutable_data:
             mutable_data['notifications_recommendations'] = str(mutable_data.get('notifications_recommendations')).lower() == 'true'
+        if 'notifications_streak_reminders' in mutable_data:
+            mutable_data['notifications_streak_reminders'] = str(
+                mutable_data.get('notifications_streak_reminders'),
+            ).lower() == 'true'
+        if 'notifications_reactivation_emails' in mutable_data:
+            mutable_data['notifications_reactivation_emails'] = str(
+                mutable_data.get('notifications_reactivation_emails'),
+            ).lower() == 'true'
         if profile.subscription_plan != Profile.PLAN_PRO:
             mutable_data.pop('notifications_digest_creator_weekly', None)
         elif 'notifications_digest_creator_weekly' in mutable_data:
@@ -1300,16 +1461,30 @@ class AccountDeletionRequestView(APIView):
 
     def post(self, request):
         """Programme une suppression définitive du compte (purge serveur après 30 jours)."""
+        from accounts.gdpr_views import _queue_export, _send_deletion_scheduled_email
+
         raw = str(request.data.get('confirm', '')).strip().upper()
         if raw not in ('DELETE', 'SUPPRIMER'):
             return Response(
                 {'confirm': ['La confirmation doit être DELETE ou SUPPRIMER.']},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        request_export = str(request.data.get('request_export', '')).lower() in ('true', '1', 'yes')
         profile = request.user.profile
         profile.account_scheduled_deletion_at = timezone.now() + timedelta(days=30)
         profile.save(update_fields=['account_scheduled_deletion_at'])
-        return Response({'scheduled_at': profile.account_scheduled_deletion_at.isoformat()})
+
+        export_job = _queue_export(request.user) if request_export else None
+        _send_deletion_scheduled_email(
+            request.user,
+            profile.account_scheduled_deletion_at,
+            export_requested=bool(export_job),
+        )
+
+        payload = {'scheduled_at': profile.account_scheduled_deletion_at.isoformat()}
+        if export_job:
+            payload['export_job_id'] = export_job.id
+        return Response(payload)
 
 
 class AccountDeletionCancelView(APIView):
@@ -1440,7 +1615,9 @@ class SubscriptionCheckoutView(APIView):
 
         base = self._fedapay_base_url()
         try:
-            create_resp = requests.post(f'{base}/transactions', json=payload, headers=headers, timeout=20)
+            from monetization.fedapay_client import CircuitOpenError, fedapay_post
+
+            create_resp = fedapay_post('/transactions', json=payload, timeout=20)
             create_body = self._safe_json(create_resp)
             if create_resp.status_code >= 400:
                 logger.error('FedaPay transaction create failed status=%s body=%s', create_resp.status_code, create_resp.text)
@@ -1467,7 +1644,7 @@ class SubscriptionCheckoutView(APIView):
                     }
                 return Response(error_payload, status=status.HTTP_502_BAD_GATEWAY)
 
-            token_resp = requests.post(f'{base}/transactions/{transaction_id}/token', headers=headers, timeout=20)
+            token_resp = fedapay_post(f'/transactions/{transaction_id}/token', timeout=20)
             token_body = self._safe_json(token_resp)
             if token_resp.status_code >= 400:
                 logger.error('FedaPay token create failed tx=%s status=%s body=%s', transaction_id, token_resp.status_code, token_resp.text)
@@ -1532,6 +1709,8 @@ class SubscriptionCheckoutView(APIView):
                     'bundle_discount_fraction': 0.0,
                 },
             }, status=status.HTTP_201_CREATED)
+        except CircuitOpenError:
+            return Response({'error': 'FedaPay temporarily unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except requests.RequestException as exc:
             logger.exception('FedaPay checkout request exception')
             error_payload = {'error': f'FedaPay error: {str(exc)}'}
@@ -1692,13 +1871,18 @@ class SubscriptionConfirmView(APIView):
                     logger.debug(
                         'fedapay_confirm: GET tentative=%s url=%s transaction_id=%s user_id=%s',
                         attempt + 1,
-                        url,
+                        f'{base}/transactions/{transaction_id}',
                         transaction_id,
                         request.user.pk,
                     )
-                    resp = requests.get(url, headers=headers, timeout=20)
-                    resp.raise_for_status()
+                    from monetization.fedapay_client import CircuitOpenError, fedapay_get
+
+                    resp = fedapay_get(f'/transactions/{transaction_id}', timeout=20)
+                    if resp.status_code >= 400:
+                        resp.raise_for_status()
                     tx = resp.json() or {}
+                except CircuitOpenError:
+                    raise requests.RequestException('FedaPay circuit open')
                 except requests.RequestException as exc:
                     resp_obj = getattr(exc, 'response', None)
                     status_code = getattr(resp_obj, 'status_code', None)
@@ -1947,68 +2131,23 @@ class SubscriptionManageView(APIView):
         return Response({'error': 'Unsupported action'}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@ratelimit_post(group='fedapay_webhook', setting_name='API_RATELIMIT_WEBHOOK', default='100/minute')
 class SubscriptionWebhookView(APIView):
     permission_classes = [permissions.AllowAny]
-    throttle_classes = []
+
+    def get_throttles(self):
+        from pinova_backend.security.webhook_throttling import WebhookIPThrottle
+
+        return [WebhookIPThrottle()]
 
     def post(self, request):
-        expected_secret = (os.environ.get('FEDAPAY_WEBHOOK_SECRET') or '').strip()
-        provided_secret = str(
-            request.headers.get('X-Webhook-Token')
-            or request.headers.get('X-Fedapay-Webhook-Token')
-            or request.data.get('webhook_token')
-            or ''
-        ).strip()
-        if expected_secret and provided_secret != expected_secret:
-            return Response({'error': 'Invalid webhook token'}, status=status.HTTP_403_FORBIDDEN)
+        from monetization.fedapay_webhook import validate_webhook_secret
+        from monetization.webhook_processing import handle_fedapay_webhook_payload
 
-        tx_id = _fedapay_webhook_transaction_id(dict(request.data))
-        if not tx_id:
-            return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        status_value = _fedapay_webhook_status(dict(request.data))
-        approved_statuses = {'approved', 'success', 'successful', 'completed'}
-        payment = SubscriptionPayment.objects.filter(fedapay_transaction_id=tx_id).select_related('user', 'user__profile').first()
-        if not payment:
-            if status_value in approved_statuses:
-                from monetization.tip_views import approve_tip_payment_by_tx
-
-                tip_status = approve_tip_payment_by_tx(tx_id, dict(request.data))
-                if tip_status == 'approved':
-                    return Response({'status': 'tip_approved'})
-                from monetization.views import approve_boost_payment
-
-                boost_status = approve_boost_payment(tx_id, dict(request.data))
-                if boost_status == 'approved':
-                    return Response({'status': 'boost_approved'})
-            return Response({'status': 'ignored_unknown_transaction'}, status=status.HTTP_202_ACCEPTED)
-        payload = dict(payment.fedapay_payload or {})
-        payload['webhook'] = request.data
-        payment.fedapay_payload = payload
-        if status_value in approved_statuses:
-            seat_bundle_pay = _normalized_seat_bundle(payment.promo_bundle)
-            catalog = _catalog_entry(payment.plan, payment.billing_cycle, seat_bundle_pay)
-            duration_days = int((catalog or {}).get('duration_days') or 30)
-            previous_plan = payment.user.profile.subscription_plan
-            payment.status = SubscriptionPayment.STATUS_APPROVED
-            normalized_wh = _fedapay_normalize_transaction_body(dict(request.data))
-            invoice_wh = _extract_invoice_url_from_fedapay(normalized_wh)
-            uf = ['status', 'fedapay_payload', 'updated_at']
-            if invoice_wh:
-                payment.invoice_url = invoice_wh
-                uf.append('invoice_url')
-            with transaction.atomic():
-                payment.save(update_fields=uf)
-                SubscriptionConfirmView()._apply_subscription(payment.user.profile, payment, duration_days)
-                SubscriptionConfirmView()._notify_payment_events(payment.user, payment, previous_plan)
-            return Response({'status': 'approved'})
-        if status_value in {'canceled', 'cancelled'}:
-            payment.status = SubscriptionPayment.STATUS_CANCELED
-        elif status_value in {'failed', 'declined', 'rejected'}:
-            payment.status = SubscriptionPayment.STATUS_FAILED
-        else:
-            payment.status = SubscriptionPayment.STATUS_PENDING
-        payment.save(update_fields=['status', 'fedapay_payload', 'updated_at'])
-        return Response({'status': payment.status})
+        secret_error = validate_webhook_secret(request)
+        if secret_error is not None:
+            return secret_error
+        return handle_fedapay_webhook_payload(dict(request.data))
 
 
 class SupportTicketView(APIView):
@@ -2196,7 +2335,9 @@ class SubscriptionInvoiceReceiptView(APIView):
 
         base = self._fedapay_base_url()
         try:
-            resp = requests.get(f'{base}/transactions/{tid}', headers=headers, timeout=25)
+            from monetization.fedapay_client import CircuitOpenError, fedapay_get
+
+            resp = fedapay_get(f'/transactions/{tid}', timeout=25)
             if resp.status_code == 404:
                 logger.warning(
                     'subscription_invoice_receipt: FedaPay 404 — pk=%s tx=%s vérifiez FEDAPAY_ENV (sandbox vs live)',
@@ -2219,6 +2360,8 @@ class SubscriptionInvoiceReceiptView(APIView):
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
             tx = resp.json() or {}
+        except CircuitOpenError:
+            return Response({'error': 'FedaPay temporarily unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except requests.RequestException as exc:
             logger.exception('subscription_invoice_receipt exception pk=%s', invoice_id)
             return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)

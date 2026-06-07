@@ -79,6 +79,12 @@ class Profile(models.Model):
     discovery_streak_count = models.PositiveIntegerField(default=0)
     discovery_streak_best = models.PositiveIntegerField(default=0)
     discovery_streak_last_date = models.DateField(null=True, blank=True)
+    discovery_streak_reminder_sent_date = models.DateField(null=True, blank=True)
+    # Rétention — opt-out Settings + idempotence envois.
+    notifications_streak_reminders = models.BooleanField(default=True)
+    notifications_reactivation_emails = models.BooleanField(default=True)
+    retention_j7_email_sent_at = models.DateTimeField(null=True, blank=True)
+    retention_j30_email_sent_at = models.DateTimeField(null=True, blank=True)
 
     # --- Identité étendue ---
     first_name = models.CharField(max_length=80, blank=True, default='')
@@ -214,6 +220,7 @@ class EmailOTP(models.Model):
     otp_code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
 
     def is_expired(self):
         return timezone.now() > self.expires_at
@@ -221,6 +228,7 @@ class EmailOTP(models.Model):
     def generate_otp(self):
         self.otp_code = ''.join(random.choices(string.digits, k=6))
         self.expires_at = timezone.now() + timedelta(minutes=10)
+        self.failed_attempts = 0
         self.save()
 
     def __str__(self):
@@ -457,6 +465,65 @@ class UserBlock(models.Model):
 
     def __str__(self):
         return f'{self.blocker_id} blocked {self.blocked_id}'
+
+
+class UserConsent(models.Model):
+    """Choix cookies / analytics (RGPD)."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='cookie_consent',
+        null=True,
+        blank=True,
+    )
+    anonymous_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    necessary = models.BooleanField(default=True)
+    analytics = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(user__isnull=False) | ~models.Q(anonymous_id=''),
+                name='userconsent_user_or_anonymous',
+            ),
+        ]
+
+    def __str__(self):
+        if self.user_id:
+            return f'consent:user:{self.user_id}'
+        return f'consent:anon:{self.anonymous_id[:8]}'
+
+
+class DataExportJob(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_PROCESSING = 'processing'
+    STATUS_READY = 'ready'
+    STATUS_FAILED = 'failed'
+    STATUS_EXPIRED = 'expired'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PROCESSING, 'Processing'),
+        (STATUS_READY, 'Ready'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_EXPIRED, 'Expired'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='data_export_jobs')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    download_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    file_path = models.CharField(max_length=512, blank=True, default='')
+    error_message = models.CharField(max_length=500, blank=True, default='')
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'export:{self.user_id}:{self.status}'
 
 
 @receiver(post_save, sender=User)

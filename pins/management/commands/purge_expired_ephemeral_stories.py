@@ -1,4 +1,8 @@
-"""Supprime les stories Plus/Pro éphémères après story_expires_at (fichiers inclus)."""
+"""Supprime les stories Plus/Pro éphémères après story_expires_at (fichiers inclus).
+
+Production : Celery Beat `pins-purge-ephemeral-stories` (chaque heure :15 UTC).
+Secours : python manage.py purge_expired_ephemeral_stories
+"""
 
 from __future__ import annotations
 

@@ -1,0 +1,33 @@
+{
+  "exported_at": "2026-06-06T23:31:58.405030+00:00",
+  "source": "simulate",
+  "period_days": 30,
+  "project_id": null,
+  "posthog_host": "https://eu.posthog.com",
+  "kpis": {
+    "mode": "simulate",
+    "events_seeded": 100,
+    "activation_rate_24h_pct": 60.0,
+    "guest_conversion_rate_pct": 20.0,
+    "arpu_webhook_only": 3500.0,
+    "boost_attach_rate_pct": 33.33,
+    "referral_conversion_rate_pct": 40.0,
+    "revenue_recorded_24h_count": 3,
+    "arpu_guard": {
+      "revenue_recorded_webhook_only": true,
+      "client_checkout_has_no_dollar_revenue": true,
+      "client_never_emits_revenue_recorded": true
+    },
+    "note": "Valeurs du seed pinova-backend/scripts/seed_posthog_business_events.py --dry-run"
+  },
+  "hogql_templates": {
+    "activation_rate_24h": "SELECT round(\n  countIf(dateDiff('hour', reg.ts, fp.ts) <= 24) * 100.0 / nullIf(count(), 0),\n  2\n) AS activation_rate_pct\nFROM (\n  SELECT distinct_id, min(timestamp) AS ts\n  FROM events\n  WHERE event = 'register_completed'\n    AND timestamp >= now() - INTERVAL {days} DAY\n  GROUP BY distinct_id\n) reg\nLEFT JOIN (\n  SELECT distinct_id, min(timestamp) AS ts\n  FROM events\n  WHERE event = 'first_pin_published'\n  GROUP BY distinct_id\n) fp ON reg.distinct_id = fp.distinct_id",
+    "guest_conversion_rate": "SELECT round(\n  countIf(JSONExtractBool(properties, 'from_guest_conversion') = 1) * 100.0 /\n  nullIf(count(), 0),\n  2\n) AS guest_conversion_pct\nFROM events\nWHERE event = 'register_completed'\n  AND timestamp >= now() - INTERVAL {days} DAY",
+    "arpu_webhook_only": "SELECT round(\n  sum(toFloat64OrNull(JSONExtractString(properties, '$revenue'))) /\n  nullIf(count(DISTINCT distinct_id), 0),\n  2\n) AS arpu\nFROM events\nWHERE event = 'revenue_recorded'\n  AND JSONExtractString(properties, 'revenue_source') = 'fedapay_webhook'\n  AND timestamp >= now() - INTERVAL {days} DAY",
+    "boost_attach_rate": "SELECT round(\n  countIf(JSONExtractString(properties, 'flow') = 'boost') * 100.0 /\n  nullIf(count(), 0),\n  2\n) AS boost_attach_pct\nFROM events\nWHERE event = 'revenue_recorded'\n  AND JSONExtractString(properties, 'revenue_source') = 'fedapay_webhook'\n  AND timestamp >= now() - INTERVAL {days} DAY",
+    "referral_conversion_rate": "SELECT round(\n  count(DISTINCT reg.distinct_id) * 100.0 /\n  nullIf(count(DISTINCT ref.distinct_id), 0),\n  2\n) AS referral_conversion_pct\nFROM (\n  SELECT distinct_id FROM events\n  WHERE event = 'referral_link_opened'\n    AND timestamp >= now() - INTERVAL {days} DAY\n) ref\nLEFT JOIN (\n  SELECT distinct_id FROM events\n  WHERE event = 'register_with_ref_code'\n    AND timestamp >= now() - INTERVAL {days} DAY\n) reg ON ref.distinct_id = reg.distinct_id",
+    "revenue_recorded_24h_count": "SELECT count() AS revenue_events_24h\nFROM events\nWHERE event = 'revenue_recorded'\n  AND JSONExtractString(properties, 'revenue_source') = 'fedapay_webhook'\n  AND timestamp >= now() - INTERVAL 1 DAY",
+    "client_checkout_without_revenue": "SELECT count() AS client_checkout_events\nFROM events\nWHERE event = 'checkout_success'\n  AND JSONExtractString(properties, 'revenue_source') = 'client_estimate'\n  AND timestamp >= now() - INTERVAL {days} DAY",
+    "webhook_revenue_only": "SELECT count() AS webhook_revenue_events\nFROM events\nWHERE event = 'revenue_recorded'\n  AND JSONExtractString(properties, 'revenue_source') = 'fedapay_webhook'\n  AND JSONExtractString(properties, 'platform') = 'backend'\n  AND timestamp >= now() - INTERVAL {days} DAY"
+  }
+}

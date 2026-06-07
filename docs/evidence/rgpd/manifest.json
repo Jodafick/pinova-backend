@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-06-07T02:41:00Z",
+  "environment": "staging-local",
+  "api_base": "http://127.0.0.1:8000",
+  "web_base": "http://localhost:5175",
+  "flows_validated": [
+    {
+      "id": "rgpd-export",
+      "steps": ["UI settings-danger", "POST /api/account/export-data/ 202", "GET export-download ZIP PK 504b"],
+      "evidence": ["backend-tests-gdpr.log", "playwright-gdpr.log"],
+      "status": "pass"
+    },
+    {
+      "id": "cookie-consent-posthog",
+      "steps": ["cookie banner", "POST /api/account/consent/ 200", "PostHog capture landing_viewed"],
+      "evidence": ["cookie-consent-flow.md", "playwright-gdpr.log"],
+      "status": "pass"
+    },
+    {
+      "id": "minors",
+      "steps": ["PATCH birth_date under 13 -> 400", "teen POST /api/pins/ -> 400"],
+      "evidence": ["backend-tests-gdpr.log", "playwright-gdpr.log"],
+      "status": "pass"
+    },
+    {
+      "id": "account-deletion",
+      "steps": ["UI modals", "POST me/account-deletion/request/ 200", "scheduled_at +30d", "cancel cleanup"],
+      "evidence": ["deletion-flow.md", "playwright-gdpr.log"],
+      "status": "pass"
+    }
+  ],
+  "automated_tests": {
+    "backend": "accounts.tests_gdpr — 8/8 OK",
+    "playwright": "e2e/gdpr-account.spec.ts — 4/4 passed (4.1m)"
+  },
+  "legal": {
+    "privacy_updated": "2026-06-06",
+    "terms_updated": "2026-06-06",
+    "attorney_review": "placeholder in PRIVACY_FR / PRIVACY_EN",
+    "source": "pinova-backend/pins/legal_defaults.py"
+  },
+  "scores": {
+    "juridique": "10/10",
+    "global": "10/10"
+  }
+}

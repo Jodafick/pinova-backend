@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.db.models import Count
 from django.utils import timezone
 
-from pinova_backend.media_cache import build_versioned_media_url
+from pinova_backend.media.cache import build_versioned_media_url
 
 from .models import Comment, Like, PinViewEvent, Save
 

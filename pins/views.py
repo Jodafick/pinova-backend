@@ -28,8 +28,8 @@ from accounts.preference_utils import (
 )
 from accounts.subscription_utils import _enforce_subscription_state
 from accounts.user_invite_lookup import resolve_user_for_invite_identifier
-from pinova_backend.media_cache import append_version_using_media_path, build_versioned_media_url
-from pinova_backend.throttling import client_ip_from_request
+from pinova_backend.media.cache import append_version_using_media_path, build_versioned_media_url
+from pinova_backend.security.throttling import client_ip_from_request
 import re
 import uuid
 from collections import OrderedDict
@@ -54,6 +54,7 @@ from .models import (
 from .legal_page_i18n import build_legal_api_response
 from .faq_api import build_faq_overview_response
 from .search_utils import broad_pin_q, fuzzy_score
+from .search.service import discover_pins_filter, pin_matches_query, search_boards, search_pins, search_users
 from .recommendation_engine import rank_recommendations_for_user, update_pin_ai_metadata, update_user_embedding
 from .serializers import (
     PinSerializer,
@@ -104,10 +105,32 @@ from .weekly_stats import (
     count_pin_view_events_between,
 )
 from .creator_hub import paginated_recent_pins, paginated_comment_inbox
+from .feed_queryset import (
+    FEED_VIEW_ACTIONS,
+    feed_serializer_context,
+    optimize_pin_feed_queryset,
+)
+from .home_feed import (
+    compute_interleave_slots,
+    fetch_pins_for_slots,
+    home_feed_total_count,
+)
+from .feed_cache import (
+    CREATOR_STATS_TTL,
+    DISCOVER_PAGE1_TTL,
+    HOME_FEED_PAGE1_TTL,
+    apply_cache_header,
+    creator_stats_cache_key,
+    discover_page1_key,
+    get_cached_payload,
+    home_feed_page1_key,
+    set_cached_payload,
+    skip_feed_cache,
+)
 from .report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
 
-# Borne mémoire pour mélange following / discover (home_feed) et tri par score sujet.
-FEED_INTERLEAVE_SOURCE_CAP = 2500
+# Borne mémoire pour tri par score sujet (header_search, stories) — pas utilisé par home_feed.
+TOPIC_SCORE_RANK_CAP = 2500
 
 
 def _parse_report_request(request, *, min_details_len: int = 10):
@@ -184,8 +207,13 @@ class PinViewSet(viewsets.ModelViewSet):
     queryset = Pin.objects.all()
     serializer_class = PinSerializer
     lookup_field = 'slug'
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
     pagination_class = PinFeedPagination
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     def _resolve_target_lang(self, request):
         explicit = request.data.get('target_lang') or request.query_params.get('target_lang')
@@ -195,7 +223,7 @@ class PinViewSet(viewsets.ModelViewSet):
             return (request.user.profile.preferred_language or 'fr').lower()
         return 'fr'
 
-    def _ordered_by_topic_score(self, queryset, topic_scores, cap=FEED_INTERLEAVE_SOURCE_CAP):
+    def _ordered_by_topic_score(self, queryset, topic_scores, cap=TOPIC_SCORE_RANK_CAP):
         cap = max(100, min(int(cap), 5000))
         base_qs = queryset.order_by('media_sensitive_blur', '-created_at')[:cap]
         if not topic_scores:
@@ -210,6 +238,21 @@ class PinViewSet(viewsets.ModelViewSet):
             reverse=True,
         )
         return items
+
+    def _order_discover_queryset(self, queryset, topic_scores):
+        """Tri discover en SQL (évite matérialisation RAM pour home_feed)."""
+        if not topic_scores:
+            return queryset.order_by('media_sensitive_blur', '-created_at')
+        whens = [
+            When(topic__name=topic_name, then=Value(score))
+            for topic_name, score in topic_scores.items()
+            if topic_name
+        ]
+        if not whens:
+            return queryset.order_by('media_sensitive_blur', '-created_at')
+        return queryset.annotate(
+            _topic_score=Case(*whens, default=Value(0), output_field=IntegerField())
+        ).order_by('-_topic_score', 'media_sensitive_blur', '-created_at')
 
     def _pin_topic_name(self, pin):
         return pin.topic.name if getattr(pin, 'topic_id', None) and pin.topic else ''
@@ -327,10 +370,11 @@ class PinViewSet(viewsets.ModelViewSet):
 
         queryset = (
             Pin.objects.select_related('author', 'author__profile', 'topic')
-            .prefetch_related('hashtags', 'boards', 'variant_assets')
             .all()
             .order_by('media_sensitive_blur', '-created_at')
         )
+        if getattr(self, 'action', None) not in FEED_VIEW_ACTIONS:
+            queryset = queryset.prefetch_related('hashtags', 'boards', 'variant_assets')
         profile_author = (self.request.query_params.get('author') or '').strip()
         if saved_by_me:
             profile_author = ''
@@ -401,6 +445,32 @@ class PinViewSet(viewsets.ModelViewSet):
             )
             queryset = queryset.annotate(_saved_at=Subquery(saved_at_sub)).order_by('-_saved_at')
         return exclude_ephemeral_story_only(queryset)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        if getattr(self, 'action', None) in FEED_VIEW_ACTIONS:
+            ctx.update(feed_serializer_context(self.request, ctx))
+        return ctx
+
+    def _optimize_feed_queryset(self, queryset):
+        return optimize_pin_feed_queryset(queryset, self.request)
+
+    def _optimize_feed_page_items(self, page_items):
+        if hasattr(page_items, 'prefetch_related'):
+            return self._optimize_feed_queryset(page_items)
+        if isinstance(page_items, list) and page_items:
+            first = page_items[0]
+            if getattr(first, '_is_liked', None) is not None or getattr(first, '_is_boosted', None) is not None:
+                return page_items
+            pin_ids = [p.pk for p in page_items]
+            qs = (
+                Pin.objects.filter(pk__in=pin_ids)
+                .select_related('author', 'author__profile', 'topic')
+            )
+            qs = self._optimize_feed_queryset(qs)
+            by_id = {p.pk: p for p in qs}
+            return [by_id[pk] for pk in pin_ids if pk in by_id]
+        return page_items
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -500,14 +570,19 @@ class PinViewSet(viewsets.ModelViewSet):
             update_user_embedding(request.user)
             return Response({'status': 'unliked', 'likes_count': pin.likes_count})
 
-        if pin.author != request.user and not pin.is_story:
+        if pin.author != request.user:
+            if pin.is_story:
+                msg = f"{request.user.username} a aimé votre story."
+            else:
+                msg = f"{request.user.username} a aimé votre pin : {pin.title}"
             create_localized_notification(
                 recipient=pin.author,
                 sender=request.user,
                 notification_type='like',
-                message_fr=f"{request.user.username} a aimé votre pin : {pin.title}",
+                message_fr=msg,
                 pin_id=pin.id,
                 pin_slug=pin.slug,
+                metadata={'is_story': pin.is_story},
             )
         UserInteraction.objects.create(
             user=request.user,
@@ -765,9 +840,12 @@ class PinViewSet(viewsets.ModelViewSet):
                 pin.refresh_from_db()
         except serializers.ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        from notifications.story_notifications import notify_followers_new_story
+
+        notify_followers_new_story(author=request.user, pin=pin)
         return Response(PinSerializer(pin, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
+    @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.AllowAny])
     def comments(self, request, slug=None):
         pin = self.get_object()
 
@@ -818,7 +896,11 @@ class PinViewSet(viewsets.ModelViewSet):
                     return Response({'error': 'Only image files are allowed'}, status=status.HTTP_400_BAD_REQUEST)
                 if media_file.size > 5 * 1024 * 1024:
                     return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
-                media_file = compress_comment_media_upload(media_file)
+                media_file = compress_comment_media_upload(
+                    media_file,
+                    request=request,
+                    user_id=request.user.id,
+                )
                 if getattr(media_file, 'size', 0) > 5 * 1024 * 1024:
                     return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
             parent = None
@@ -1093,7 +1175,7 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(
         detail=False,
         methods=['get'],
-        permission_classes=[permissions.IsAuthenticatedOrReadOnly],
+        permission_classes=[permissions.AllowAny],
         url_path='comments/(?P<comment_id>[^/.]+)/replies',
     )
     def comment_replies(self, request, comment_id=None):
@@ -1175,6 +1257,7 @@ class PinViewSet(viewsets.ModelViewSet):
     def _feed_response_with_ads(self, request, page_items, topic: str = ''):
         from monetization.feed_response import build_feed_paginated_response
 
+        page_items = self._optimize_feed_page_items(page_items)
         page = self.paginate_queryset(page_items)
         if page is not None:
             return build_feed_paginated_response(self, request, page, topic=topic)
@@ -1183,6 +1266,31 @@ class PinViewSet(viewsets.ModelViewSet):
 
         results = interleave_partner_ads(request, list(serializer.data), topic=topic, page_number=1)
         return Response(results)
+
+    def _feed_response_with_ads_paginated(
+        self,
+        request,
+        page_items,
+        *,
+        total_count: int,
+        topic: str = '',
+    ):
+        """Réponse feed déjà paginée (home_feed DB-native) — conserve l'injection pubs."""
+        from django.core.paginator import Paginator as DjangoPaginator
+        from monetization.feed_response import build_feed_paginated_response
+
+        page_items = self._optimize_feed_page_items(page_items)
+        paginator_cls = self.pagination_class
+        paginator = paginator_cls()
+        paginator.request = request
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        django_paginator = DjangoPaginator(range(max(total_count, 0)), page_size)
+        page_number = paginator.get_page_number(request, django_paginator)
+        page = django_paginator.page(page_number)
+        page.object_list = page_items
+        paginator.page = page
+        self._paginator = paginator
+        return build_feed_paginated_response(self, request, page_items, topic=topic)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def recommendations(self, request):
@@ -1196,11 +1304,12 @@ class PinViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def following(self, request):
-        following_profiles = request.user.profile.following.all()
-        following_users = [p.user for p in following_profiles]
+        rows = list(request.user.profile.following.values_list('pk', 'user_id'))
+        request._viewer_following_profile_ids = frozenset(r[0] for r in rows)
+        following_user_ids = [r[1] for r in rows]
         queryset = (
             self.get_queryset()
-            .filter(author__in=following_users)
+            .filter(author_id__in=following_user_ids)
             .exclude(author=request.user)
             .order_by('media_sensitive_blur', '-created_at')
         )
@@ -1217,11 +1326,38 @@ class PinViewSet(viewsets.ModelViewSet):
         queryset = self._apply_topic_filter(queryset, topic)
         q_disc = (request.query_params.get('q') or '').strip()
         if q_disc:
-            queryset = queryset.filter(broad_pin_q(q_disc))
+            queryset = discover_pins_filter(queryset, q_disc)
         from monetization.services import apply_boost_to_pin_queryset
 
         queryset = apply_boost_to_pin_queryset(queryset)
-        return self._feed_response_with_ads(request, queryset, topic=topic)
+
+        paginator = self.pagination_class()
+        paginator.request = request
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        django_paginator = paginator.django_paginator_class([], page_size)
+        page_number = int(paginator.get_page_number(request, django_paginator))
+        cacheable = page_number == 1 and not q_disc and not skip_feed_cache(request)
+        cache_key = None
+        if cacheable:
+            cache_key = discover_page1_key(request, topic=topic, page_size=page_size)
+            cached, hit = get_cached_payload(
+                cache_key,
+                cache_scope='discover_page1',
+                user_id=request.user.id if request.user.is_authenticated else None,
+            )
+            if hit:
+                return apply_cache_header(Response(cached), hit=True)
+
+        response = self._feed_response_with_ads(request, queryset, topic=topic)
+        if cacheable and cache_key and response.status_code == 200:
+            set_cached_payload(
+                cache_key,
+                response.data,
+                DISCOVER_PAGE1_TTL,
+                cache_scope='discover_page1',
+                user_id=request.user.id if request.user.is_authenticated else None,
+            )
+        return apply_cache_header(response, hit=False)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='header-search')
     def header_search(self, request):
@@ -1246,16 +1382,13 @@ class PinViewSet(viewsets.ModelViewSet):
 
         pins_data = []
         if len(q) >= 1:
-            candidates = list(base_pins.filter(broad_pin_q(q))[:150])
-            candidates.sort(
-                key=lambda p: -fuzzy_score(
-                    q,
-                    p.title or '',
-                    p.description or '',
-                    p.author.username,
-                )
+            exclude_author_id = request.user.pk if request.user.is_authenticated else None
+            pins_trim = search_pins(
+                base_pins,
+                q,
+                limit=pin_limit,
+                exclude_author_id=exclude_author_id,
             )
-            pins_trim = candidates[:pin_limit]
             pin_ids_in_results = {p.id for p in pins_trim}
             pins_data = self.get_serializer(pins_trim, many=True, context=ctx).data
 
@@ -1264,7 +1397,6 @@ class PinViewSet(viewsets.ModelViewSet):
             users_qs = (
                 User.objects.select_related('profile')
                 .filter(profile__discoverable_profile=True)
-                .filter(Q(username__icontains=q) | Q(profile__display_name__icontains=q))
             )
             viewer = request.user if request.user.is_authenticated else None
             if viewer and viewer.is_authenticated:
@@ -1272,15 +1404,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 forb = blocked_mutual_user_ids(viewer)
                 if forb:
                     users_qs = users_qs.exclude(pk__in=forb)
-            ul = list(users_qs[:80])
-            ul.sort(
-                key=lambda u: -fuzzy_score(
-                    q,
-                    u.username,
-                    (u.profile.display_name or '') if getattr(u, 'profile', None) else '',
-                )
-            )
-            for u in ul[:user_limit]:
+            for u in search_users(users_qs, q, limit=user_limit):
                 prof = u.profile
                 users_data.append(
                     {
@@ -1301,17 +1425,12 @@ class PinViewSet(viewsets.ModelViewSet):
         else:
             boards_qs = boards_qs.filter(is_private=False)
         if q:
-            boards_qs = boards_qs.filter(
-                Q(name__icontains=q) | Q(description__icontains=q) | Q(user__username__icontains=q)
-            ).distinct()
-            board_candidates = list(boards_qs[:80])
-            board_candidates.sort(
-                key=lambda b: -fuzzy_score(
-                    q,
-                    b.name or '',
-                    b.description or '',
-                    b.user.username if getattr(b, 'user', None) else '',
-                )
+            viewer_id = request.user.pk if request.user.is_authenticated else None
+            board_candidates = search_boards(
+                boards_qs,
+                q,
+                limit=board_limit,
+                viewer_id=viewer_id,
             )
         else:
             pref_topic_ids = profile_interest_topic_ids(request.user) if request.user.is_authenticated else []
@@ -1350,7 +1469,7 @@ class PinViewSet(viewsets.ModelViewSet):
                 if p.id in pin_ids_in_results:
                     continue
                 if q:
-                    if fuzzy_score(q, p.title or '', p.description or '', p.author.username) < 0.22:
+                    if not pin_matches_query(p, q):
                         continue
                 picked.append(p)
                 if len(picked) >= rec_limit:
@@ -1390,18 +1509,8 @@ class PinViewSet(viewsets.ModelViewSet):
         else:
             boards_qs = boards_qs.filter(is_private=False)
         if q:
-            boards_qs = boards_qs.filter(
-                Q(name__icontains=q) | Q(description__icontains=q) | Q(user__username__icontains=q)
-            ).distinct()
-            board_candidates = list(boards_qs[:400])
-            board_candidates.sort(
-                key=lambda b: -fuzzy_score(
-                    q,
-                    b.name or '',
-                    b.description or '',
-                    b.user.username if getattr(b, 'user', None) else '',
-                )
-            )
+            viewer_id = request.user.pk if request.user.is_authenticated else None
+            board_candidates = search_boards(boards_qs, q, limit=400, viewer_id=viewer_id)
             ordered_ids = [b.id for b in board_candidates]
             order = Case(
                 *[When(pk=pk, then=Value(pos)) for pos, pk in enumerate(ordered_ids)],
@@ -1462,49 +1571,87 @@ class PinViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='home-feed')
     def home_feed(self, request):
         topic = (request.query_params.get('topic') or '').strip()
-        following_profiles = request.user.profile.following.all()
+        reco_on = getattr(request.user.profile, 'notifications_recommendations', False)
+
+        paginator = self.pagination_class()
+        paginator.request = request
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        django_paginator = paginator.django_paginator_class([], page_size)
+        page_number = int(paginator.get_page_number(request, django_paginator))
+
+        cacheable = page_number == 1 and not skip_feed_cache(request)
+        cache_key = None
+        if cacheable:
+            cache_key = home_feed_page1_key(
+                request.user.id,
+                topic=topic,
+                page_size=page_size,
+                reco_on=reco_on,
+            )
+            cached, hit = get_cached_payload(
+                cache_key,
+                cache_scope='home_feed_page1',
+                user_id=request.user.id,
+            )
+            if hit:
+                return apply_cache_header(Response(cached), hit=True)
+
+        following_rows = list(request.user.profile.following.values_list('pk', 'user_id'))
+        request._viewer_following_profile_ids = frozenset(r[0] for r in following_rows)
+        following_user_ids = [r[1] for r in following_rows]
+        base_qs = self.get_queryset()
         following_queryset = (
-            self.get_queryset()
-            .filter(author__profile__in=following_profiles)
+            base_qs.filter(author_id__in=following_user_ids)
             .exclude(author=request.user)
+            .order_by('media_sensitive_blur', '-created_at')
         )
         discover_queryset = (
-            self.get_queryset()
-            .exclude(author__profile__in=following_profiles)
+            base_qs.exclude(author_id__in=following_user_ids)
             .exclude(author=request.user)
         )
         if topic:
             following_queryset = self._apply_topic_filter(following_queryset, topic)
             discover_queryset = self._apply_topic_filter(discover_queryset, topic)
 
-        reco_on = getattr(request.user.profile, 'notifications_recommendations', False)
         topic_scores = self._build_topic_scores(request.user) if reco_on else {}
-        following_items = list(
-            following_queryset.order_by('media_sensitive_blur', '-created_at')[:FEED_INTERLEAVE_SOURCE_CAP]
-        )
         if reco_on and topic_scores:
-            discover_items = self._ordered_by_topic_score(
-                discover_queryset, topic_scores, cap=FEED_INTERLEAVE_SOURCE_CAP
-            )
+            discover_queryset = self._order_discover_queryset(discover_queryset, topic_scores)
         else:
-            discover_items = list(
-                discover_queryset.order_by('media_sensitive_blur', '-created_at')[:FEED_INTERLEAVE_SOURCE_CAP]
+            discover_queryset = discover_queryset.order_by('media_sensitive_blur', '-created_at')
+
+        # Prefetch/annotations avant fetch_pins_for_slots — évite un second SELECT pk__in.
+        following_queryset = self._optimize_feed_queryset(following_queryset)
+        discover_queryset = self._optimize_feed_queryset(discover_queryset)
+
+        global_start = (page_number - 1) * page_size
+
+        following_count = following_queryset.count()
+        discover_count = discover_queryset.count()
+        total_count = home_feed_total_count(following_count, discover_count)
+
+        slots = compute_interleave_slots(
+            following_count,
+            discover_count,
+            global_start,
+            page_size,
+        )
+        page_items = fetch_pins_for_slots(following_queryset, discover_queryset, slots)
+
+        response = self._feed_response_with_ads_paginated(
+            request,
+            page_items,
+            total_count=total_count,
+            topic=topic,
+        )
+        if cacheable and cache_key and response.status_code == 200:
+            set_cached_payload(
+                cache_key,
+                response.data,
+                HOME_FEED_PAGE1_TTL,
+                cache_scope='home_feed_page1',
+                user_id=request.user.id,
             )
-
-        mixed = []
-        follow_idx = 0
-        discover_idx = 0
-        while follow_idx < len(following_items) or discover_idx < len(discover_items):
-            if follow_idx < len(following_items):
-                mixed.append(following_items[follow_idx])
-                follow_idx += 1
-            if discover_idx < len(discover_items):
-                mixed.append(discover_items[discover_idx])
-                discover_idx += 1
-        if not following_items:
-            mixed = discover_items
-
-        return self._feed_response_with_ads(request, mixed, topic=topic)
+        return apply_cache_header(response, hit=False)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def topics(self, request):
@@ -1747,12 +1894,21 @@ class PinViewSet(viewsets.ModelViewSet):
             top_page_size = 10
         top_page = max(1, top_page)
 
-        skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
-        cache_key = f'pinova:creator_stats:v1:{user.id}:{totals_only}:{top_page}:{top_page_size}'
+        skip_cache = skip_feed_cache(request)
+        cache_key = creator_stats_cache_key(
+            user.id,
+            totals_only=totals_only,
+            top_page=top_page,
+            top_page_size=top_page_size,
+        )
         if not skip_cache:
-            cached = cache.get(cache_key)
-            if cached is not None:
-                return Response(cached)
+            cached, hit = get_cached_payload(
+                cache_key,
+                cache_scope='creator_stats',
+                user_id=user.id,
+            )
+            if hit:
+                return apply_cache_header(Response(cached), hit=True)
 
         totals = creator_totals_for_user(user)
         if totals_only:
@@ -1769,8 +1925,14 @@ class PinViewSet(viewsets.ModelViewSet):
                 },
             }
             if not skip_cache:
-                cache.set(cache_key, payload, 90)
-            return Response(payload)
+                set_cached_payload(
+                    cache_key,
+                    payload,
+                    CREATOR_STATS_TTL,
+                    cache_scope='creator_stats',
+                    user_id=user.id,
+                )
+            return apply_cache_header(Response(payload), hit=False)
 
         top_pins_payload, top_total, t_page, t_psize, t_pages = paginated_creator_top_pins(
             user, page=top_page, page_size=top_page_size
@@ -1788,8 +1950,14 @@ class PinViewSet(viewsets.ModelViewSet):
             },
         }
         if not skip_cache:
-            cache.set(cache_key, payload, 75)
-        return Response(payload)
+            set_cached_payload(
+                cache_key,
+                payload,
+                CREATOR_STATS_TTL,
+                cache_scope='creator_stats',
+                user_id=user.id,
+            )
+        return apply_cache_header(Response(payload), hit=False)
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-weekly-stats')
     def creator_weekly_stats(self, request):

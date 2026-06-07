@@ -4,6 +4,8 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from pinova_backend.observability.analytics import capture_referral_link_opened
+
 from .services import (
     build_public_resolve_payload,
     build_me_referral_payload,
@@ -58,6 +60,12 @@ class ReferralIntentView(APIView):
                 referrer=ref_user,
                 metadata={'intent_id': row.id},
                 contest=contest,
+            )
+            distinct = device or session_key or f'intent-{row.id}'
+            capture_referral_link_opened(
+                distinct_id=distinct,
+                ref_code=row.code_normalized,
+                referrer_id=ref_user.id,
             )
 
         return Response(

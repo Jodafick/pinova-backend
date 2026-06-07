@@ -1,11 +1,11 @@
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import User
 from django.db import transaction
 from .models import Profile, EmailOTP, SubscriptionPayment, UserBlock
+from accounts.age_policy import validate_birth_date_allowed, profile_minor_restricted_label
 from dj_rest_auth.registration.serializers import RegisterSerializer as BaseRegisterSerializer
 from dj_rest_auth.serializers import PasswordResetSerializer as DjPasswordResetSerializer
 from django.conf import settings
@@ -19,8 +19,11 @@ from django.utils import timezone
 from datetime import timedelta
 from .currency_utils import normalize_currency
 from notifications.notification_i18n import create_localized_notification
-from pinova_backend.media_cache import build_versioned_media_url
+from pinova_backend.media.cache import build_versioned_media_url
 from pins.moderation import validate_clean_text_fields
+from pins.api_locale import api_locale_from_request
+from accounts.password_policy import format_password_validation_errors, validate_pinova_password
+from dj_rest_auth.serializers import PasswordResetConfirmSerializer as DjPasswordResetConfirmSerializer
 
 ALLOWED_ACCENT_COLORS = frozenset({
     'rose', 'pink', 'violet', 'indigo', 'blue', 'cyan', 'emerald', 'amber', 'orange',
@@ -75,6 +78,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     following_count = serializers.SerializerMethodField()
     is_following = serializers.SerializerMethodField()
     tips_internal_enabled = serializers.SerializerMethodField()
+    minor_restricted = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
@@ -132,11 +136,14 @@ class ProfileSerializer(serializers.ModelSerializer):
             'notifications_saves',
             'notifications_recommendations',
             'notifications_digest_creator_weekly',
+            'notifications_streak_reminders',
+            'notifications_reactivation_emails',
             'subscription_cancel_at_period_end',
             'subscription_scheduled_plan',
             'subscription_trial_consumed_at',
             'share_token',
             'birth_date',
+            'minor_restricted',
             'sensitive_media_blur_by_default',
             'hide_sensitive_pins',
             'ad_ads_enabled',
@@ -144,7 +151,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'username', 'email', 'followers_count', 'following_count', 'is_following',
-            'subscription_trial_consumed_at', 'onboarding_completed_at',
+            'subscription_trial_consumed_at', 'onboarding_completed_at', 'minor_restricted',
         ]
 
     _PUBLIC_PROFILE_HIDDEN_FIELDS = frozenset({
@@ -162,6 +169,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         'notifications_saves',
         'notifications_recommendations',
         'notifications_digest_creator_weekly',
+        'notifications_streak_reminders',
+        'notifications_reactivation_emails',
         'sensitive_media_blur_by_default',
         'hide_sensitive_pins',
         'share_token',
@@ -186,6 +195,15 @@ class ProfileSerializer(serializers.ModelSerializer):
         code = (value or '').strip().upper()[:2]
         return code
 
+    def validate_birth_date(self, value):
+        return validate_birth_date_allowed(value)
+
+    def get_minor_restricted(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated or request.user.id != obj.user_id:
+            return None
+        return profile_minor_restricted_label(obj)
+
     def validate_accent_color(self, value):
         v = (value or 'rose').strip().lower()
         if v not in ALLOWED_ACCENT_COLORS:
@@ -207,6 +225,24 @@ class ProfileSerializer(serializers.ModelSerializer):
     def validate_social_links(self, value):
         return _normalize_social_links(value)
 
+    def validate_avatar(self, value):
+        if not value:
+            return value
+        request = self.context.get('request')
+        user_id = request.user.id if request and request.user.is_authenticated else None
+        from pins.upload_security import secure_image_upload
+
+        return secure_image_upload(value, kind='avatar', request=request, user_id=user_id)
+
+    def validate_cover_image(self, value):
+        if not value:
+            return value
+        request = self.context.get('request')
+        user_id = request.user.id if request and request.user.is_authenticated else None
+        from pins.upload_security import secure_image_upload
+
+        return secure_image_upload(value, kind='cover', request=request, user_id=user_id)
+
     def validate(self, attrs):
         text_fields = {}
         for key in ('display_name', 'first_name', 'last_name', 'bio', 'city', 'job_title', 'school', 'company', 'favorite_quote', 'pronouns'):
@@ -217,15 +253,21 @@ class ProfileSerializer(serializers.ModelSerializer):
         return attrs
 
     def get_followers_count(self, obj):
+        if self.context.get('feed_mode'):
+            return getattr(obj, '_followers_count', None) or 0
         return obj.followers.count()
 
     def get_following_count(self, obj):
+        if self.context.get('feed_mode'):
+            return getattr(obj, '_following_count', None) or 0
         return obj.following.count()
 
     def get_is_following(self, obj):
+        following_ids = self.context.get('_viewer_following_profile_ids')
+        if following_ids is not None:
+            return obj.id in following_ids
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            # Check if current user follows this profile
             return request.user.profile.following.filter(id=obj.id).exists()
         return False
 
@@ -290,6 +332,7 @@ class UserSerializer(serializers.ModelSerializer):
             'id',
             'username',
             'email',
+            'date_joined',
             'profile',
             'saved_pins',
             'boards',
@@ -332,6 +375,7 @@ class UserSerializer(serializers.ModelSerializer):
         is_owner = viewer and viewer.is_authenticated and viewer.id == instance.id
         if not is_owner:
             data.pop('email', None)
+            data.pop('date_joined', None)
         if is_owner:
             data.pop('viewer_has_reported_profile', None)
         return data
@@ -449,6 +493,22 @@ class UserSerializer(serializers.ModelSerializer):
         return sub
 
 
+def _validate_pinova_password_for_request(
+    password,
+    *,
+    request,
+    user=None,
+    email=None,
+    username=None,
+    field='password1',
+):
+    lang = api_locale_from_request(request) if request else 'fr'
+    try:
+        validate_pinova_password(password, user=user, email=email, username=username, lang=lang)
+    except DjangoValidationError as exc:
+        raise serializers.ValidationError({field: format_password_validation_errors(exc, lang)})
+
+
 class SetInitialPasswordSerializer(serializers.Serializer):
     """Mot de passe initial pour comptes créés via réseau social (sans mot de passe Django)."""
 
@@ -459,10 +519,12 @@ class SetInitialPasswordSerializer(serializers.Serializer):
         if attrs['new_password1'] != attrs['new_password2']:
             raise serializers.ValidationError({'new_password2': _('Les mots de passe ne correspondent pas.')})
         user = self.context['request'].user
-        try:
-            validate_password(attrs['new_password1'], user=user)
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError({'new_password1': list(exc.messages)})
+        _validate_pinova_password_for_request(
+            attrs['new_password1'],
+            request=self.context.get('request'),
+            user=user,
+            field='new_password1',
+        )
         return attrs
 
 
@@ -470,6 +532,10 @@ class RegisterSerializer(BaseRegisterSerializer):
     username = serializers.CharField(required=False, allow_blank=True)
     display_name = serializers.CharField(required=False, allow_blank=True)
     referral_code = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    birth_date = serializers.DateField(required=False, allow_null=True, write_only=True)
+
+    def validate_birth_date(self, value):
+        return validate_birth_date_allowed(value)
 
     def validate(self, data):
         # Si le username n'est pas fourni, on prend le début de l'email
@@ -484,6 +550,20 @@ class RegisterSerializer(BaseRegisterSerializer):
             message='Ce champ contient un contenu inapproprie. Merci de le modifier.',
         )
         return super().validate(data)
+
+    def validate_password1(self, password):
+        email = self.initial_data.get('email')
+        username = self.initial_data.get('username')
+        if not username and email:
+            username = str(email).split('@')[0]
+        _validate_pinova_password_for_request(
+            password,
+            request=self.context.get('request'),
+            email=email,
+            username=username,
+            field='password1',
+        )
+        return password
 
     def get_cleaned_data(self):
         data = super().get_cleaned_data()
@@ -501,6 +581,12 @@ class RegisterSerializer(BaseRegisterSerializer):
                 profile = user.profile
                 profile.display_name = display_name
                 profile.save()
+
+            birth_date = self.validated_data.get('birth_date')
+            if birth_date:
+                profile = user.profile
+                profile.birth_date = birth_date
+                profile.save(update_fields=['birth_date'])
 
             # Générer et envoyer l'OTP
             otp, created = EmailOTP.objects.get_or_create(
@@ -536,12 +622,22 @@ class RegisterSerializer(BaseRegisterSerializer):
             from referrals.services import consume_referral_for_new_user
 
             device = (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip() if request else ''
-            consume_referral_for_new_user(
+            attr = consume_referral_for_new_user(
                 user,
                 explicit_code=self.validated_data.get('referral_code'),
                 request=request,
                 device_binding_header=device or None,
             )
+            if attr:
+                from pinova_backend.observability.analytics import capture_register_with_ref_code
+
+                ref_code = (self.validated_data.get('referral_code') or '').strip().upper()
+                if ref_code:
+                    capture_register_with_ref_code(
+                        user_id=user.id,
+                        ref_code=ref_code,
+                        signup_channel='referral',
+                    )
         return user
 
 
@@ -617,3 +713,34 @@ class PinovaPasswordResetSerializer(DjPasswordResetSerializer):
         opts = super().get_email_options()
         opts['url_generator'] = pinova_password_reset_url_generator
         return opts
+
+
+class PinovaPasswordResetConfirmSerializer(DjPasswordResetConfirmSerializer):
+    """
+    Confirmation reset : accepte `new_password` (SPA/mobile) ou `new_password1`/`new_password2`.
+    Messages d'erreur alignés sur la politique Pinova (FR/EN).
+    """
+
+    new_password = serializers.CharField(required=False, write_only=True, max_length=128)
+
+    def validate(self, attrs):
+        pwd = (attrs.get('new_password') or '').strip()
+        if pwd:
+            attrs['new_password1'] = pwd
+            attrs.setdefault('new_password2', pwd)
+        if not (attrs.get('new_password1') or '').strip():
+            lang = api_locale_from_request(self.context.get('request'))
+            msg = 'This field is required.' if lang == 'en' else 'Ce champ est obligatoire.'
+            raise serializers.ValidationError({'new_password1': [msg]})
+        return super().validate(attrs)
+
+    def custom_validation(self, attrs):
+        request = self.context.get('request')
+        lang = api_locale_from_request(request) if request else 'fr'
+        password = attrs.get('new_password1') or attrs.get('new_password') or ''
+        try:
+            validate_pinova_password(password, user=self.user, lang=lang)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                {'new_password1': format_password_validation_errors(exc, lang)}
+            )

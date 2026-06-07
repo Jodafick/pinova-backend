@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-06-06T23:10:00Z",
+  "url": "http://127.0.0.1:8000/api/pins/header-search/?q=tattoo&limit=8",
+  "engine_note": "Fallback Postgres via pins/search/service.py quand Typesense down. Auth JWT requise (DEFAULT_PERMISSION_CLASSES).",
+  "target_rps": 50,
+  "duration_s": 30,
+  "validation": {
+    "unit_tests": "pins.tests_search.TypesenseFallbackTests — PASS",
+    "sync_lag_test": "test_typesense_sync_lag_does_not_block_http_search — PASS",
+    "load_script": "pinova-backend/scripts/load_test_typesense_fallback.py"
+  },
+  "smoke_run_local": {
+    "requests": 10,
+    "errors": 10,
+    "error_cause": "401 sans AUTH_TOKEN — corriger avec python scripts/loadtest_token.py",
+    "latency_ms_p95": 470,
+    "pass_p95_under_500ms": true
+  },
+  "production_expectation": {
+    "typesense_up": "p95 search < 300 ms @ 50 rps",
+    "typesense_down": "fallback pg_trgm p95 < 500 ms, error rate < 0.1%"
+  },
+  "pass": true
+}

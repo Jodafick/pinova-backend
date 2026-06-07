@@ -2,7 +2,7 @@
 Seed complet pour développement / démo Pinova.
 
 Usage :
-  python seed_data.py
+  python scripts/seed_data.py
 
 Variables d'environnement optionnelles :
   SEED_SUPERUSER_USERNAME / SEED_SUPERUSER_EMAIL / SEED_SUPERUSER_PASSWORD

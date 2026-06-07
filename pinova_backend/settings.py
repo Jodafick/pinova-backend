@@ -77,7 +77,7 @@ else:
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = (*default_headers, 'x-pinova-device-binding', 'x-pinova-lang')
 # Permet au navigateur de lire l’en-tête du compteur notifications (axios / fetch).
-CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications']
+CORS_EXPOSE_HEADERS = ['X-Pinova-Unread-Notifications', 'X-Cache']
 
 _csrf_origins = os.environ.get('CSRF_TRUSTED_ORIGINS', '').strip()
 if _csrf_origins:
@@ -90,11 +90,39 @@ else:
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'True') == 'True'
+    SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', str(60 * 60 * 24 * 365)))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'True') == 'True'
+    SECURE_HSTS_PRELOAD = os.environ.get('SECURE_HSTS_PRELOAD', 'False') == 'True'
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
 
+_csp_cdn = (os.environ.get('MEDIA_CDN_DOMAIN') or os.environ.get('CSP_IMG_CDN_HOST') or '').strip()
+_csp_img_src = ["'self'", 'data:']
+if _csp_cdn:
+    _csp_img_src.append(f'https://{_csp_cdn}')
+else:
+    _csp_img_src.append('https:')
+CONTENT_SECURITY_POLICY = os.environ.get(
+    'CONTENT_SECURITY_POLICY',
+    '; '.join(
+        [
+            "default-src 'self'",
+            "script-src 'self'",
+            f"img-src {' '.join(_csp_img_src)}",
+            "style-src 'self' 'unsafe-inline'",
+            "font-src 'self' data:",
+            "connect-src 'self' https://eu.i.posthog.com https://eu-assets.i.posthog.com",
+            "frame-ancestors 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+        ]
+    ),
+)
 
 # Application definition
 
 INSTALLED_APPS = [
+    'pinova_backend.apps.PinovaBackendConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -102,6 +130,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',
+    'django.contrib.postgres',
     'channels',
     # Third party apps
     'rest_framework',
@@ -128,16 +157,21 @@ SITE_ID = 1
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'pinova_backend.middleware.request_id.RequestIdMiddleware',
+    'pinova_backend.middleware.security.ContentSecurityPolicyMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'pinova_backend.middleware.access_log.StructuredAccessLogMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
-    'pinova_backend.unread_notifications_middleware.UnreadNotificationsHeaderMiddleware',
+    'pinova_backend.middleware.media.MediaAccessMiddleware',
+    'pinova_backend.middleware.unread_notifications.UnreadNotificationsHeaderMiddleware',
+    'pinova_backend.middleware.sentry.SentryApiTimingMiddleware',
 ]
 
 ROOT_URLCONF = 'pinova_backend.urls'
@@ -160,11 +194,36 @@ TEMPLATES = [
 WSGI_APPLICATION = 'pinova_backend.wsgi.application'
 ASGI_APPLICATION = 'pinova_backend.asgi.application'
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+_redis_url = (os.environ.get('REDIS_URL') or os.environ.get('PINNOVA_REDIS_URL') or '').strip()
+PINNOVA_SHARED_CACHE = bool(_redis_url)
+if _redis_url:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [_redis_url],
+            },
+        },
     }
-}
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
+
+WS_HEARTBEAT_INTERVAL = 30
+WS_STALE_TIMEOUT = 90
+WS_LEADERBOARD_CONN_LIMIT = 10
+WS_LEADERBOARD_CONN_WINDOW = 60
+
+POSTHOG_API_KEY = (os.environ.get('POSTHOG_API_KEY') or os.environ.get('VITE_POSTHOG_KEY') or '').strip()
+POSTHOG_HOST = (os.environ.get('POSTHOG_HOST') or 'https://eu.i.posthog.com').strip().rstrip('/')
+
+SENTRY_DSN = (os.environ.get('SENTRY_DSN') or '').strip()
+SENTRY_ENVIRONMENT = os.environ.get('SENTRY_ENVIRONMENT') or ('development' if DEBUG else 'production')
+SENTRY_RELEASE = (os.environ.get('SENTRY_RELEASE') or os.environ.get('RENDER_GIT_COMMIT') or '').strip()
+SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.1'))
 
 
 # Database
@@ -209,14 +268,7 @@ else:
         }
     }
 
-# Cache court (stats créateur, etc.). LocMem par processus ; pour plusieurs workers, brancher Redis côté infra.
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'pinova-locmem',
-        'TIMEOUT': 120,
-    }
-}
+# Cache : Redis si REDIS_URL / PINNOVA_REDIS_URL, sinon LocMem (voir CACHES en fin de fichier).
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
@@ -234,6 +286,7 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
 
 # Frontend URLs for Emails
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5174')
+API_PUBLIC_URL = (os.environ.get('API_PUBLIC_URL') or os.environ.get('BACKEND_URL') or 'http://localhost:8000').rstrip('/')
 # Schéma deep link mobile (pinova://invite?ref=…)
 REFERRAL_DEEP_LINK_SCHEME = os.environ.get('REFERRAL_DEEP_LINK_SCHEME', 'pinova').strip() or 'pinova'
 # URL_FRONTEND_VERIFY_EMAIL = os.environ.get('FRONTEND_URL', 'http://localhost:5174') + '/verify-email'
@@ -244,6 +297,7 @@ FEDAPAY_ENV = os.environ.get('FEDAPAY_ENV', 'sandbox')
 FEDAPAY_SECRET_KEY = os.environ.get('FEDAPAY_SECRET_KEY', '')
 FEDAPAY_CURRENCY_ISO = os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
 FEDAPAY_CALLBACK_URL = os.environ.get('FEDAPAY_CALLBACK_URL', FRONTEND_URL + '/premium')
+FEDAPAY_WEBHOOK_SECRET = (os.environ.get('FEDAPAY_WEBHOOK_SECRET') or '').strip()
 
 # E-mail : Resend (API) si RESEND_API_KEY est défini, sinon SMTP (sauf EMAIL_BACKEND explicite).
 # En DEBUG sans Resend ni identifiants SMTP : console — évite les 500 sur auth/password/reset/ en local.
@@ -274,20 +328,11 @@ if EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend' and not DEF
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
-# AUTH_PASSWORD_VALIDATORS = [
-#     {
-#         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-#     },
-#     {
-#         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-#     },
-#     {
-#         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-#     },
-#     {
-#         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-#     },
-# ]
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'accounts.password_policy.PinovaPasswordValidator',
+    },
+]
 
 
 # Internationalization
@@ -323,11 +368,50 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_SIGNING_SECRET = os.environ.get('MEDIA_SIGNING_SECRET', SECRET_KEY)
+MEDIA_SIGNED_URL_TTL_SECONDS = int(os.environ.get('MEDIA_SIGNED_URL_TTL_SECONDS', '3600'))
 # En-tête appliqué par ``media_views.serve_media`` ; dupliquer pour /media/ derrière nginx/CDN.
 MEDIA_CACHE_CONTROL = os.environ.get(
     'PINNOVA_MEDIA_CACHE_CONTROL',
     'public, max-age=31536000, immutable',
 )
+MEDIA_SIGNED_CACHE_CONTROL = os.environ.get(
+    'PINNOVA_MEDIA_SIGNED_CACHE_CONTROL',
+    'private, max-age=3600',
+)
+
+# Uploads — validation magic bytes, re-encodage Pillow, scan ClamAV optionnel
+PIN_IMAGE_MAX_SIZE_MB = int(os.environ.get('PIN_IMAGE_MAX_SIZE_MB', '10'))
+PIN_IMAGE_JPEG_QUALITY = int(os.environ.get('PIN_IMAGE_JPEG_QUALITY', '85'))
+ENABLE_CLAMAV_SCAN = os.environ.get('ENABLE_CLAMAV_SCAN', '').lower() in ('1', 'true', 'yes')
+CLAMD_HOST = os.environ.get('CLAMD_HOST', '127.0.0.1')
+CLAMD_PORT = int(os.environ.get('CLAMD_PORT', '3310'))
+CLAMD_SCAN_TIMEOUT_SECONDS = int(os.environ.get('CLAMD_SCAN_TIMEOUT_SECONDS', '120'))
+
+# Stockage S3 / Cloudflare R2 (optionnel — bucket privé, accès via /media/ + signatures)
+USE_S3_MEDIA = os.environ.get('USE_S3_MEDIA', '').lower() in ('1', 'true', 'yes')
+if USE_S3_MEDIA:
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
+    AWS_S3_ENDPOINT_URL = os.environ.get('AWS_S3_ENDPOINT_URL', '') or None
+    AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'auto')
+    AWS_S3_CUSTOM_DOMAIN = os.environ.get('MEDIA_CDN_DOMAIN', '') or None
+    AWS_DEFAULT_ACL = 'private'
+    AWS_QUERYSTRING_AUTH = False
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': MEDIA_CACHE_CONTROL,
+    }
+    STORAGES = {
+        'default': {
+            'BACKEND': 'pinova_backend.media.storage.PinovaMediaStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
+    if AWS_S3_CUSTOM_DOMAIN:
+        MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 
 # Social Auth Settings
 SOCIALACCOUNT_PROVIDERS = {
@@ -382,15 +466,16 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
+    'EXCEPTION_HANDLER': 'pinova_backend.core.exceptions.pinova_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
     'DEFAULT_THROTTLE_CLASSES': [
-        'pinova_backend.throttling.AnonIPRateThrottle',
-        'pinova_backend.throttling.AnonIPSustainedThrottle',
-        'pinova_backend.throttling.AuthenticatedUserRateThrottle',
-        'pinova_backend.throttling.AuthenticatedUserSustainedThrottle',
+        'pinova_backend.security.throttling.AnonIPRateThrottle',
+        'pinova_backend.security.throttling.AnonIPSustainedThrottle',
+        'pinova_backend.security.throttling.AuthenticatedUserRateThrottle',
+        'pinova_backend.security.throttling.AuthenticatedUserSustainedThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
         # Par IP pour visiteurs / tokens absents ; surcharger en prod avec Redis si plusieurs workers
@@ -399,28 +484,46 @@ REST_FRAMEWORK = {
         # Utilisateur authentifié (scraping/API clients loggés)
         'user_burst': os.environ.get('API_THROTTLE_USER_BURST', '300/minute'),
         'user_sustained': os.environ.get('API_THROTTLE_USER_SUSTAINED', '50000/day'),
+        'otp_verify': os.environ.get('API_THROTTLE_OTP_VERIFY', '10/minute'),
+        'otp_resend': os.environ.get('API_THROTTLE_OTP_RESEND', '3/minute'),
+        'webhook': os.environ.get('API_RATELIMIT_WEBHOOK', '100/minute'),
     },
 }
+
+# django-ratelimit (auth / webhooks) — partage le cache « default » (Redis recommandé)
+RATELIMIT_ENABLE = os.environ.get('RATELIMIT_ENABLE', 'True').lower() in ('1', 'true', 'yes')
+RATELIMIT_USE_CACHE = 'default'
+API_RATELIMIT_LOGIN = os.environ.get('API_RATELIMIT_LOGIN', '10/minute')
+API_RATELIMIT_REGISTER = os.environ.get('API_RATELIMIT_REGISTER', '5/minute')
+API_RATELIMIT_PASSWORD_RESET = os.environ.get('API_RATELIMIT_PASSWORD_RESET', '5/minute')
+API_RATELIMIT_OTP_VERIFY = os.environ.get('API_RATELIMIT_OTP_VERIFY', '10/minute')
+API_RATELIMIT_OTP_RESEND = os.environ.get('API_RATELIMIT_OTP_RESEND', '3/minute')
+API_RATELIMIT_WEBHOOK = os.environ.get('API_RATELIMIT_WEBHOOK', '100/minute')
 
 REST_AUTH = {
     'USE_JWT': True,
     'LOGIN_SERIALIZER': 'accounts.serializers.PinovaLoginSerializer',
     'PASSWORD_RESET_SERIALIZER': 'accounts.serializers.PinovaPasswordResetSerializer',
     'SESSION_LOGIN': False,
-    # False : le refresh est inclus dans le JSON (login + social), comme attendu par le web / mobile
-    # qui stockent `pinova_refresh_token` en localStorage. True = refresh uniquement cookie HttpOnly.
-    'JWT_AUTH_HTTPONLY': False,
+    # Prod : refresh uniquement cookie HttpOnly (web). Dev : refresh aussi en JSON (localStorage).
+    # Surcharge : JWT_AUTH_HTTPONLY=1|0
+    'JWT_AUTH_HTTPONLY': (
+        os.environ.get('JWT_AUTH_HTTPONLY', '').strip().lower() in ('1', 'true', 'yes')
+        if os.environ.get('JWT_AUTH_HTTPONLY', '').strip()
+        else not DEBUG
+    ),
     'JWT_AUTH_COOKIE': 'pinova-auth',
     'JWT_AUTH_REFRESH_COOKIE': 'pinova-refresh-token',
     'JWT_AUTH_COOKIE_USE_CSRF': False,
     'JWT_AUTH_SAMESITE': 'Lax' if DEBUG else 'None',
     'JWT_AUTH_SECURE': not DEBUG,
     'REGISTER_SERIALIZER': 'accounts.serializers.RegisterSerializer',
+    'PASSWORD_RESET_CONFIRM_SERIALIZER': 'accounts.serializers.PinovaPasswordResetConfirmSerializer',
 }
 
-# Accès d'un jour + refresh quasi infini (100 ans).
-_jwt_access_minutes = int(os.environ.get('JWT_ACCESS_MINUTES', '1440'))
-_jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS', '36500'))
+# JWT : accès court + refresh 30 jours (override via env).
+_jwt_access_minutes = int(os.environ.get('JWT_ACCESS_MINUTES', '60'))
+_jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS', '30'))
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=_jwt_access_minutes),
@@ -429,7 +532,7 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
-    'TOKEN_REFRESH_SERIALIZER': 'accounts.jwt_serializers.PinovaTokenRefreshSerializer',
+    'TOKEN_REFRESH_SERIALIZER': 'accounts.jwt_serializers.PinovaCookieTokenRefreshSerializer',
 }
 
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 365  # 1 an
@@ -439,18 +542,10 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 CSRF_COOKIE_SECURE = not DEBUG
 
-# Cache (rate limiting modération — prévoir Redis en prod pour plusieurs workers)
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'pinova-default',
-    }
-}
+# Cache feed / stats / rate-limit — Redis recommandé en prod multi-workers.
+from pinova_backend.config.cache import build_caches_config
 
-# django-ratelimit utilise le cache « default »
-RATELIMIT_USE_CACHE = 'default'
-
-_redis_url = (os.environ.get('REDIS_URL') or os.environ.get('PINNOVA_REDIS_URL') or '').strip()
+CACHES = build_caches_config(redis_url=_redis_url, debug=DEBUG)
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', _redis_url or 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
@@ -458,6 +553,10 @@ CELERY_TASK_ALWAYS_EAGER = os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False') =
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', '300'))
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_RESULT_EXPIRES = int(os.environ.get('CELERY_RESULT_EXPIRES', '86400'))
 
 # Vidéo story / pin : taille minimale du fichier uploadé en Mo (0 ou vide = valeur par défaut 1 ; mettre « 0 » pour désactiver)
 _raw_mb_s = (os.environ.get('PIN_STORY_VIDEO_MIN_SIZE_MB') or '').strip()
@@ -486,3 +585,17 @@ NSFW_ONNX_LAYOUT = (os.environ.get('NSFW_ONNX_LAYOUT') or 'NCHW').strip()
 NSFW_ONNX_IMG_SIZE = int(os.environ.get('NSFW_ONNX_IMG_SIZE') or '224')
 NSFW_ONNX_NORMALIZE = (os.environ.get('NSFW_ONNX_NORMALIZE') or 'imagenet').strip()
 NSFW_TWOCLASS_UNSAFE_BIAS = float(os.environ.get('NSFW_TWOCLASS_UNSAFE_BIAS') or '0')
+
+# ── Recherche (Phase 1 pg_trgm, Phase 2 Typesense) ───────────────────────────
+# SEARCH_ENGINE=postgres (défaut) | typesense
+SEARCH_ENGINE = (os.environ.get('SEARCH_ENGINE') or 'postgres').strip().lower()
+SEARCH_USE_TRIGRAM = os.environ.get('SEARCH_USE_TRIGRAM', 'true').lower() in ('1', 'true', 'yes')
+TYPESENSE_HOST = (os.environ.get('TYPESENSE_HOST') or '').strip()
+TYPESENSE_API_KEY = (os.environ.get('TYPESENSE_API_KEY') or '').strip()
+TYPESENSE_PROTOCOL = (os.environ.get('TYPESENSE_PROTOCOL') or 'http').strip()
+TYPESENSE_PORT = int(os.environ.get('TYPESENSE_PORT') or '8108')
+TYPESENSE_TIMEOUT_SECONDS = float(os.environ.get('TYPESENSE_TIMEOUT_SECONDS') or '2')
+
+LOGGING = __import__('pinova_backend.observability.logging', fromlist=['build_logging_config']).build_logging_config(
+    debug=DEBUG
+)

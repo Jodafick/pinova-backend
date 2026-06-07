@@ -18,17 +18,21 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from django.conf import settings
 
-from .media_views import serve_media
+from pinova_backend.media.views import serve_media
+from pinova_backend.health.views import celery_health, health, health_ready
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/health/', health, name='health'),
+    path('api/health/ready/', health_ready, name='health-ready'),
+    path('api/health/celery/', celery_health, name='health-celery'),
     path('api/', include('pins.urls')),
     path('api/', include('accounts.urls')),
     path('api/', include('contests.urls')),
     path('api/', include('referrals.urls')),
     path('api/', include('monetization.urls')),
     path('api/notifications/', include('notifications.urls')),
-    # Médias utilisateurs : Cache-Control long (+ version cv= côté serializers).
-    # En production, si nginx sert /media/ directement, aligner les mêmes en-têtes là-bas.
+    # Médias : accès contrôlé par MediaAccessMiddleware (signatures HMAC + pins.visibility).
+    # Ne pas exposer MEDIA_ROOT / bucket S3 en direct sans les mêmes contrôles.
     re_path(r'^media/(?P<path>.*)$', serve_media),
 ]

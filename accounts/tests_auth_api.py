@@ -148,3 +148,62 @@ class AuthTokenRefreshApiTests(APITestCase):
         self.user.delete()
         r = self.client.post(self.refresh_url, {'refresh': refresh}, format='json')
         self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED, r.content)
+
+    def test_refresh_rotation_blacklists_old_token(self):
+        login = self.client.post(
+            self.login_url,
+            {'email': 'refreshuser@example.com', 'password': self.password},
+            format='json',
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK)
+        old_refresh = login.data.get('refresh')
+        self.assertTrue(old_refresh)
+
+        rotated = self.client.post(self.refresh_url, {'refresh': old_refresh}, format='json')
+        self.assertEqual(rotated.status_code, status.HTTP_200_OK, rotated.content)
+        self.assertIn('access', rotated.data)
+        new_refresh = rotated.data.get('refresh')
+        self.assertTrue(new_refresh)
+        self.assertNotEqual(new_refresh, old_refresh)
+
+        replay = self.client.post(self.refresh_url, {'refresh': old_refresh}, format='json')
+        self.assertEqual(replay.status_code, status.HTTP_401_UNAUTHORIZED, replay.content)
+
+
+class AuthLogoutAllApiTests(APITestCase):
+    """POST /api/auth/logout-all/ — révoque tous les refresh du compte."""
+
+    def setUp(self):
+        self.login_url = '/api/auth/login/'
+        self.refresh_url = '/api/auth/token/refresh/'
+        self.logout_all_url = '/api/auth/logout-all/'
+        self.password = 'Pinova2026!'
+        self.user = User.objects.create_user(
+            username='logoutall',
+            email='logoutall@example.com',
+            password=self.password,
+        )
+        _ensure_verified_email(self.user)
+
+    def _login(self):
+        r = self.client.post(
+            self.login_url,
+            {'email': 'logoutall@example.com', 'password': self.password},
+            format='json',
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.content)
+        return r.data['access'], r.data['refresh']
+
+    def test_logout_all_revokes_all_refresh_tokens(self):
+        _access1, refresh1 = self._login()
+        _access2, refresh2 = self._login()
+        self.assertNotEqual(refresh1, refresh2)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {_access1}')
+        r = self.client.post(self.logout_all_url, {}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_200_OK, r.content)
+        self.assertGreaterEqual(r.data.get('revoked', 0), 1)
+
+        for stale in (refresh1, refresh2):
+            replay = self.client.post(self.refresh_url, {'refresh': stale}, format='json')
+            self.assertEqual(replay.status_code, status.HTTP_401_UNAUTHORIZED, replay.content)

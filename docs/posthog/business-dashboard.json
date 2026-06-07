@@ -1,0 +1,209 @@
+{
+  "name": "PINOVA — Business",
+  "description": "Funnels acquisition / monétisation / viralité, cohortes J1-J7-J30, revenue FedaPay, KPIs activation & ARPU.",
+  "tags": ["business", "pinova"],
+  "insights": [
+    {
+      "key": "funnel_acquisition",
+      "name": "Acquisition — landing → register → onboarding → first pin",
+      "kind": "FunnelsQuery",
+      "filters": {
+        "events": [
+          { "id": "landing_viewed", "type": "events", "order": 0 },
+          { "id": "register_started", "type": "events", "order": 1 },
+          { "id": "onboarding_completed", "type": "events", "order": 2 },
+          { "id": "first_pin_published", "type": "events", "order": 3 }
+        ],
+        "funnel_window_interval": 14,
+        "funnel_window_interval_unit": "day",
+        "breakdown": "signup_channel",
+        "breakdown_type": "event"
+      }
+    },
+    {
+      "key": "funnel_monetization_premium",
+      "name": "Monétisation — premium (viewed → checkout → success backend)",
+      "kind": "FunnelsQuery",
+      "filters": {
+        "events": [
+          { "id": "premium_viewed", "type": "events", "order": 0, "properties": [{ "key": "flow", "value": "premium", "operator": "exact", "type": "event" }] },
+          { "id": "checkout_started", "type": "events", "order": 1, "properties": [{ "key": "flow", "value": "premium", "operator": "exact", "type": "event" }] },
+          {
+            "id": "revenue_recorded",
+            "type": "events",
+            "order": 2,
+            "properties": [
+              { "key": "flow", "value": "premium", "operator": "exact", "type": "event" },
+              { "key": "revenue_source", "value": "fedapay_webhook", "operator": "exact", "type": "event" }
+            ]
+          }
+        ],
+        "funnel_window_interval": 7,
+        "funnel_window_interval_unit": "day"
+      }
+    },
+    {
+      "key": "funnel_monetization_boost",
+      "name": "Monétisation — boost",
+      "kind": "FunnelsQuery",
+      "filters": {
+        "events": [
+          { "id": "premium_viewed", "type": "events", "order": 0, "properties": [{ "key": "flow", "value": "boost", "operator": "exact", "type": "event" }] },
+          { "id": "checkout_started", "type": "events", "order": 1, "properties": [{ "key": "flow", "value": "boost", "operator": "exact", "type": "event" }] },
+          {
+            "id": "revenue_recorded",
+            "type": "events",
+            "order": 2,
+            "properties": [
+              { "key": "flow", "value": "boost", "operator": "exact", "type": "event" },
+              { "key": "revenue_source", "value": "fedapay_webhook", "operator": "exact", "type": "event" }
+            ]
+          }
+        ],
+        "funnel_window_interval": 7,
+        "funnel_window_interval_unit": "day"
+      }
+    },
+    {
+      "key": "funnel_virality",
+      "name": "Viralité — referral link → register with ref",
+      "kind": "FunnelsQuery",
+      "filters": {
+        "events": [
+          { "id": "referral_link_opened", "type": "events", "order": 0 },
+          { "id": "register_with_ref_code", "type": "events", "order": 1 }
+        ],
+        "funnel_window_interval": 30,
+        "funnel_window_interval_unit": "day",
+        "breakdown": "signup_channel",
+        "breakdown_type": "event"
+      }
+    },
+    {
+      "key": "retention_j1",
+      "name": "Rétention J1 par canal",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [{ "id": "retention_cohort_j1", "type": "events", "math": "dau" }],
+        "breakdown": "signup_channel",
+        "breakdown_type": "event",
+        "display": "ActionsBar"
+      }
+    },
+    {
+      "key": "retention_j7",
+      "name": "Rétention J7 par canal",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [{ "id": "retention_cohort_j7", "type": "events", "math": "dau" }],
+        "breakdown": "signup_channel",
+        "breakdown_type": "event",
+        "display": "ActionsBar"
+      }
+    },
+    {
+      "key": "retention_j30",
+      "name": "Rétention J30 par canal",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [{ "id": "retention_cohort_j30", "type": "events", "math": "dau" }],
+        "breakdown": "signup_channel",
+        "breakdown_type": "event",
+        "display": "ActionsBar"
+      }
+    },
+    {
+      "key": "revenue_fedapay",
+      "name": "Revenue FedaPay (webhook)",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [
+          {
+            "id": "revenue_recorded",
+            "type": "events",
+            "math": "sum",
+            "math_property": "$revenue",
+            "properties": [{ "key": "revenue_source", "value": "fedapay_webhook", "operator": "exact", "type": "event" }]
+          }
+        ],
+        "breakdown": "flow",
+        "breakdown_type": "event",
+        "display": "ActionsLineGraph"
+      }
+    },
+    {
+      "key": "kpi_activation_24h",
+      "name": "KPI — Activation first pin < 24 h",
+      "kind": "FunnelsQuery",
+      "filters": {
+        "events": [
+          { "id": "register_completed", "type": "events", "order": 0 },
+          { "id": "first_pin_published", "type": "events", "order": 1 }
+        ],
+        "funnel_window_interval": 1,
+        "funnel_window_interval_unit": "day"
+      }
+    },
+    {
+      "key": "kpi_guest_conversion",
+      "name": "KPI — Guest conversion (register_completed)",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [{ "id": "register_completed", "type": "events", "math": "total" }],
+        "properties": [{ "key": "from_guest_conversion", "value": "true", "operator": "exact", "type": "event" }],
+        "display": "BoldNumber"
+      }
+    },
+    {
+      "key": "kpi_referral_conversion",
+      "name": "KPI — Referral conversion",
+      "kind": "FunnelsQuery",
+      "filters": {
+        "events": [
+          { "id": "referral_link_opened", "type": "events", "order": 0 },
+          { "id": "register_with_ref_code", "type": "events", "order": 1 }
+        ],
+        "funnel_window_interval": 30,
+        "funnel_window_interval_unit": "day"
+      }
+    },
+    {
+      "key": "kpi_arpu",
+      "name": "KPI — ARPU (revenue_recorded webhook)",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [
+          {
+            "id": "revenue_recorded",
+            "type": "events",
+            "math": "sum",
+            "math_property": "$revenue",
+            "properties": [{ "key": "revenue_source", "value": "fedapay_webhook", "operator": "exact", "type": "event" }]
+          }
+        ],
+        "formula": "A / B",
+        "events_meta": [
+          { "alias": "A", "math": "sum", "math_property": "$revenue" },
+          { "alias": "B", "math": "dau" }
+        ],
+        "display": "BoldNumber"
+      }
+    },
+    {
+      "key": "kpi_boost_attach",
+      "name": "KPI — Boost attach rate",
+      "kind": "TrendsQuery",
+      "filters": {
+        "events": [
+          {
+            "id": "revenue_recorded",
+            "type": "events",
+            "math": "total",
+            "properties": [{ "key": "flow", "value": "boost", "operator": "exact", "type": "event" }]
+          }
+        ],
+        "display": "ActionsPie"
+      }
+    }
+  ]
+}

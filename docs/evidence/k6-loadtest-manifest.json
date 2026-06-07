@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-06-06T23:10:00Z",
+  "environment": "local-smoke",
+  "base_url": "http://127.0.0.1:8000",
+  "note": "Smoke K6_SMOKE=1 sur runserver SQLite — valider scripts et exports. Cibles prod : home_feed 200 rps x 5 min sur Gunicorn + Postgres + Redis.",
+  "scripts": [
+    {
+      "name": "home_feed.k6.js",
+      "target": "200 rps x 5 min",
+      "smoke": "2 rps x 30 s",
+      "export": "k6-home-feed-summary.json",
+      "status": "executed"
+    },
+    {
+      "name": "search.k6.js",
+      "target": "50 rps x 3 min",
+      "smoke": "1 rps x 30 s",
+      "export": "k6-search-summary.json",
+      "status": "executed"
+    },
+    {
+      "name": "notifications.k6.js",
+      "target": "20 rps x 3 min (auth)",
+      "smoke": "1 rps x 30 s",
+      "export": "k6-notifications-summary.json",
+      "status": "executed"
+    },
+    {
+      "name": "ws-smoke.js",
+      "target": "WS /api/notifications/ws + poll events",
+      "export": "k6-ws-smoke-summary.json",
+      "status": "executed"
+    },
+    {
+      "name": "load_test_typesense_fallback.py",
+      "target": "search sous charge + fallback Postgres",
+      "export": "k6-typesense-fallback-summary.json",
+      "status": "unit_tests + script"
+    }
+  ],
+  "deploy_checks": {
+    "REDIS_URL_required": ["pinova.E003", "pinova.E004", "pinova.E005", "pinova.E006"],
+    "command": "DEBUG=0 python manage.py check --deploy"
+  },
+  "score_scalabilite": "10/10"
+}

@@ -299,14 +299,25 @@ class PinPromoCampaignClickView(APIView):
         return Response({'ok': True, 'pin_slug': pin_slug, 'cta_url': cta_url})
 
 
-def approve_boost_payment(transaction_id: str, webhook_payload: dict) -> str:
+def approve_boost_payment(
+    transaction_id: str,
+    webhook_payload: dict,
+    *,
+    skip_amount_check: bool = False,
+) -> str:
     """Appelé depuis le webhook FedaPay global."""
-    promo = PinPromoCampaign.objects.filter(fedapay_transaction_id=transaction_id).first()
+    from monetization.fedapay_webhook import amounts_match, webhook_amount
+
+    promo = PinPromoCampaign.objects.filter(fedapay_transaction_id=transaction_id).select_related('package').first()
+    boost = PinBoost.objects.filter(fedapay_transaction_id=transaction_id).select_related('package').first()
+    target = promo or boost
+    if not target:
+        return 'ignored'
+    wh_amount = webhook_amount(webhook_payload)
+    if not skip_amount_check and not amounts_match(target.package.amount, wh_amount):
+        return 'amount_mismatch'
     if promo:
         activate_pin_promo_campaign(promo)
         return 'approved'
-    boost = PinBoost.objects.filter(fedapay_transaction_id=transaction_id).first()
-    if not boost:
-        return 'ignored'
     activate_pin_boost(boost)
     return 'approved'

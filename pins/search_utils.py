@@ -1,10 +1,12 @@
-"""Utilitaires de recherche floue (pins / texte) — compatible SQLite et PostgreSQL."""
+"""Utilitaires de recherche — fuzzy legacy + filtres icontains (fallback SQLite)."""
 
 from __future__ import annotations
 
 from difflib import SequenceMatcher
 
 from django.db.models import Q
+
+from pins.search.postgres import broad_pin_q_fallback
 
 
 def fuzzy_score(query: str, *texts: str) -> float:
@@ -23,20 +25,5 @@ def fuzzy_score(query: str, *texts: str) -> float:
 
 
 def broad_pin_q(search: str) -> Q:
-    """OR sur les jetons : correspondance large puis tri flou côté Python."""
-    s = (search or '').strip()
-    if not s:
-        return Q(pk__in=[])
-    tokens = [t for t in s.replace(',', ' ').split() if t]
-    if not tokens:
-        return Q(pk__in=[])
-    combined = Q()
-    for tok in tokens:
-        combined |= (
-            Q(title__icontains=tok)
-            | Q(description__icontains=tok)
-            | Q(author__username__icontains=tok)
-            | Q(hashtags__name__icontains=tok)
-            | Q(invisible_tags__tag__icontains=tok)
-        )
-    return combined
+    """Fallback icontains — préférer pins.search.service.search_pins avec pg_trgm."""
+    return broad_pin_q_fallback(search)

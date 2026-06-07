@@ -1,7 +1,7 @@
-"""Publication planifiée : notif auteur puis reset scheduled_publish_at (cron).
+"""Publication planifiée : notif auteur puis reset scheduled_publish_at.
 
-À planifier via cron (ex. toutes les 5 minutes) :
-    python manage.py publish_scheduled_pins
+Production : Celery Beat `pins-publish-scheduled` (*/5 min UTC).
+Secours : python manage.py publish_scheduled_pins
 """
 
 from django.core.management.base import BaseCommand

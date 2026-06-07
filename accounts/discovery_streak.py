@@ -42,6 +42,18 @@ def record_discovery_visit(profile) -> dict:
     return _payload(profile, paused=False)
 
 
+def is_streak_at_risk(profile) -> bool:
+    """Streak actif mais pas visité aujourd'hui — dernier jour = hier (J+1)."""
+    count = int(profile.discovery_streak_count or 0)
+    last = profile.discovery_streak_last_date
+    if count < 1 or not last:
+        return False
+    today = timezone.localdate()
+    if last == today:
+        return False
+    return (today - last).days == 1
+
+
 def discovery_streak_payload(profile) -> dict:
     today = timezone.localdate()
     last = profile.discovery_streak_last_date
@@ -59,5 +71,6 @@ def _payload(profile, *, paused: bool) -> dict:
         'best': int(profile.discovery_streak_best or 0),
         'last_date': profile.discovery_streak_last_date.isoformat() if profile.discovery_streak_last_date else None,
         'paused': paused,
+        'at_risk': is_streak_at_risk(profile),
         'grace_days': GRACE_DAYS,
     }

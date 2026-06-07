@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .tip_views import TipCheckoutView, TipConfigView, TipWalletView, TipWithdrawView
+from .stats_views import CheckoutPendingRecapView, PublicMonetizationStatsView
 from .views import (
     BoostPackageListView,
     BoostReachEstimateView,
@@ -17,6 +18,8 @@ from .views import (
 )
 
 urlpatterns = [
+    path('monetization/stats/public/', PublicMonetizationStatsView.as_view()),
+    path('monetization/checkout/pending-recap/', CheckoutPendingRecapView.as_view()),
     path('monetization/tips/config/', TipConfigView.as_view()),
     path('monetization/tips/wallet/', TipWalletView.as_view()),
     path('monetization/tips/checkout/', TipCheckoutView.as_view()),

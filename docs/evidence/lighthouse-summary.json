@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-06T20:38:21.339Z",
+  "base_url": "http://127.0.0.1:4173",
+  "api_url": "http://127.0.0.1:8765",
+  "guest": {
+    "path": "C:\\Users\\David Anato\\Documents\\Work offline\\PRESTIGE\\PINOVA\\docs\\evidence\\lighthouse-home.json",
+    "exit_code": 0,
+    "performance_score": null
+  },
+  "settings": {
+    "path": "C:\\Users\\David Anato\\Documents\\Work offline\\PRESTIGE\\PINOVA\\docs\\evidence\\lighthouse-settings.json",
+    "exit_code": 0,
+    "auth_mock": false,
+    "performance_score": null
+  },
+  "target_performance_score": 90
+}

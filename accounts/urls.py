@@ -5,6 +5,7 @@ from .views import (
     UserBlockViewSet,
     UserViewSet,
     RegisterView,
+    PasswordRulesView,
     DiscoveryStreakView,
     UserMeView,
     SetInitialPasswordView,
@@ -29,6 +30,13 @@ from .views import (
     SupportTicketView,
 )
 from .jwt_views import get_pinova_refresh_view
+from .jwt_logout_views import LogoutAllView
+from .auth_ratelimit_views import (
+    PinovaLoginView,
+    PinovaPasswordResetView,
+    PinovaPasswordResetConfirmView,
+)
+from .gdpr_views import AccountConsentView, AccountExportDataView, AccountExportDownloadView
 from .reference_views import ReferenceInterestsView
 from .subscription_seat_views import (
     SubscriptionSeatAdminRevokeHubView,
@@ -56,6 +64,14 @@ urlpatterns = [
     path('me/profile-share-token/', ProfileShareTokenView.as_view(), name='profile-share-token'),
     path('me/account-deletion/request/', AccountDeletionRequestView.as_view(), name='account-deletion-request'),
     path('me/account-deletion/cancel/', AccountDeletionCancelView.as_view(), name='account-deletion-cancel'),
+    path('account/export-data/', AccountExportDataView.as_view(), name='account-export-data'),
+    path(
+        'account/export-download/<uuid:token>/',
+        AccountExportDownloadView.as_view(),
+        name='account-export-download',
+    ),
+    path('account/consent/', AccountConsentView.as_view(), name='account-consent'),
+    path('account/deletion/request/', AccountDeletionRequestView.as_view(), name='account-deletion-request-gdpr'),
     path('subscription/pricing/', SubscriptionPricingView.as_view(), name='subscription-pricing'),
     path('subscription/trial/start/', SubscriptionTrialStartView.as_view(), name='subscription-trial-start'),
     path('subscription/invoices/', SubscriptionInvoiceListView.as_view(), name='subscription-invoices'),
@@ -90,7 +106,16 @@ urlpatterns = [
     path('support/tickets/', SupportTicketView.as_view(), name='support-tickets'),
     
     # Auth endpoints (refresh Pinova avant include dj-rest-auth pour priorité URL)
+    path('auth/password-rules/', PasswordRulesView.as_view(), name='password-rules'),
+    path('auth/logout-all/', LogoutAllView.as_view(), name='pinova_logout_all'),
     path('auth/token/refresh/', get_pinova_refresh_view().as_view(), name='pinova_token_refresh'),
+    path('auth/login/', PinovaLoginView.as_view(), name='rest_login'),
+    path('auth/password/reset/', PinovaPasswordResetView.as_view(), name='rest_password_reset'),
+    path(
+        'auth/password/reset/confirm/',
+        PinovaPasswordResetConfirmView.as_view(),
+        name='rest_password_reset_confirm',
+    ),
     path('auth/', include('dj_rest_auth.urls')),
     path('auth/registration/', include('dj_rest_auth.registration.urls')),
     path('auth/social/google/', GoogleLogin.as_view(), name='google_login'),

@@ -304,12 +304,16 @@ def apply_boost_to_pin_queryset(qs):
 
 
 def activate_pin_promo_campaign(campaign: PinPromoCampaign) -> None:
+    from notifications.campaign_notifications import notify_pin_promo_campaign_started
+
+    campaign = PinPromoCampaign.objects.select_related('pin', 'owner', 'package').get(pk=campaign.pk)
     now = timezone.now()
     duration = campaign.package.duration_hours
     campaign.status = PinPromoCampaign.STATUS_ACTIVE
     campaign.starts_at = now
     campaign.ends_at = now + timedelta(hours=duration)
     campaign.save(update_fields=['status', 'starts_at', 'ends_at', 'updated_at'])
+    notify_pin_promo_campaign_started(campaign)
     if campaign.pin_id:
         PinPromoCampaign.objects.filter(
             pin=campaign.pin,
@@ -321,10 +325,13 @@ def activate_pin_promo_campaign(campaign: PinPromoCampaign) -> None:
             package=campaign.package,
             status=PinBoost.STATUS_PENDING,
         )
-        activate_pin_boost(boost)
+        activate_pin_boost(boost, skip_owner_notify=True)
 
 
-def activate_pin_boost(boost: PinBoost) -> None:
+def activate_pin_boost(boost: PinBoost, *, skip_owner_notify: bool = False) -> None:
+    from notifications.campaign_notifications import notify_pin_boost_started
+
+    boost = PinBoost.objects.select_related('pin', 'owner', 'package').get(pk=boost.pk)
     now = timezone.now()
     duration = boost.package.duration_hours
     boost.status = PinBoost.STATUS_ACTIVE
@@ -335,3 +342,5 @@ def activate_pin_boost(boost: PinBoost) -> None:
         pin=boost.pin,
         status=PinBoost.STATUS_ACTIVE,
     ).exclude(pk=boost.pk).update(status=PinBoost.STATUS_EXPIRED)
+    if not skip_owner_notify:
+        notify_pin_boost_started(boost)

@@ -5,7 +5,11 @@ from referrals.services import try_complete_referral_rewards
 
 
 class Command(BaseCommand):
-    help = 'Tente de finaliser les récompenses referral en attente (garde-fous anti-fraude). À exécuter en cron (ex. toutes les 15 min).'
+    help = (
+        'Finalise les récompenses referral en attente (anti-fraude). '
+        'Production : Celery Beat referrals-reward-scan (*/15 min). '
+        'Secours : manage.py referral_reward_scan'
+    )
 
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=3000)

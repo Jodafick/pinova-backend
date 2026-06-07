@@ -280,3 +280,26 @@ class TipWithdrawal(models.Model):
 
     def __str__(self):
         return f'withdraw:{self.user_id}:{self.amount}:{self.status}'
+
+
+class WebhookEventProcessed(models.Model):
+    """Idempotence — un couple (transaction_id, event_type) ne déclenche l'activation qu'une fois."""
+
+    transaction_id = models.CharField(max_length=64, db_index=True)
+    event_type = models.CharField(max_length=64)
+    processed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-processed_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['transaction_id', 'event_type'],
+                name='monetization_webhook_event_unique',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['transaction_id', 'event_type'], name='monetization_tx_evt_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.transaction_id}:{self.event_type}'

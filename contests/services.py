@@ -94,6 +94,12 @@ def create_monthly_contest_if_missing(now: datetime | None = None) -> ContestSet
         end_at=end_at,
     )
     ReferralContestSettings.objects.get_or_create(contest=row)
+    from contests.contest_notifications import notify_contest_participants_new_month
+
+    notify_contest_participants_new_month(row)
+    from referrals.referral_contest_notifications import notify_referral_contest_new_month_participants
+
+    notify_referral_contest_new_month_participants(row)
     return row
 
 

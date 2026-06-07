@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 
 from accounts.models import Profile
 from pins.models import Pin
-from pinova_backend.throttling import AuthenticatedUserRateThrottle
+from pinova_backend.security.throttling import AuthenticatedUserRateThrottle
 
 from .fedapay_client import create_fedapay_checkout, fedapay_headers, payments_sandbox_allowed
 from .models import TipTransaction
@@ -240,7 +240,14 @@ class TipWithdrawView(APIView):
         )
 
 
-def approve_tip_payment_by_tx(transaction_id: str, webhook_payload: dict) -> str:
+def approve_tip_payment_by_tx(
+    transaction_id: str,
+    webhook_payload: dict,
+    *,
+    skip_amount_check: bool = False,
+) -> str:
+    from monetization.fedapay_webhook import amounts_match, webhook_amount, webhook_status
+
     tip = TipTransaction.objects.filter(fedapay_transaction_id=transaction_id).first()
     if not tip:
         return 'ignored'
@@ -248,9 +255,12 @@ def approve_tip_payment_by_tx(transaction_id: str, webhook_payload: dict) -> str
         return 'approved'
     if tip.status != TipTransaction.STATUS_PENDING:
         return 'ignored'
+    wh_amount = webhook_amount(webhook_payload)
+    if not skip_amount_check and not amounts_match(tip.amount_gross, wh_amount):
+        return 'amount_mismatch'
     tip.fedapay_payload = {**(tip.fedapay_payload or {}), 'webhook': webhook_payload}
     failed_statuses = {'failed', 'declined', 'rejected', 'canceled', 'cancelled'}
-    status_value = str(webhook_payload.get('status') or '').lower()
+    status_value = webhook_status(webhook_payload)
     if status_value in failed_statuses:
         tip.status = TipTransaction.STATUS_FAILED
         tip.save(update_fields=['status', 'fedapay_payload', 'updated_at'])

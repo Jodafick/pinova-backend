@@ -1,0 +1,4 @@
+# Archiver ici les preuves go-live :
+# - loadtest-home-feed.json (export k6)
+# - lighthouse-report.json
+# - captures Sentry / PostHog dashboards

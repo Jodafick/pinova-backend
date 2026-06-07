@@ -1,7 +1,10 @@
+import json
 import logging
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+
+from pinova_backend.security.resilience import log_external_call
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +35,23 @@ def notification_ws_payload(notification) -> dict:
 def send_notification_ws(notification) -> bool:
     """
     Envoi temps réel WebSocket.
-    Retourne True si l'envoi Channels est déclenché, sinon False (fallback).
+    Retourne True si l'envoi Channels est déclenché, sinon False (dégradation push-only).
     """
+    import time
+
     channel_layer = get_channel_layer()
     if not channel_layer:
+        log_external_call(
+            service='notification_ws',
+            operation='group_send',
+            latency_ms=0,
+            attempt=1,
+            outcome='degraded',
+            reason='no_channel_layer',
+            notification_id=getattr(notification, 'id', None),
+        )
         return False
+    start = time.perf_counter()
     try:
         async_to_sync(channel_layer.group_send)(
             notifications_group_name(notification.recipient_id),
@@ -45,7 +60,25 @@ def send_notification_ws(notification) -> bool:
                 'payload': notification_ws_payload(notification),
             },
         )
+        log_external_call(
+            service='notification_ws',
+            operation='group_send',
+            latency_ms=(time.perf_counter() - start) * 1000,
+            attempt=1,
+            outcome='success',
+            notification_id=notification.id,
+        )
         return True
-    except Exception:
-        logger.exception('WebSocket notification send failed for notification_id=%s', notification.id)
+    except Exception as exc:
+        log_external_call(
+            service='notification_ws',
+            operation='group_send',
+            latency_ms=(time.perf_counter() - start) * 1000,
+            attempt=1,
+            outcome='degraded',
+            reason='send_failed',
+            error=str(exc)[:200],
+            notification_id=getattr(notification, 'id', None),
+        )
+        logger.debug('WebSocket notification degraded notification_id=%s', notification.id, exc_info=True)
         return False

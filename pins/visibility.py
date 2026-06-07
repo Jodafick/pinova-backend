@@ -164,3 +164,37 @@ def pin_is_visible_for_request(pin: Pin, request) -> bool:
     if pin.author.profile.private_profile and pin.author.profile.followers.filter(pk=my_profile.pk).exists():
         return sensitive_pin_allowed_for_viewer(pin, request)
     return False
+
+
+def pin_is_public_for_media(pin: Pin) -> bool:
+    """
+    Média servable sans URL signée (équivalent « is_public » côté CDN).
+    Stories exclues — toujours signées (TTL 1 h).
+    """
+    if getattr(pin, 'is_story', False):
+        return False
+    if pin.visibility != Pin.VISIBILITY_PUBLIC:
+        return False
+    if getattr(pin.author.profile, 'private_profile', False):
+        return False
+    if getattr(pin, 'moderation_hidden', False):
+        return False
+    if getattr(pin, 'needs_review', False):
+        return False
+    now = timezone.now()
+    if pin.scheduled_publish_at and pin.scheduled_publish_at > now:
+        return False
+    return True
+
+
+def pin_media_requires_signed_url(pin: Pin) -> bool:
+    return not pin_is_public_for_media(pin)
+
+
+def profile_media_requires_signed_url(profile, *, viewer_user_id: int | None = None) -> bool:
+    """Avatars / covers d'un profil privé — signature requise sauf pour le propriétaire."""
+    if not getattr(profile, 'private_profile', False):
+        return False
+    if viewer_user_id and viewer_user_id == profile.user_id:
+        return False
+    return True

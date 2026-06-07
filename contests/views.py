@@ -3,7 +3,7 @@ from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from pinova_backend.media_cache import build_versioned_media_url
+from pinova_backend.media.cache import build_versioned_media_url
 from .models import ContestResult, ContestSettings, CreatorContestScore, LeaderboardEvent, PinContestScore
 from .services import get_active_contest_settings
 

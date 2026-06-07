@@ -2,11 +2,8 @@
 Applique `_enforce_subscription_state` pour tous les profils dont la date
 de renouvellement / fin de période est atteinte ou dépassée.
 
-À planifier via cron (ex. toutes les 5–15 minutes) pour désactiver Plus/Pro
-sans attendre qu’un utilisateur appelle l’API.
-
-Exemple crontab :
-  */10 * * * * cd /path/pinova-backend && .venv/bin/python manage.py enforce_subscriptions_due
+Production : Celery Beat `accounts-enforce-subscriptions` (*/10 min UTC).
+Secours : python manage.py enforce_subscriptions_due
 """
 
 from django.core.management.base import BaseCommand

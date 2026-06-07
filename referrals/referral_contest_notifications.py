@@ -106,5 +106,34 @@ def notify_referral_new_month(*, recipient: User, new_contest_key: str) -> None:
         title_fr='Nouveau mois parrainage',
         message_fr=f'Le concours parrainage {new_contest_key} a commencé. Bonne chance !',
         action_url='/referrals/contest',
-        metadata={'kind': 'referral_contest_new_month', 'contest_key': new_contest_key},
+        metadata={
+            'kind': 'referral_contest_new_month',
+            'contest_key': new_contest_key,
+            'delivery_mode': 'ws_and_push',
+        },
     )
+
+
+def notify_referral_contest_new_month_participants(contest, *, limit: int = 800) -> None:
+    """Notifie les parrains actifs du mois précédent (best-effort)."""
+    from contests.models import ContestSettings
+
+    from .models import ReferrerReferralScore
+
+    prev = (
+        ContestSettings.objects.filter(end_at__lte=contest.start_at)
+        .exclude(pk=contest.pk)
+        .order_by('-end_at')
+        .first()
+    )
+    if not prev:
+        return
+    referrer_ids = list(
+        ReferrerReferralScore.objects.filter(contest=prev, total_score__gt=0)
+        .values_list('referrer_id', flat=True)
+        .distinct()[: max(1, limit)]
+    )
+    if not referrer_ids:
+        return
+    for user in User.objects.filter(pk__in=referrer_ids, is_active=True).only('id'):
+        notify_referral_new_month(recipient=user, new_contest_key=contest.contest_key)

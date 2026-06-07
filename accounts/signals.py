@@ -1,4 +1,5 @@
 from allauth.socialaccount.signals import social_account_added
+from django.contrib.auth.signals import user_logged_in
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
@@ -44,6 +45,19 @@ def notify_social_signup(sender, request, sociallogin, **kwargs):
 @receiver(post_delete, sender=Profile)
 def purge_profile_avatar_file(sender, instance, **kwargs):
     unlink_field_file(instance.avatar)
+
+
+@receiver(user_logged_in)
+def retention_reset_email_flags_on_login(sender, request, user, **kwargs):
+    """Permet un nouveau cycle d'emails J+7/J+30 après reconnexion."""
+    try:
+        profile = user.profile
+    except Exception:
+        return
+    if profile.retention_j7_email_sent_at or profile.retention_j30_email_sent_at:
+        from .retention_services import reset_retention_email_flags
+
+        reset_retention_email_flags(profile)
 
 
 @receiver(post_save, sender=UserBlock)

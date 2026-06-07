@@ -1,0 +1,158 @@
+{
+  "generatedAt": "2026-06-06T22:17:24.580Z",
+  "light": [
+    {
+      "label": "Texte principal / page",
+      "ratio": 0,
+      "grade": "N/A",
+      "fg": "--pn-text",
+      "bg": "--pn-bg-page"
+    },
+    {
+      "label": "Texte principal / surface",
+      "fg": "#0f0a0d",
+      "bg": "#ffffff",
+      "ratio": 19.63,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Texte atténué / surface",
+      "fg": "#6b5a63",
+      "bg": "#ffffff",
+      "ratio": 6.43,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Ink / surface",
+      "fg": "#120810",
+      "bg": "#ffffff",
+      "ratio": 19.66,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "CTA rose / surface",
+      "fg": "#db2777",
+      "bg": "#ffffff",
+      "ratio": 4.6,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Accent rose / surface (dark)",
+      "fg": "#db2777",
+      "bg": "#ffffff",
+      "ratio": 4.6,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Texte blanc / CTA (simulé)",
+      "fg": "#ffffff",
+      "bg": "#db2777",
+      "ratio": 4.6,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Succès / surface",
+      "ratio": 0,
+      "grade": "N/A",
+      "fg": "--pn-success",
+      "bg": "--pn-bg-surface"
+    },
+    {
+      "label": "Placeholder / surface",
+      "fg": "#756d74",
+      "bg": "#ffffff",
+      "ratio": 5,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    }
+  ],
+  "dark": [
+    {
+      "label": "Texte principal / page",
+      "fg": "#f7f2f5",
+      "bg": "#000000",
+      "ratio": 18.97,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Texte principal / surface",
+      "fg": "#f7f2f5",
+      "bg": "#08080b",
+      "ratio": 18.07,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Texte atténué / surface",
+      "fg": "#a89aa3",
+      "bg": "#08080b",
+      "ratio": 7.44,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Ink / surface",
+      "fg": "#fdf4f8",
+      "bg": "#08080b",
+      "ratio": 18.55,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "CTA rose / surface",
+      "fg": "#db2777",
+      "bg": "#08080b",
+      "ratio": 4.35,
+      "grade": "FAIL",
+      "gradeLarge": "AA"
+    },
+    {
+      "label": "Accent rose / surface (dark)",
+      "fg": "#f472b6",
+      "bg": "#08080b",
+      "ratio": 7.55,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Texte blanc / CTA (simulé)",
+      "fg": "#ffffff",
+      "bg": "#db2777",
+      "ratio": 4.6,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Succès / surface",
+      "fg": "#34d399",
+      "bg": "#08080b",
+      "ratio": 10.4,
+      "grade": "AAA",
+      "gradeLarge": "AAA"
+    },
+    {
+      "label": "Placeholder / surface",
+      "fg": "#9a8d95",
+      "bg": "#08080b",
+      "ratio": 6.3,
+      "grade": "AA",
+      "gradeLarge": "AAA"
+    }
+  ],
+  "summary": {
+    "lightPass": 9,
+    "lightTotal": 9,
+    "darkPass": 8,
+    "darkTotal": 9,
+    "failures": [
+      "CTA rose / surface: 4.35:1"
+    ]
+  }
+}

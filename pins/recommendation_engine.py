@@ -8,6 +8,9 @@ import re
 from django.db.models import Count
 from django.utils import timezone
 
+from monetization.services import active_boosted_pin_ids
+
+from .feed_queryset import annotate_pin_feed, prefetch_pin_feed_relations
 from .models import (
     Like,
     Pin,
@@ -83,7 +86,6 @@ def update_pin_ai_metadata(pin: Pin) -> None:
     tokens = _tokenize(pin.title, pin.description)
     counts = Counter(tokens)
     total = float(sum(counts.values()) or 1)
-    # Garde un petit top-k lisible, utilisé en fallback search / boost.
     top = counts.most_common(12)
     for tag, score_raw in top:
         TagInvisible.objects.update_or_create(
@@ -131,20 +133,14 @@ def update_user_embedding(user) -> None:
     )
 
 
-def _boost_bonus(pin: Pin) -> float:
-    from monetization.models import PinBoost
-    from django.utils import timezone
-
-    if PinBoost.objects.filter(
-        pin=pin,
-        status=PinBoost.STATUS_ACTIVE,
-        ends_at__gt=timezone.now(),
-    ).exists():
-        return 0.35
-    return 0.0
-
-
-def recommendation_score(pin: Pin, user, user_vector: list[float], followed_creator_ids: set[int]) -> float:
+def recommendation_score(
+    pin: Pin,
+    user,
+    user_vector: list[float],
+    followed_creator_ids: set[int],
+    *,
+    boosted_pin_ids: set[int] | None = None,
+) -> float:
     emb_obj = getattr(pin, "embedding_profile", None)
     pin_vec = emb_obj.embedding if emb_obj and emb_obj.embedding else []
     similarity = max(0.0, cosine_similarity(user_vector, pin_vec))
@@ -157,15 +153,7 @@ def recommendation_score(pin: Pin, user, user_vector: list[float], followed_crea
     engagement = min(1.0, (getattr(pin, "_views_total", 0) / 600.0))
     affinity = 1.0 if pin.author_id in followed_creator_ids else 0.0
 
-    boost_bonus = 0.0
-    from monetization.models import PinBoost
-
-    if PinBoost.objects.filter(
-        pin=pin,
-        status=PinBoost.STATUS_ACTIVE,
-        ends_at__gt=now,
-    ).exists():
-        boost_bonus = 0.35
+    boost_bonus = 0.35 if boosted_pin_ids and pin.pk in boosted_pin_ids else 0.0
 
     score = (
         similarity * 0.50
@@ -179,6 +167,7 @@ def recommendation_score(pin: Pin, user, user_vector: list[float], followed_crea
 
 
 def rank_recommendations_for_user(user, base_queryset):
+    boosted_pin_ids = active_boosted_pin_ids()
     user_emb = UserEmbedding.objects.filter(user=user).first()
     user_vector = user_emb.embedding if user_emb and user_emb.embedding else []
     followed_creator_ids = set(user.profile.following.values_list("user_id", flat=True))
@@ -192,10 +181,11 @@ def rank_recommendations_for_user(user, base_queryset):
         .select_related("embedding_profile")
         .order_by("-created_at")[:300]
     )
+    qs = annotate_pin_feed(qs, user)
+    qs = prefetch_pin_feed_relations(qs)
     items = list(qs)
     interest_topic_ids = _profile_interest_topic_ids(user)
     if not user_vector:
-        # Fallback froid: intérêts onboarding + popularité + fraîcheur.
         items.sort(
             key=lambda p: (
                 1 if interest_topic_ids and p.topic_id in interest_topic_ids else 0,
@@ -206,7 +196,9 @@ def rank_recommendations_for_user(user, base_queryset):
         )
         return items
     items.sort(
-        key=lambda p: recommendation_score(p, user, user_vector, followed_creator_ids),
+        key=lambda p: recommendation_score(
+            p, user, user_vector, followed_creator_ids, boosted_pin_ids=boosted_pin_ids
+        ),
         reverse=True,
     )
     return items

@@ -5,6 +5,8 @@ from django.conf import settings
 from django.core.mail.backends.base import BaseEmailBackend
 from django.core.mail.message import EmailMultiAlternatives
 
+from pinova_backend.security.resilience import ExternalRetryableError, external_call
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,6 +14,7 @@ class ResendBackend(BaseEmailBackend):
     """
     Envoie les messages Django via l'API Resend (sdk ``import resend``).
     Compatible avec ``send_mail`` et les e-mails texte/HTML existants.
+    Retry 2× (3 tentatives) sur erreurs transitoires ; fallback SMTP inchangé côté settings.
     """
 
     def send_messages(self, email_messages):
@@ -39,6 +42,22 @@ class ResendBackend(BaseEmailBackend):
         return sent
 
     def _send_one(self, message):
+        params = self._build_params(message)
+
+        def _do():
+            try:
+                resend.Emails.send(params)
+            except Exception as exc:
+                raise ExternalRetryableError(str(exc)) from exc
+
+        external_call(
+            service='resend',
+            operation='emails.send',
+            fn=_do,
+            max_attempts=3,
+        )
+
+    def _build_params(self, message):
         from_email = message.from_email or getattr(settings, 'DEFAULT_FROM_EMAIL', None)
         if not from_email:
             raise ValueError('Adresse expéditeur manquante (from_email / DEFAULT_FROM_EMAIL).')
@@ -77,5 +96,4 @@ class ResendBackend(BaseEmailBackend):
         reply_to = getattr(message, 'reply_to', None) or []
         if reply_to:
             params['reply_to'] = list(reply_to)
-
-        resend.Emails.send(params)
+        return params

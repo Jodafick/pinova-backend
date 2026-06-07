@@ -5,86 +5,111 @@ Surchargés en base via le modèle LegalDocument si renseignés.
 
 PRIVACY_FR = """POLITIQUE DE CONFIDENTIALITÉ — PINOVA (version indicative)
 
-Dernière mise à jour : 2 mai 2026
+Dernière mise à jour : 6 juin 2026
 
 1. Responsable du traitement
 Pinova est un service de découverte et de partage de contenus visuels (« pins »), de tableaux (« boards ») et de stories. Les données sont traitées dans le cadre du fonctionnement de la plateforme et de l’exécution des services souscrits.
 
 2. Données collectées
-• Compte : identifiant, adresse e-mail, mot de passe chiffré, éventuellement nom d’affichage, biographie, langue préférée, date de naissance (pour respecter les tranches d’âge et le contenu sensible).
+• Compte : identifiant, adresse e-mail, mot de passe chiffré, éventuellement nom d’affichage, biographie, langue préférée, date de naissance (obligatoire pour publier ; refus d’inscription si moins de 13 ans).
 • Contenus : images, vidéos, titres, descriptions, tags publics et privés, tableaux, commentaires, mentions, signalements.
 • Activité : likes, enregistrements, abonnements, consultations approximatives (statistiques créateur), notifications.
 • Paiements : les transactions d’abonnement sont traitées par notre prestataire de paiement (ex. FedaPay) ; Pinova ne conserve pas vos coordonnées bancaires complètes.
-• Technique : journaux serveurs limités, tokens de notification push si vous les activez.
+• Technique : journaux serveurs limités, tokens de notification push si vous les activez, consentement cookies (nécessaires / analytics PostHog).
 
 3. Finalités
-Fourniture du service, sécurité, modération, personnalisation du fil (dont sujets d’intérêt), lutte contre le spam et la fraude, obligations légales, support utilisateur et amélioration du produit.
+Fourniture du service, sécurité, modération, personnalisation du fil (dont sujets d’intérêt), lutte contre le spam et la fraude, obligations légales, support utilisateur et amélioration du produit (analytics uniquement avec consentement).
 
 4. Fondements légaux
-Exécution du contrat, intérêt légitime (sécurité, anti-abus), consentement lorsque requis (ex. notifications marketing si un jour activées).
+Exécution du contrat, intérêt légitime (sécurité, anti-abus), consentement lorsque requis (cookies analytics PostHog, notifications marketing si activées).
 
 5. Partage et sous-traitants
 • Prestataires d’infrastructure et d’hébergement.
 • Prestataire de paiement pour les abonnements Plus / Pro.
+• PostHog (UE) pour la mesure d’audience produit, si vous acceptez les cookies analytics.
 • Outils optionnels de traduction automatique des textes courts (topics, commentaires selon les paramètres).
 Aucune revente de vos données personnelles à des annonceurs en tant que telle ; les formules gratuites peuvent afficher des publicités sans profilage comportemental invasif tel que décrit dans nos engagements produit.
 
 6. Durées de conservation
-Tant que le compte est actif, puis durées légales applicables après suppression ou anonymisation lorsque possible.
+Tant que le compte est actif, puis durées légales applicables après suppression ou anonymisation lorsque possible. Suppression de compte : délai de grâce de 30 jours avant purge définitive (e-mail de confirmation).
 
-7. Droits des personnes (UE / autres cadres compatibles)
-Accès, rectification, suppression, limitation, opposition, portabilité lorsque applicable. Contact via les canaux prévus dans l’application ou le support.
+7. Droits des personnes (UE / RGPD)
+Accès, rectification, suppression, limitation, opposition, portabilité. Export de vos données : Paramètres → « Exporter mes données » ou `POST /api/account/export-data/` — archive ZIP JSON (profil, pins, commentaires, notifications, abonnements, tips) envoyée par e-mail (lien valable 24 h). Consentement cookies : bannière web ou `POST /api/account/consent/`. Contact via les canaux prévus dans l’application ou le support.
 
 8. Mineurs
-Certaines fonctionnalités peuvent être restreintes selon l’âge déclaré. Les parents doivent encadrer l’usage des plus jeunes utilisateurs.
+Inscription refusée si l’âge déclaré est inférieur à 13 ans. Comptes de 13 à 17 ans : consultation et interactions possibles, publication de contenu restreinte. Les parents doivent encadrer l’usage des plus jeunes utilisateurs.
 
-9. Transferts hors UE
+9. Cookies
+Cookies strictement nécessaires (session, sécurité) toujours actifs. Cookies analytics (PostHog) désactivés par défaut jusqu’à votre choix dans la bannière cookies.
+
+10. Transferts hors UE
 Si des prestataires sont situés hors Union européenne, des garanties adaptées (clauses contractuelles types ou équivalent) sont recherchées.
 
-10. Réclamations
-Vous pouvez saisir l’autorité de protection des données compétente en cas de différend."""
+11. Réclamations
+Vous pouvez saisir l’autorité de protection des données compétente en cas de différend.
+
+---
+
+REVUE AVOCAT (placeholder — à compléter avant go-live définitif)
+• Cabinet / avocat référent : [À RENSEIGNER]
+• Date de revue : [À RENSEIGNER — cible : juin 2026]
+• Périmètre validé : politique de confidentialité, CGU, bannière cookies, export RGPD, mineurs, suppression 30 j.
+• Réserve(s) éventuelle(s) : [AUCUNE / À PRÉCISER]
+• Signataire : [Nom, titre] — Statut : EN ATTENTE DE REVUE FORMELLE"""
 
 PRIVACY_EN = """PRIVACY POLICY — PINOVA (informational draft)
 
-Last updated: 2 May 2026
+Last updated: 6 June 2026
 
 1. Data controller
 Pinova is a visual discovery platform for pins, boards and stories. Data is processed to run the service and deliver paid plans.
 
 2. Data we collect
-• Account: username, email, hashed password, optional display name, bio, preferred language, birth date where required for age-appropriate defaults and sensitive media handling.
+• Account: username, email, hashed password, optional display name, bio, preferred language, birth date (required to publish; registration rejected under age 13).
 • Content: images, videos, titles, descriptions, public and private tags, boards, comments, mentions, moderation reports.
 • Activity: likes, saves, follows, approximate view statistics for creators, notifications.
 • Payments: subscriptions are handled by our payment provider (e.g. FedaPay); we do not store full card numbers.
-• Technical logs and optional web push subscription data.
+• Technical logs, optional web push subscription data, cookie consent choices (necessary / PostHog analytics).
 
 3. Purposes
-Provide the platform, secure accounts, moderate content, personalize feeds (including topics of interest), fight spam and fraud, comply with law, operate support.
+Provide the platform, secure accounts, moderate content, personalize feeds (including topics of interest), fight spam and fraud, comply with law, operate support, product analytics only with consent.
 
 4. Legal bases
-Contract performance, legitimate interests (security, anti-abuse), consent where applicable.
+Contract performance, legitimate interests (security, anti-abuse), consent where applicable (PostHog analytics cookies).
 
 5. Sharing
-Infrastructure providers, payment processor for Plus/Pro, optional machine-translation tooling for short text. No sale of personal data to advertisers as described on our Premium page commitments.
+Infrastructure providers, payment processor for Plus/Pro, PostHog (EU) for product analytics if you opt in, optional machine-translation tooling for short text. No sale of personal data to advertisers as described on our Premium page commitments.
 
 6. Retention
-While your account exists, then statutory periods or anonymization where feasible.
+While your account exists, then statutory periods or anonymization where feasible. Account deletion: 30-day grace period before permanent purge (confirmation email).
 
 7. Your rights
-Access, correction, deletion, restriction, objection, portability where applicable — contact routes available in-product.
+Access, correction, deletion, restriction, objection, portability. Data export: Settings → “Download my data” or `POST /api/account/export-data/` — JSON ZIP (profile, pins, comments, notifications, subscriptions, tips) emailed with a 24-hour download link. Cookie consent: web banner or `POST /api/account/consent/`. Contact routes available in-product.
 
 8. Minors
-Some features vary by declared age; guardians should supervise younger users.
+Registration rejected if declared age is under 13. Accounts aged 13–17 may browse and interact but cannot publish content. Guardians should supervise younger users.
 
-9. International transfers
+9. Cookies
+Strictly necessary cookies (session, security) always active. Analytics cookies (PostHog) off by default until you choose in the cookie banner.
+
+10. International transfers
 Where providers are outside your region, we seek appropriate safeguards.
 
-10. Complaints
-You may contact your local data-protection authority."""
+11. Complaints
+You may contact your local data-protection authority.
+
+---
+
+LEGAL COUNSEL REVIEW (placeholder — complete before final go-live)
+• Referral counsel / firm : [TBD]
+• Review date : [TBD — target June 2026]
+• Scope validated : privacy policy, terms, cookie banner, GDPR export, minors, 30-day deletion grace.
+• Outstanding notes : [NONE / TBD]
+• Signatory : [Name, title] — Status : PENDING FORMAL REVIEW"""
 
 TERMS_FR = """CONDITIONS GÉNÉRALES D’UTILISATION — PINOVA (version indicative)
 
-Dernière mise à jour : 2 mai 2026
+Dernière mise à jour : 6 juin 2026
 
 1. Objet
 Les présentes conditions régissent l’accès et l’utilisation de Pinova (site et API associées).
@@ -119,7 +144,7 @@ Le droit applicable est celui désigné par Pinova conformément aux règles de 
 
 TERMS_EN = """TERMS OF SERVICE — PINOVA (informational draft)
 
-Last updated: 2 May 2026
+Last updated: 6 June 2026
 
 1. Scope
 These terms govern your use of Pinova (web properties and APIs).

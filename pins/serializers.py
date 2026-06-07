@@ -21,12 +21,13 @@ from .models import (
     ContentReport,
 )
 
-from pinova_backend.media_cache import build_versioned_media_url
+from pinova_backend.media.cache import build_versioned_media_url
 
 from accounts.models import Profile
 from accounts.serializers import ProfileSerializer
 from .comment_access import viewer_sees_comment_content, user_can_comment_on_pin
 from .visibility import profile_is_verified_adult
+from accounts.age_policy import profile_can_publish_content
 from .moderation import (
     validate_pin_text,
     validate_clean_text_fields,
@@ -88,6 +89,26 @@ def _validate_story_video_min_size(uploaded, request=None) -> None:
             f'Veuillez envoyer une version moins compressée ou de meilleure qualité.'
         )
         raise serializers.ValidationError(localize_api_user_message(fr_msg, request))
+
+
+def _secure_pin_image_upload(value, request):
+    if not value:
+        return value
+    user_id = request.user.id if request and request.user.is_authenticated else None
+    from .upload_security import secure_image_upload
+
+    return secure_image_upload(value, kind='pin', request=request, user_id=user_id)
+
+
+def _secure_story_video_upload(value, request):
+    if not value:
+        return value
+    _validate_story_video_max_size(value, request=request)
+    _validate_story_video_min_size(value, request=request)
+    user_id = request.user.id if request and request.user.is_authenticated else None
+    from .upload_security import secure_video_upload
+
+    return secure_video_upload(value, request=request, user_id=user_id)
 
 
 def extract_hashtags(text: str) -> list[str]:
@@ -386,9 +407,9 @@ class PinSerializer(serializers.ModelSerializer):
     description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     story_video_url = serializers.SerializerMethodField(read_only=True)
     story_display_image_url = serializers.SerializerMethodField(read_only=True)
-    likes_count = serializers.IntegerField(read_only=True)
-    comments_count = serializers.IntegerField(read_only=True)
-    saves_count = serializers.IntegerField(read_only=True)
+    likes_count = serializers.SerializerMethodField()
+    comments_count = serializers.SerializerMethodField()
+    saves_count = serializers.SerializerMethodField()
     shares_count = serializers.IntegerField(read_only=True)
     can_comment = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
@@ -487,28 +508,32 @@ class PinSerializer(serializers.ModelSerializer):
             return build_versioned_media_url(request, obj.image)
         return None
 
+    def get_likes_count(self, obj):
+        annotated = getattr(obj, '_feed_likes_count', None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.likes_count
+
+    def get_comments_count(self, obj):
+        annotated = getattr(obj, '_feed_comments_count', None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.comments_count
+
+    def get_saves_count(self, obj):
+        annotated = getattr(obj, '_feed_saves_count', None)
+        if annotated is not None:
+            return int(annotated)
+        return obj.saves_count
+
+    def validate_image(self, value):
+        return _secure_pin_image_upload(value, self.context.get('request'))
+
     def validate_story_video(self, value):
-        if not value:
-            return value
-        request = self.context.get('request')
-        ct = (getattr(value, 'content_type', '') or '').split(';')[0].strip().lower()
-        name = (getattr(value, 'name', '') or '').strip().lower()
-        allowed = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
-        allowed_ext = ('.mp4', '.webm', '.mov')
-        if ct not in allowed and not name.endswith(allowed_ext):
-            raise serializers.ValidationError(
-                localize_api_user_message(_STORY_VIDEO_BAD_FORMAT_FR, request)
-            )
-        _validate_story_video_max_size(value, request=request)
-        _validate_story_video_min_size(value, request=request)
-        return value
+        return _secure_story_video_upload(value, self.context.get('request'))
 
     def get_boards(self, obj):
-        rows = (
-            PinBoard.objects.filter(pin=obj)
-            .select_related('board')
-            .order_by('position', 'id')
-        )
+        rows = obj.pin_board_memberships.all()
         out = []
         for row in rows:
             data = BoardSerializer(row.board, context=self.context).data
@@ -574,6 +599,13 @@ class PinSerializer(serializers.ModelSerializer):
                     'story_video': 'Les pins au format story ne peuvent pas inclure de vidéo (image uniquement).',
                 })
             profile = req.user.profile if req and req.user.is_authenticated else None
+            if method == 'POST' and profile and not profile_can_publish_content(profile):
+                raise serializers.ValidationError({
+                    'non_field_errors': [
+                        'La publication de contenu est réservée aux utilisateurs de 18 ans et plus. '
+                        'Les comptes de 13 à 17 ans peuvent consulter et interagir sans publier.',
+                    ],
+                })
             if profile and (image or vid):
                 if not getattr(profile, 'birth_date', None):
                     raise serializers.ValidationError({
@@ -644,17 +676,26 @@ class PinSerializer(serializers.ModelSerializer):
         return attrs
 
     def get_is_liked(self, obj):
+        annotated = getattr(obj, '_is_liked', None)
+        if annotated is not None:
+            return bool(annotated)
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return Like.objects.filter(user=request.user, pin=obj).exists()
         return False
 
     def get_can_comment(self, obj):
+        annotated = getattr(obj, '_can_comment', None)
+        if annotated is not None:
+            return bool(annotated)
         request = self.context.get('request')
         user = request.user if request and request.user.is_authenticated else None
         return user_can_comment_on_pin(obj, user)
 
     def get_is_saved(self, obj):
+        annotated = getattr(obj, '_is_saved', None)
+        if annotated is not None:
+            return bool(annotated)
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return Save.objects.filter(user=request.user, pin=obj).exists()
@@ -670,12 +711,13 @@ class PinSerializer(serializers.ModelSerializer):
         return ContentReport.objects.filter(reporter=request.user, pin=obj).exists()
 
     def get_is_boosted(self, obj):
+        annotated = getattr(obj, '_is_boosted', None)
+        if annotated is not None:
+            return bool(annotated)
         from monetization.models import PinBoost
         from django.utils import timezone
 
         now = timezone.now()
-        if hasattr(obj, '_is_boosted_cached'):
-            return bool(obj._is_boosted_cached)
         return PinBoost.objects.filter(
             pin=obj,
             status=PinBoost.STATUS_ACTIVE,
@@ -861,21 +903,11 @@ class StandaloneStoryCreateSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     media_sensitive_blur = serializers.BooleanField(required=False, default=False)
 
+    def validate_image(self, value):
+        return _secure_pin_image_upload(value, self.context.get('request'))
+
     def validate_story_video(self, value):
-        if not value:
-            return value
-        request = self.context.get('request')
-        ct = (getattr(value, 'content_type', '') or '').split(';')[0].strip().lower()
-        name = (getattr(value, 'name', '') or '').strip().lower()
-        allowed = frozenset({'video/mp4', 'video/webm', 'video/quicktime'})
-        allowed_ext = ('.mp4', '.webm', '.mov')
-        if ct not in allowed and not name.endswith(allowed_ext):
-            raise serializers.ValidationError(
-                localize_api_user_message(_STORY_VIDEO_BAD_FORMAT_FR, request)
-            )
-        _validate_story_video_max_size(value, request=request)
-        _validate_story_video_min_size(value, request=request)
-        return value
+        return _secure_story_video_upload(value, self.context.get('request'))
 
     def validate(self, attrs):
         image = attrs.get('image')

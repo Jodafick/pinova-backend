@@ -1,8 +1,8 @@
 """
 Envoie le digest créateur Pro (vues semaine + push + e-mail).
 
-Planifier (exemple) : lundi 9h UTC — crontab
-  0 9 * * 1 django-admin send_weekly_pro_digest
+Production : Celery Beat `pins-send-weekly-pro-digest` (lun 9h UTC).
+Secours : python manage.py send_weekly_pro_digest
 """
 from django.core.management.base import BaseCommand
 from django.core.mail import send_mail

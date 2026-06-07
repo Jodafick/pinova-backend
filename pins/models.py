@@ -128,6 +128,11 @@ class Pin(models.Model):
                 name='unique_pin_upload_idempotency_per_author',
             ),
         ]
+        indexes = [
+            models.Index(fields=['-created_at'], name='pins_pin_created_desc_idx'),
+            models.Index(fields=['author', '-created_at'], name='pins_pin_author_created_idx'),
+            models.Index(fields=['topic', '-created_at'], name='pins_pin_topic_created_idx'),
+        ]
 
     def refresh_story_expiry(self):
         from datetime import timedelta
