@@ -111,4 +111,4 @@ class ExpoPushRegisterSerializer(serializers.Serializer):
 class PushDeviceStatusSerializer(serializers.Serializer):
     """État serveur de l’endpoint web push pour cet appareil / navigateur."""
 
-    endpoint = serializers.CharField(required=False, allow_blank=True, max_length=500, trim_whitespace=True)
+    endpoint = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
