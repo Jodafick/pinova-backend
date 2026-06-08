@@ -11,6 +11,7 @@ from .serializers import (
     ExpoPushRegisterSerializer,
     NotificationSerializer,
     PushDeviceStatusSerializer,
+    PushSubscribeSerializer,
     PushSubscriptionSerializer,
 )
 from .push import get_vapid_public_key, is_push_configured
@@ -101,7 +102,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def push_subscribe(self, request):
-        serializer = PushSubscriptionSerializer(data=request.data)
+        serializer = PushSubscribeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
         sub, _ = PushSubscription.objects.update_or_create(

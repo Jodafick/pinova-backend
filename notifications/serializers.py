@@ -94,6 +94,14 @@ class PushSubscriptionSerializer(serializers.ModelSerializer):
         fields = ['endpoint', 'p256dh', 'auth']
 
 
+class PushSubscribeSerializer(serializers.Serializer):
+    """Inscription push — sans validation d'unicité (update_or_create côté vue)."""
+
+    endpoint = serializers.CharField(max_length=500, trim_whitespace=True)
+    p256dh = serializers.CharField(max_length=255, trim_whitespace=True)
+    auth = serializers.CharField(max_length=255, trim_whitespace=True)
+
+
 class ExpoPushRegisterSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=400, trim_whitespace=True)
     platform = serializers.CharField(max_length=24, required=False, allow_blank=True, default='')
@@ -111,4 +119,4 @@ class ExpoPushRegisterSerializer(serializers.Serializer):
 class PushDeviceStatusSerializer(serializers.Serializer):
     """État serveur de l’endpoint web push pour cet appareil / navigateur."""
 
-    endpoint = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
+    endpoint = serializers.CharField(required=False, allow_blank=True, max_length=500, trim_whitespace=True)
