@@ -149,6 +149,8 @@ class Profile(models.Model):
 
     # --- Onboarding ---
     onboarding_completed_at = models.DateTimeField(null=True, blank=True)
+    # Tutoriel 1er pin, jalons créateur, célébrations vues (sync multi-appareils).
+    activation_funnel_json = models.JSONField(default=dict, blank=True)
 
     @property
     def can_use_private_tags(self):

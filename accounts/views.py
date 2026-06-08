@@ -110,6 +110,8 @@ _JSON_LIST_PATCH_KEYS = frozenset({
     'interests', 'followed_onboarding_creators', 'hobbies', 'skills', 'social_links',
 })
 
+_JSON_OBJECT_PATCH_KEYS = frozenset({'activation_funnel_json'})
+
 
 def _patch_payload_from_request(request):
     """
@@ -130,6 +132,19 @@ def _patch_payload_from_request(request):
                 return None, json_key
         elif raw in (None, ''):
             payload[json_key] = []
+    for json_key in _JSON_OBJECT_PATCH_KEYS:
+        if json_key not in payload:
+            continue
+        raw = payload[json_key]
+        if isinstance(raw, dict):
+            payload[json_key] = raw
+        elif isinstance(raw, str) and raw.strip():
+            try:
+                payload[json_key] = json.loads(raw)
+            except json.JSONDecodeError:
+                return None, json_key
+        elif raw in (None, ''):
+            payload[json_key] = {}
     return payload, None
 
 
@@ -1349,6 +1364,20 @@ class UserMeView(APIView):
         ):
             if bool_key in mutable_data:
                 mutable_data[bool_key] = str(mutable_data.get(bool_key)).lower() in ('true', '1', 'yes')
+
+        if 'activation_funnel_json' in mutable_data:
+            from .activation_funnel import merge_activation_funnel_json
+
+            patch_funnel = mutable_data.get('activation_funnel_json') or {}
+            if not isinstance(patch_funnel, dict):
+                return Response(
+                    {'activation_funnel_json': ['Invalid JSON object']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            mutable_data['activation_funnel_json'] = merge_activation_funnel_json(
+                profile.activation_funnel_json or {},
+                patch_funnel,
+            )
 
         preferred_currency = mutable_data.get('preferred_currency')
         if preferred_currency is not None:

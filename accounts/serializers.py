@@ -103,6 +103,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'phone',
             'interests',
             'followed_onboarding_creators',
+            'activation_funnel_json',
             'theme_mode',
             'accent_color',
             'date_format',
@@ -158,6 +159,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         'email',
         'phone',
         'followed_onboarding_creators',
+        'activation_funnel_json',
         'onboarding_completed_at',
         'subscription_renewal_at',
         'subscription_cancel_at_period_end',
@@ -215,6 +217,11 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     def validate_followed_onboarding_creators(self, value):
         return _normalize_slug_list(value, allowed=None, max_items=50)
+
+    def validate_activation_funnel_json(self, value):
+        from .activation_funnel import normalize_activation_funnel_json
+
+        return normalize_activation_funnel_json(value)
 
     def validate_hobbies(self, value):
         return _normalize_slug_list(value, allowed=None, max_items=24)
