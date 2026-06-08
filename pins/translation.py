@@ -2,6 +2,7 @@ import asyncio
 
 from googletrans import Translator
 from langdetect import detect, LangDetectException
+from asgiref.sync import sync_to_async
 
 from .translation_cache import (
     mt_cache_lookup,
@@ -10,6 +11,9 @@ from .translation_cache import (
     normalize_source_iso,
     normalize_translation_dest,
 )
+
+_mt_cache_lookup_async = sync_to_async(mt_cache_lookup, thread_sensitive=True)
+_mt_cache_save_async = sync_to_async(mt_cache_save, thread_sensitive=True)
 
 MAX_RETRIES = 3
 SOURCE_LANG = 'auto'
@@ -65,7 +69,7 @@ async def translate_text_to(
     can_cache = use_server_cache and eff_src_iso != 'auto'
 
     if can_cache:
-        hit = mt_cache_lookup(eff_src_iso, target_lang, norm)
+        hit = await _mt_cache_lookup_async(eff_src_iso, target_lang, norm)
         if hit is not None:
             return hit
 
@@ -85,7 +89,7 @@ async def translate_text_to(
         raise RuntimeError(f"Echec de traduction: {norm!r}") from last_error
 
     if can_cache and translated_out.strip():
-        mt_cache_save(eff_src_iso, target_lang, norm, translated_out)
+        await _mt_cache_save_async(eff_src_iso, target_lang, norm, translated_out)
 
     return translated_out
 

@@ -10,6 +10,7 @@ import asyncio
 
 from googletrans import Translator
 from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
 
 from .models import TopicTranslation
 from .translation import translate_text_to
@@ -78,17 +79,29 @@ def ensure_topic_translation(
     return display, translations
 
 
-async def _warm_topic_translations_async(canonical_name: str) -> None:
-    """À l’appui d’un nouveau Topic : préremplit toutes les langues supportées."""
-    if not canonical_name or not str(canonical_name).strip():
-        return
-
+@database_sync_to_async
+def _load_topic_translation_row(canonical_name: str) -> tuple[TopicTranslation, dict]:
     record, _ = TopicTranslation.objects.get_or_create(
         topic=canonical_name,
         defaults={'translations': {'fr': canonical_name}},
     )
     translations = dict(record.translations or {})
     translations.setdefault('fr', canonical_name)
+    return record, translations
+
+
+@database_sync_to_async
+def _save_topic_translation_row(record: TopicTranslation, translations: dict) -> None:
+    record.translations = translations
+    record.save(update_fields=['translations', 'updated_at'])
+
+
+async def _warm_topic_translations_async(canonical_name: str) -> None:
+    """À l’appui d’un nouveau Topic : préremplit toutes les langues supportées."""
+    if not canonical_name or not str(canonical_name).strip():
+        return
+
+    record, translations = await _load_topic_translation_row(canonical_name)
 
     t_inst = Translator()
 
@@ -106,8 +119,7 @@ async def _warm_topic_translations_async(canonical_name: str) -> None:
 
     await asyncio.gather(*[ensure_lang(lc) for lc in sorted(SUPPORTED_TOPIC_LANGS)])
 
-    record.translations = translations
-    record.save(update_fields=['translations', 'updated_at'])
+    await _save_topic_translation_row(record, translations)
 
 
 def warm_topic_translations_for_new_topic(canonical_name: str) -> None:
