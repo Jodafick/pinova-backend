@@ -344,3 +344,50 @@ def activate_pin_boost(boost: PinBoost, *, skip_owner_notify: bool = False) -> N
     ).exclude(pk=boost.pk).update(status=PinBoost.STATUS_EXPIRED)
     if not skip_owner_notify:
         notify_pin_boost_started(boost)
+
+
+def network_ad_config_payload(request) -> dict[str, Any]:
+    """Config pubs réseau (AdSense / AdMob) selon plan et préférences utilisateur."""
+    from django.conf import settings
+
+    user = request.user if getattr(request, 'user', None) and request.user.is_authenticated else None
+    profile = _profile_for_user(user)
+    policy_on = effective_ad_policy(profile)['network']
+
+    web_configured = bool(
+        settings.ADSENSE_CLIENT_ID
+        and (settings.ADSENSE_SLOT_FEED or settings.ADSENSE_SLOT_DETAIL)
+    )
+    mobile_configured = bool(
+        (settings.ADMOB_APP_ID_ANDROID and settings.ADMOB_UNIT_FEED_ANDROID)
+        or (settings.ADMOB_APP_ID_IOS and settings.ADMOB_UNIT_FEED_IOS)
+    )
+
+    web: dict[str, str] | None = None
+    if web_configured:
+        web = {
+            'client_id': settings.ADSENSE_CLIENT_ID,
+            'feed_slot': settings.ADSENSE_SLOT_FEED or settings.ADSENSE_SLOT_DETAIL,
+            'detail_slot': settings.ADSENSE_SLOT_DETAIL or settings.ADSENSE_SLOT_FEED,
+        }
+
+    mobile: dict[str, str] | None = None
+    if mobile_configured:
+        mobile = {
+            'app_id_android': settings.ADMOB_APP_ID_ANDROID,
+            'app_id_ios': settings.ADMOB_APP_ID_IOS,
+            'feed_unit_android': settings.ADMOB_UNIT_FEED_ANDROID,
+            'feed_unit_ios': settings.ADMOB_UNIT_FEED_IOS,
+            'detail_unit_android': settings.ADMOB_UNIT_DETAIL_ANDROID or settings.ADMOB_UNIT_FEED_ANDROID,
+            'detail_unit_ios': settings.ADMOB_UNIT_DETAIL_IOS or settings.ADMOB_UNIT_FEED_IOS,
+        }
+
+    configured = web_configured or mobile_configured
+    return {
+        'enabled': policy_on,
+        'configured': configured,
+        'show': policy_on and configured,
+        'feed_every_n': settings.NETWORK_AD_FEED_EVERY_N,
+        'web': web,
+        'mobile': mobile,
+    }

@@ -299,6 +299,34 @@ FEDAPAY_CURRENCY_ISO = os.environ.get('FEDAPAY_CURRENCY_ISO', 'XOF')
 FEDAPAY_CALLBACK_URL = os.environ.get('FEDAPAY_CALLBACK_URL', FRONTEND_URL + '/premium')
 FEDAPAY_WEBHOOK_SECRET = (os.environ.get('FEDAPAY_WEBHOOK_SECRET') or '').strip()
 
+# Pubs réseau (AdSense web / AdMob mobile) — IDs de test Google en DEBUG si non configurés.
+_ADMOB_TEST_APP_ANDROID = 'ca-app-pub-3940256099942544~3347511713'
+_ADMOB_TEST_APP_IOS = 'ca-app-pub-3940256099942544~1458002511'
+_ADMOB_TEST_BANNER = 'ca-app-pub-3940256099942544/6300978111'
+_ADSENSE_TEST_CLIENT = 'ca-pub-3940256099942544'
+_ADSENSE_TEST_SLOT = '6300978111'
+
+
+def _network_ad_env(key: str, test_fallback: str = '') -> str:
+    val = (os.environ.get(key) or '').strip()
+    if val:
+        return val
+    if DEBUG and test_fallback:
+        return test_fallback
+    return ''
+
+
+ADSENSE_CLIENT_ID = _network_ad_env('ADSENSE_CLIENT_ID', _ADSENSE_TEST_CLIENT)
+ADSENSE_SLOT_FEED = _network_ad_env('ADSENSE_SLOT_FEED', _ADSENSE_TEST_SLOT)
+ADSENSE_SLOT_DETAIL = _network_ad_env('ADSENSE_SLOT_DETAIL', _ADSENSE_TEST_SLOT)
+ADMOB_APP_ID_ANDROID = _network_ad_env('ADMOB_APP_ID_ANDROID', _ADMOB_TEST_APP_ANDROID)
+ADMOB_APP_ID_IOS = _network_ad_env('ADMOB_APP_ID_IOS', _ADMOB_TEST_APP_IOS)
+ADMOB_UNIT_FEED_ANDROID = _network_ad_env('ADMOB_UNIT_FEED_ANDROID', _ADMOB_TEST_BANNER)
+ADMOB_UNIT_FEED_IOS = _network_ad_env('ADMOB_UNIT_FEED_IOS', _ADMOB_TEST_BANNER)
+ADMOB_UNIT_DETAIL_ANDROID = _network_ad_env('ADMOB_UNIT_DETAIL_ANDROID', _ADMOB_TEST_BANNER)
+ADMOB_UNIT_DETAIL_IOS = _network_ad_env('ADMOB_UNIT_DETAIL_IOS', _ADMOB_TEST_BANNER)
+NETWORK_AD_FEED_EVERY_N = max(4, int(os.environ.get('NETWORK_AD_FEED_EVERY_N', '10')))
+
 # E-mail : Resend (API) si RESEND_API_KEY est défini, sinon SMTP (sauf EMAIL_BACKEND explicite).
 # En DEBUG sans Resend ni identifiants SMTP : console — évite les 500 sur auth/password/reset/ en local.
 RESEND_API_KEY = (os.environ.get('RESEND_API_KEY') or '').strip()

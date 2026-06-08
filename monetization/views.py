@@ -20,7 +20,7 @@ from .serializers import (
     PinPromoCampaignWriteSerializer,
 )
 from .boost_estimate import estimate_boost_reach
-from .services import activate_pin_boost, activate_pin_promo_campaign, pick_contextual_ad
+from .services import activate_pin_boost, activate_pin_promo_campaign, network_ad_config_payload, pick_contextual_ad
 from .social_proof import enrich_boost_packages
 from .targeting import targeting_options_payload
 
@@ -194,6 +194,15 @@ class ContextualAdView(APIView):
         if not row:
             return Response({'ad': None})
         return Response({'ad': row})
+
+
+class NetworkAdConfigView(APIView):
+    """Config pubs réseau (AdSense / AdMob) — respecte plan et `ad_ads_enabled`."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response(network_ad_config_payload(request))
 
 
 class CampaignTargetingOptionsView(APIView):
