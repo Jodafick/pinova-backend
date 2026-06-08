@@ -30,7 +30,7 @@ class NetworkAdConfigViewTests(TestCase):
         self.assertTrue(body['show'])
         self.assertEqual(body['web']['client_id'], 'ca-pub-test')
 
-    def test_plus_user_can_disable_network_ads(self):
+    def test_plus_user_still_sees_network_ads_when_pref_disabled(self):
         profile = self.user.profile
         profile.ad_ads_enabled = False
         profile.save(update_fields=['ad_ads_enabled'])
@@ -38,8 +38,8 @@ class NetworkAdConfigViewTests(TestCase):
         res = self.client.get('/api/monetization/network-ad-config/')
         self.assertEqual(res.status_code, 200)
         body = res.json()
-        self.assertFalse(body['enabled'])
-        self.assertFalse(body['show'])
+        self.assertTrue(body['enabled'])
+        self.assertTrue(body['show'])
         self.assertTrue(body['configured'])
 
     @override_settings(

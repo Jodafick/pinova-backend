@@ -1325,21 +1325,9 @@ class UserMeView(APIView):
                 str(mutable_data.get('sensitive_media_blur_by_default')).lower() == 'true'
             )
 
-        if profile.subscription_plan == Profile.PLAN_FREE:
-            mutable_data.pop('ad_ads_enabled', None)
-            mutable_data.pop('partner_ads_enabled', None)
-        elif profile.subscription_plan == Profile.PLAN_PLUS:
-            mutable_data.pop('partner_ads_enabled', None)
-            if 'ad_ads_enabled' in mutable_data:
-                mutable_data['ad_ads_enabled'] = str(mutable_data.get('ad_ads_enabled')).lower() in (
-                    'true',
-                    '1',
-                    'yes',
-                )
-        else:
-            for ad_key in ('ad_ads_enabled', 'partner_ads_enabled'):
-                if ad_key in mutable_data:
-                    mutable_data[ad_key] = str(mutable_data.get(ad_key)).lower() in ('true', '1', 'yes')
+        # Pubs toujours actives : les préférences ne sont plus modifiables côté client.
+        mutable_data.pop('ad_ads_enabled', None)
+        mutable_data.pop('partner_ads_enabled', None)
 
         if 'hide_sensitive_pins' in mutable_data:
             from pins.visibility import profile_is_verified_adult as _profile_verified_adult

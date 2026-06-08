@@ -16,21 +16,9 @@ FEED_PARTNER_AD_EVERY_N = 8
 
 
 def effective_ad_policy(profile: Profile | None) -> dict[str, bool]:
-    """Règles alignées sur les plans Free / Plus / Pro."""
-    if profile is None:
-        return {'network': True, 'partner': True}
-    plan = profile.subscription_plan
-    if plan == Profile.PLAN_FREE:
-        return {'network': True, 'partner': True}
-    if plan == Profile.PLAN_PLUS:
-        return {
-            'network': bool(getattr(profile, 'ad_ads_enabled', True)),
-            'partner': True,
-        }
-    return {
-        'network': bool(getattr(profile, 'ad_ads_enabled', True)),
-        'partner': bool(getattr(profile, 'partner_ads_enabled', True)),
-    }
+    """Pubs réseau et partenaire actives pour tous les utilisateurs (invités inclus)."""
+    del profile
+    return {'network': True, 'partner': True}
 
 
 def _profile_for_user(user):

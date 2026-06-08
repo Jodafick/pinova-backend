@@ -1083,18 +1083,10 @@ def seed_pin_promo_campaigns(
 
 
 def seed_profile_ad_preferences(profiles_by_username: dict[str, Profile]) -> None:
-    """Préférences publicitaires démo (cohérentes avec les plans)."""
-    for uname, profile in profiles_by_username.items():
-        plan = profile.subscription_plan
-        if plan == Profile.PLAN_FREE:
-            profile.ad_ads_enabled = True
-            profile.partner_ads_enabled = True
-        elif plan == Profile.PLAN_PLUS:
-            profile.ad_ads_enabled = uname in ('leo', 'sofia')
-            profile.partner_ads_enabled = True
-        else:
-            profile.ad_ads_enabled = uname in ('max',)
-            profile.partner_ads_enabled = uname not in ('clara', 'david1anato')
+    """Préférences publicitaires démo : pubs actives pour tous les profils."""
+    for profile in profiles_by_username.values():
+        profile.ad_ads_enabled = True
+        profile.partner_ads_enabled = True
         profile.save(update_fields=['ad_ads_enabled', 'partner_ads_enabled'])
     logger.info('Préférences publicitaires profils seed à jour.')
 
