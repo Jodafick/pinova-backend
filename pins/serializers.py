@@ -407,6 +407,7 @@ class PinSerializer(serializers.ModelSerializer):
     description = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     story_video_url = serializers.SerializerMethodField(read_only=True)
     story_display_image_url = serializers.SerializerMethodField(read_only=True)
+    feed_image_url = serializers.SerializerMethodField(read_only=True)
     likes_count = serializers.SerializerMethodField()
     comments_count = serializers.SerializerMethodField()
     saves_count = serializers.SerializerMethodField()
@@ -445,6 +446,7 @@ class PinSerializer(serializers.ModelSerializer):
             'link',
             'image',
             'story_display_image_url',
+            'feed_image_url',
             'story_video',
             'story_video_url',
             'author',
@@ -489,6 +491,31 @@ class PinSerializer(serializers.ModelSerializer):
         if request:
             return build_versioned_media_url(request, obj.story_video)
         return obj.story_video.url
+
+    def get_feed_image_url(self, obj):
+        """Thumbnail feed : variante carrée si dispo, sinon image principale."""
+        request = self.context.get('request')
+        if not request:
+            return None
+        try:
+            feed_url = None
+            square_url = None
+            for pv in obj.variant_assets.all():
+                if not pv.image or not getattr(pv.image, 'name', ''):
+                    continue
+                if pv.kind == PinVariant.KIND_FEED and feed_url is None:
+                    feed_url = build_versioned_media_url(request, pv.image)
+                elif pv.kind == PinVariant.KIND_SQUARE and square_url is None:
+                    square_url = build_versioned_media_url(request, pv.image)
+            if feed_url:
+                return feed_url
+            if square_url:
+                return square_url
+        except Exception:
+            pass
+        if obj.image and getattr(obj.image, 'name', ''):
+            return build_versioned_media_url(request, obj.image)
+        return None
 
     def get_story_display_image_url(self, obj):
         """URL absolue du visuel story : variante 9:16 si présente, sinon image principale."""

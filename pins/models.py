@@ -200,10 +200,12 @@ class PinVariant(models.Model):
     KIND_STORY = 'story'
     KIND_SQUARE = 'square'
     KIND_LANDSCAPE = 'landscape'
+    KIND_FEED = 'feed'
     KIND_CHOICES = [
         (KIND_STORY, 'Story'),
         (KIND_SQUARE, 'Square'),
         (KIND_LANDSCAPE, 'Landscape'),
+        (KIND_FEED, 'Feed thumbnail'),
     ]
 
     pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='variant_assets')
