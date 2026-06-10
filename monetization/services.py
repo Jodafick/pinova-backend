@@ -16,8 +16,13 @@ FEED_PARTNER_AD_EVERY_N = 8
 
 
 def effective_ad_policy(profile: Profile | None) -> dict[str, bool]:
-    """Pubs réseau et partenaire actives pour tous les utilisateurs (invités inclus)."""
-    del profile
+    """Pubs réseau (AdSense/AdMob) et partenaire selon l’abonnement."""
+    if profile is None or profile.subscription_plan == Profile.PLAN_FREE:
+        return {'network': True, 'partner': True}
+    if profile.subscription_plan == Profile.PLAN_PLUS:
+        return {'network': False, 'partner': True}
+    if profile.subscription_plan == Profile.PLAN_PRO:
+        return {'network': False, 'partner': False}
     return {'network': True, 'partner': True}
 
 

@@ -19,6 +19,7 @@ from .serializers import (
     PinPromoCampaignSerializer,
     PinPromoCampaignWriteSerializer,
 )
+from .boost_catalog import PACKAGE_KIND_BOOST, PACKAGE_KIND_CAMPAIGN, active_packages_for_kind, package_allows_kind
 from .boost_estimate import estimate_boost_reach
 from .services import activate_pin_boost, activate_pin_promo_campaign, network_ad_config_payload, pick_contextual_ad
 from .social_proof import enrich_boost_packages
@@ -92,7 +93,8 @@ class BoostPackageListView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        rows = list(BoostPackage.objects.filter(is_active=True))
+        kind = (request.query_params.get('kind') or request.query_params.get('package_kind') or '').strip()
+        rows = list(active_packages_for_kind(kind or None))
         return Response({'results': enrich_boost_packages(rows, request.user)})
 
 
@@ -126,7 +128,7 @@ class PinBoostCheckoutView(APIView):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         package_slug = (request.data.get('package') or request.data.get('package_slug') or '').strip()
         package = BoostPackage.objects.filter(slug=package_slug, is_active=True).first()
-        if not package:
+        if not package or not package_allows_kind(package, PACKAGE_KIND_BOOST):
             return Response({'error': 'Invalid package'}, status=status.HTTP_400_BAD_REQUEST)
 
         boost = PinBoost.objects.create(

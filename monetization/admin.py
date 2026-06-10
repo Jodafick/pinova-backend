@@ -1,15 +1,27 @@
 from django.contrib import admin
+from django import forms
+
+from accounts.currency_utils import currency_choices_with_symbols
 
 from .models import (
     BoostPackage,
     CreatorWallet,
     PartnerCampaign,
     PinBoost,
+    PinPromoCampaign,
     TipPlatformConfig,
     TipTransaction,
     TipWithdrawal,
 )
 from .tip_services import mark_withdrawal_paid, reject_withdrawal
+
+
+class BoostPackageAdminForm(forms.ModelForm):
+    currency_iso = forms.ChoiceField(choices=currency_choices_with_symbols())
+
+    class Meta:
+        model = BoostPackage
+        fields = '__all__'
 
 
 @admin.register(PartnerCampaign)
@@ -21,7 +33,30 @@ class PartnerCampaignAdmin(admin.ModelAdmin):
 
 @admin.register(BoostPackage)
 class BoostPackageAdmin(admin.ModelAdmin):
-    list_display = ('slug', 'label', 'duration_hours', 'amount', 'currency_iso', 'is_active')
+    """Tarifs boost pin et campagnes pub — même principe que SubscriptionPricing (backoffice)."""
+    form = BoostPackageAdminForm
+    list_display = ('slug', 'label', 'package_kind', 'duration_hours', 'amount', 'currency_iso', 'is_active', 'updated_at')
+    list_filter = ('package_kind', 'is_active', 'currency_iso')
+    search_fields = ('slug', 'label')
+    ordering = ('package_kind', 'duration_hours')
+    fieldsets = (
+        (None, {
+            'fields': ('slug', 'label', 'package_kind', 'duration_hours', 'amount', 'currency_iso', 'is_active'),
+        }),
+        ('Audit', {
+            'fields': ('updated_at',),
+            'classes': ('collapse',),
+        }),
+    )
+    readonly_fields = ('updated_at',)
+
+
+@admin.register(PinPromoCampaign)
+class PinPromoCampaignAdmin(admin.ModelAdmin):
+    list_display = ('id', 'owner', 'headline', 'package', 'status', 'impressions', 'clicks', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('owner__username', 'headline', 'fedapay_transaction_id')
+    raw_id_fields = ('owner', 'pin', 'package')
 
 
 @admin.register(PinBoost)

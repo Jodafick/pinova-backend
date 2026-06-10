@@ -2,6 +2,7 @@ import json
 
 from rest_framework import serializers
 
+from .boost_catalog import PACKAGE_KIND_CAMPAIGN, active_packages_for_kind
 from .models import BoostPackage, PartnerCampaign, PinBoost, PinPromoCampaign
 from .targeting import normalize_targeting
 
@@ -61,7 +62,7 @@ class PartnerCampaignWriteSerializer(serializers.ModelSerializer):
 class BoostPackageSerializer(serializers.ModelSerializer):
     class Meta:
         model = BoostPackage
-        fields = ['slug', 'label', 'duration_hours', 'amount', 'currency_iso']
+        fields = ['slug', 'label', 'package_kind', 'duration_hours', 'amount', 'currency_iso']
 
 
 class PinBoostHistorySerializer(serializers.ModelSerializer):
@@ -170,7 +171,7 @@ class TargetingField(serializers.JSONField):
 class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
     package = serializers.SlugRelatedField(
         slug_field='slug',
-        queryset=BoostPackage.objects.filter(is_active=True),
+        queryset=active_packages_for_kind(PACKAGE_KIND_CAMPAIGN),
     )
     targeting = TargetingField(required=False)
 

@@ -54,20 +54,43 @@ class PartnerCampaign(models.Model):
 
 
 class BoostPackage(models.Model):
-    """Catalogue des durées de boost pin."""
+    """Catalogue tarifaire boost pin et campagnes pub (paramétrable via admin Django)."""
+
+    KIND_BOOST = 'boost'
+    KIND_CAMPAIGN = 'campaign'
+    KIND_BOTH = 'both'
+    KIND_CHOICES = [
+        (KIND_BOOST, 'Boost pin'),
+        (KIND_CAMPAIGN, 'Campagne pub'),
+        (KIND_BOTH, 'Boost et campagne'),
+    ]
 
     slug = models.SlugField(max_length=24, unique=True)
     label = models.CharField(max_length=80)
+    package_kind = models.CharField(
+        max_length=16,
+        choices=KIND_CHOICES,
+        default=KIND_BOTH,
+        db_index=True,
+        help_text='Restreint l’usage du pack (boost, campagne pub, ou les deux).',
+    )
     duration_hours = models.PositiveIntegerField()
     amount = models.PositiveIntegerField(help_text='Montant en unités mineures (ex. centimes XOF).')
     currency_iso = models.CharField(max_length=10, default='XOF')
     is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['duration_hours']
+        ordering = ['package_kind', 'duration_hours']
 
     def __str__(self):
-        return f'{self.slug} ({self.duration_hours}h)'
+        return f'{self.slug} ({self.duration_hours}h · {self.package_kind})'
+
+    def allows_boost(self) -> bool:
+        return self.package_kind in {self.KIND_BOOST, self.KIND_BOTH}
+
+    def allows_campaign(self) -> bool:
+        return self.package_kind in {self.KIND_CAMPAIGN, self.KIND_BOTH}
 
 
 class PinBoost(models.Model):

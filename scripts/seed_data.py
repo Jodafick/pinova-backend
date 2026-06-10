@@ -597,24 +597,28 @@ def cleanup_relational_data():
 
 
 def seed_boost_packages() -> None:
-    """Catalogue boost (aligné migration monetization 0002)."""
+    """Catalogue boost + campagnes (valeurs de démo ; en prod les tarifs se gèrent dans l’admin Django)."""
     catalog = [
-        ('24h', 'Boost 24 h', 24, 1500),
-        ('72h', 'Boost 3 jours', 72, 3500),
-        ('7d', 'Boost 7 jours', 168, 7500),
+        ('24h', 'Boost 24 h', BoostPackage.KIND_BOOST, 24, 1500),
+        ('72h', 'Boost 3 jours', BoostPackage.KIND_BOOST, 72, 3500),
+        ('7d', 'Boost 7 jours', BoostPackage.KIND_BOOST, 168, 7500),
+        ('campaign-24h', 'Campagne 24 h', BoostPackage.KIND_CAMPAIGN, 24, 2500),
+        ('campaign-72h', 'Campagne 3 jours', BoostPackage.KIND_CAMPAIGN, 72, 5500),
+        ('campaign-7d', 'Campagne 7 jours', BoostPackage.KIND_CAMPAIGN, 168, 11500),
     ]
-    for slug, label, hours, amount in catalog:
+    for slug, label, package_kind, hours, amount in catalog:
         BoostPackage.objects.update_or_create(
             slug=slug,
             defaults={
                 'label': label,
+                'package_kind': package_kind,
                 'duration_hours': hours,
                 'amount': amount,
                 'currency_iso': 'XOF',
                 'is_active': True,
             },
         )
-    logger.info('BoostPackage à jour.')
+    logger.info('BoostPackage (boost + campagnes) à jour.')
 
 
 def attach_partner_campaign_image(campaign: PartnerCampaign, seed_key: str, skip_network: bool) -> None:
