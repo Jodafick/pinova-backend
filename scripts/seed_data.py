@@ -8,8 +8,9 @@ Usage :
 Variables d'environnement optionnelles :
   SEED_SUPERUSER_USERNAME / SEED_SUPERUSER_EMAIL / SEED_SUPERUSER_PASSWORD
   SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420 ; 120 sur Render)
-  SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG uniquement en local.
+  SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG colorés (Pillow) en local.
                               Activé par défaut sur Render (variable RENDER=true).
+  SEED_IMAGE_CACHE_DIR    — dossier cache disque des images téléchargées (défaut : .seed_image_cache/).
 
   David Anato (david1anato) : la vague « fans » (followers, likes, PinViewEvent) est toujours exécutée
   après création des pins ; volumes modérés pour le dev (voir constantes SEED_DAVID_FAN_* en tête de
@@ -39,6 +40,7 @@ Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est install
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import random
 from decimal import Decimal
@@ -147,6 +149,12 @@ try:
     import requests
 except ImportError:
     requests = None
+
+try:
+    from PIL import Image, ImageDraw
+except ImportError:
+    Image = None
+    ImageDraw = None
 
 
 TOPIC_ICONS = [
@@ -400,9 +408,13 @@ def download_image_to_temp(url: str):
         response = requests.get(
             url,
             timeout=30,
-            headers={'User-Agent': 'PinovaSeed/1.1 (+https://pinova.invalid/seed)', 'Accept': 'image/*'},
+            headers={'User-Agent': 'PinovaSeed/1.2 (+https://pinova.invalid/seed)', 'Accept': 'image/*'},
+            allow_redirects=True,
         )
         if response.status_code != 200:
+            return None, None
+        body = response.content or b''
+        if len(body) < 900:
             return None, None
         ctype = (response.headers.get('Content-Type') or '').split(';')[0].strip().lower()
         ext = {
@@ -427,7 +439,7 @@ def download_image_to_temp(url: str):
             else:
                 ext = 'jpg'
         img_temp = NamedTemporaryFile(suffix='.' + ext)
-        img_temp.write(response.content)
+        img_temp.write(body)
         img_temp.flush()
         return img_temp, ext
     except Exception:
@@ -463,35 +475,29 @@ def _safe_seed_slug(key: str, max_len: int = 56) -> str:
 
 
 def candidate_seed_image_urls(seed_key: str, width: int, height: int) -> list[str]:
-    """Plusieurs hôtes ; PNG / JPG / WebP explicites ou JPEG via redirections picsum."""
+    """Fournisseurs fiables en tête ; le reste en secours."""
     safe = _safe_seed_slug(f'{seed_key}_{width}x{height}')
     short_txt = quote(_safe_seed_slug(seed_key, 10))
     hid = abs(hash(str(seed_key))) % 999 + 1
-    wl, hh = sorted((width, height))
-    wk, hk = wl, hh
     hex_bg = f'{(abs(hash(seed_key)) >> 16) & 0xFFFFFF:06x}'
     hex_fg = 'eeeeee'
     av_seed = _safe_seed_slug(seed_key, 48)
     smax = max(128, min(width, height, 512))
-    wiki_thumb = random.choice(('240', '320', '440', '480'))
-    return [
+    wiki_thumb = random.choice(('320', '440', '480'))
+    primary = [
         f'https://picsum.photos/seed/{safe}/{width}/{height}',
         f'https://picsum.photos/id/{hid}/{width}/{height}',
+        f'https://placehold.co/{width}x{height}/{hex_bg}/{hex_fg}.jpg',
+        f'https://placehold.co/{width}x{height}.jpg',
+        f'https://dummyimage.com/{width}x{height}/{hex_bg}/{hex_fg}.jpg&text={short_txt}',
+    ]
+    secondary = [
         f'https://picsum.photos/id/{(hid % 200) + 1}/{width}/{height}?grayscale',
         f'https://picsum.photos/{width}/{height}?random={hid}',
         f'https://placehold.co/{width}x{height}.png',
-        f'https://placehold.co/{width}x{height}.jpg',
         f'https://placehold.co/{width}x{height}.webp',
-        f'https://placehold.co/{width}x{height}/{hex_bg}/{hex_fg}.png',
-        f'https://dummyimage.com/{width}x{height}/{hex_bg}/{hex_fg}.png&text={short_txt}',
-        f'https://dummyimage.com/{width}x{height}/e2e8f0/0f172a.gif&text=S',
-        f'https://placebear.com/{width}/{height}',
-        f'http://placekitten.com/{wk}/{hk}',
-        f'http://placekitten.com/g/{wk}/{hk}',
-        f'https://baconmockup.com/{width}/{height}',
         f'https://picsum.photos/seed/alt_{safe}/{height}/{width}',
-        f'https://api.dicebear.com/9.x/avataaars/png?seed={av_seed}&size={smax}',
-        f'https://api.dicebear.com/9.x/notionists/webp?seed={av_seed}&size={smax}',
+        f'https://api.dicebear.com/9.x/shapes/png?seed={av_seed}&size={smax}',
         (
             'https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/'
             'Sunflower_from_Silesia_UK.jpg/{w}px-Sunflower_from_Silesia_UK.jpg'
@@ -501,29 +507,107 @@ def candidate_seed_image_urls(seed_key: str, width: int, height: int) -> list[st
             'Cat03.jpg/{w}px-Cat03.jpg'
         ).format(w=wiki_thumb),
     ]
+    random.shuffle(secondary)
+    return primary + secondary
 
 
-def fetch_seed_image_file(seed_key: str, skip_network: bool, tries: int = 10):
-    """Teste jusqu’à `tries` URLs parmi des fournisseurs et formats variés."""
-    if skip_network:
-        return None, 'seed_offline.png'
+def seed_image_cache_dir() -> Path:
+    raw = os.environ.get('SEED_IMAGE_CACHE_DIR', '').strip()
+    cache = Path(raw) if raw else ROOT / '.seed_image_cache'
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
+def _seed_cache_path(seed_key: str, ext: str) -> Path:
+    digest = hashlib.sha256(str(seed_key).encode('utf-8')).hexdigest()[:24]
+    return seed_image_cache_dir() / f'{digest}.{ext}'
+
+
+def read_cached_seed_image(seed_key: str):
+    for ext in ('jpg', 'jpeg', 'png', 'webp', 'gif'):
+        path = _seed_cache_path(seed_key, ext if ext != 'jpeg' else 'jpg')
+        if not path.is_file():
+            continue
+        try:
+            if path.stat().st_size < 900:
+                continue
+            tmp = NamedTemporaryFile(suffix='.' + (ext if ext != 'jpeg' else 'jpg'))
+            tmp.write(path.read_bytes())
+            tmp.flush()
+            fname = f'{_safe_seed_slug(seed_key, 52)}.{ext if ext != "jpeg" else "jpg"}'
+            return tmp, fname
+        except OSError:
+            continue
+    return None, None
+
+
+def write_cached_seed_image(seed_key: str, tmp, ext: str) -> None:
+    if not tmp:
+        return
+    try:
+        tmp.seek(0)
+        data = tmp.read()
+        tmp.seek(0)
+        if len(data) < 900:
+            return
+        path = _seed_cache_path(seed_key, ext)
+        path.write_bytes(data)
+    except OSError:
+        pass
+
+
+def fetch_seed_image_file(seed_key: str, skip_network: bool, tries: int = 12):
+    """Cache disque + jusqu’à `tries` URLs fiables."""
     w, h = random.choice(SEED_IMAGE_DIMENSIONS)
+    if skip_network:
+        return None, f'{_safe_seed_slug(seed_key, 52)}.png'
+    cached, cached_name = read_cached_seed_image(seed_key)
+    if cached:
+        return cached, cached_name
     urls = candidate_seed_image_urls(seed_key, w, h)
-    random.shuffle(urls)
     for url in urls[: max(tries, 1)]:
         tmp, ext = download_image_to_temp(url)
         if tmp:
-            return tmp, f'{_safe_seed_slug(seed_key, 52)}.{ext}'
+            write_cached_seed_image(seed_key, tmp, ext or 'jpg')
+            return tmp, f'{_safe_seed_slug(seed_key, 52)}.{ext or "jpg"}'
     return None, 'seed_failed.jpg'
 
 
-def placeholder_png_bytes(seed: str = 'pinova') -> bytes:
-    """Petite image PNG valide (1×1 pixel) pour mode hors réseau."""
-    # PNG minimal rougeâtre via données fixes ultra compactes — évite Pillow en dépendance du seed.
+def render_seed_placeholder_png(seed: str, width: int = 640, height: int = 960) -> bytes:
+    """PNG coloré (dégradé) — bien plus lisible qu’un pixel 1×1."""
+    w = max(64, int(width))
+    h = max(64, int(height))
+    if Image is not None and ImageDraw is not None:
+        try:
+            digest = abs(hash(str(seed)))
+            r1, g1, b1 = (digest >> 16) & 0xFF, (digest >> 8) & 0xFF, digest & 0xFF
+            r2, g2, b2 = (r1 + 96) % 256, (g1 + 48) % 256, (b1 + 128) % 256
+            img = Image.new('RGB', (w, h), (r1, g1, b1))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([0, 0, w, h // 2], fill=(r2, g2, b2))
+            draw.rectangle([w // 8, h // 3, w - w // 8, h - h // 4], fill=(r1, g1, b1))
+            buf = io.BytesIO()
+            img.save(buf, format='PNG', optimize=True)
+            return buf.getvalue()
+        except Exception:
+            pass
     return bytes.fromhex(
         '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
         '0000000a49444154789c6300010000050001790000000049454e44ae426082'
     )
+
+
+def placeholder_png_bytes(seed: str = 'pinova', width: int = 640, height: int = 960) -> bytes:
+    """Image PNG valide pour mode hors réseau (taille réaliste)."""
+    return render_seed_placeholder_png(seed, width, height)
+
+
+def seed_placeholder_content(seed: str, width: int | None = None, height: int | None = None) -> ContentFile:
+    if width is None or height is None:
+        w, h = SEED_IMAGE_DIMENSIONS[abs(hash(str(seed))) % len(SEED_IMAGE_DIMENSIONS)]
+    else:
+        w, h = width, height
+    return ContentFile(render_seed_placeholder_png(seed, w, h))
 
 
 def cleanup_existing_pin_media():
@@ -629,7 +713,7 @@ def attach_partner_campaign_image(campaign: PartnerCampaign, seed_key: str, skip
         elif skip_network:
             campaign.image.save(
                 f'{seed_key}.png',
-                ContentFile(placeholder_png_bytes(seed_key)),
+                seed_placeholder_content(seed_key),
                 save=True,
             )
     finally:
@@ -860,7 +944,15 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
         elif skip_network:
             campaign.media.save(
                 f'{seed_key}.png',
-                ContentFile(placeholder_png_bytes(seed_key)),
+                seed_placeholder_content(seed_key),
+                save=False,
+            )
+            campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
+            campaign.save(update_fields=['media', 'media_type', 'updated_at'])
+        else:
+            campaign.media.save(
+                f'{seed_key}_fallback.png',
+                seed_placeholder_content(seed_key),
                 save=False,
             )
             campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
@@ -1909,16 +2001,10 @@ def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> b
     if temp_img:
         pin.image.save(fname, File(temp_img))
         return True
-    if skip_network:
-        pin.image.save(
-            f'{stem}.png',
-            ContentFile(placeholder_png_bytes(str(pin.pk))),
-            save=True,
-        )
-        return True
+    seed = str(pin.pk or pin.slug or stem)
     pin.image.save(
-        f'{stem}_fallback.png',
-        ContentFile(placeholder_png_bytes(str(pin.slug))),
+        f'{stem}.png',
+        seed_placeholder_content(seed),
         save=True,
     )
     return True
