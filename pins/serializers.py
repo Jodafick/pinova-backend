@@ -497,6 +497,18 @@ class PinSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request:
             return None
+        from django.core.files.storage import default_storage
+
+        def _variant_url(field_file):
+            if not field_file or not getattr(field_file, 'name', ''):
+                return None
+            try:
+                if not default_storage.exists(field_file.name):
+                    return None
+            except Exception:
+                pass
+            return build_versioned_media_url(request, field_file)
+
         try:
             feed_url = None
             square_url = None
@@ -504,9 +516,9 @@ class PinSerializer(serializers.ModelSerializer):
                 if not pv.image or not getattr(pv.image, 'name', ''):
                     continue
                 if pv.kind == PinVariant.KIND_FEED and feed_url is None:
-                    feed_url = build_versioned_media_url(request, pv.image)
+                    feed_url = _variant_url(pv.image)
                 elif pv.kind == PinVariant.KIND_SQUARE and square_url is None:
-                    square_url = build_versioned_media_url(request, pv.image)
+                    square_url = _variant_url(pv.image)
             if feed_url:
                 return feed_url
             if square_url:

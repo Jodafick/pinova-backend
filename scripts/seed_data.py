@@ -17,10 +17,8 @@ Variables d'environnement optionnelles :
   après création des pins ; volumes modérés pour le dev (voir constantes SEED_DAVID_FAN_* en tête de
   seed_david_fan_army dans ce fichier).
 
-  Images avec réseau : picsum (seed, id, aléatoire, grayscale),
-  placehold.co (.png/.jpg/.webp + couleur), dummyimage (.png/.gif),
-  placebear.com, placekitten, baconmockup, dicebear (png/webp),
-  miniatures Wikimedia Commons (JPEG).
+  Images avec réseau : Picsum (IDs stables — nature, personnes, paysages) ; avatars profil = portraits Picsum.
+  Miniatures feed générées automatiquement pour chaque pin catalogue (hors stories).
 
 Les utilisateurs de test ont le mot de passe : password123
 
@@ -124,6 +122,7 @@ from contests.services import (
     get_pin_contest_display_counts,
 )
 from pins.serializers import extract_mentions
+from pins.media_variants import ensure_pin_feed_thumbnail
 from pins.models import (
     Board,
     BoardCollaborationInvite,
@@ -452,37 +451,49 @@ def download_image_to_temp(url: str):
 SEED_IMAGE_STATS: dict[str, int] = {
     'pin_remote': 0,
     'pin_placeholder': 0,
+    'pin_feed_thumb': 0,
     'avatar_remote': 0,
     'campaign_remote': 0,
     'campaign_placeholder': 0,
 }
 
-# IDs Picsum stables par thème (photos réelles, pas de placehold.co).
+# IDs Picsum stables — photos réelles (nature, personnes, paysages). Pas d’avatars illustrés.
 IMAGE_THEME_PICSUM_IDS: dict[str, tuple[int, ...]] = {
-    'architecture': (104, 158, 239, 417),
-    'food': (292, 312, 326, 431),
-    'japan': (317, 250, 349),
-    'workspace': (180, 366, 0),
-    'tattoo': (65, 399, 64),
-    'plants': (10, 16, 18),
+    'architecture': (104, 158, 239, 417, 237),
+    'food': (292, 312, 326, 431, 312),
+    'japan': (317, 250, 349, 338),
+    'workspace': (180, 366, 201, 0),
+    'tattoo': (177, 399, 64, 65),
+    'plants': (10, 16, 18, 28),
     'baking': (312, 326, 292),
-    'streetwear': (64, 119, 177),
-    'yoga': (429, 447, 338),
-    'colors': (274, 275, 366),
-    'paris': (236, 338, 250),
-    'macrame': (96, 97, 108),
-    'nature': (10, 11, 28, 29),
-    'design': (180, 201, 366),
-    'art': (62, 82, 429),
-    'decor': (158, 167, 108),
+    'streetwear': (64, 119, 177, 91),
+    'yoga': (429, 447, 338, 28),
+    'colors': (274, 275, 366, 180),
+    'paris': (236, 338, 250, 104),
+    'macrame': (96, 97, 108, 16),
+    'nature': (10, 11, 28, 29, 37, 38, 43, 15),
+    'design': (180, 201, 366, 158),
+    'art': (62, 82, 429, 213),
+    'decor': (158, 167, 108, 104),
     'kitchen': (292, 312, 326),
-    'beach': (167, 168, 169),
-    'mountain': (15, 29, 43),
-    'city': (0, 1, 237),
-    'portrait': (64, 65, 177),
-    'neon': (274, 366, 180),
-    'coffee': (30, 60, 312),
+    'beach': (167, 168, 169, 29),
+    'mountain': (15, 29, 43, 11),
+    'city': (0, 1, 237, 250, 119),
+    'portrait': (64, 65, 91, 177, 213, 338, 399, 429),
+    'neon': (274, 366, 180, 237),
+    'coffee': (30, 60, 312, 292),
 }
+
+# Portraits Picsum pour avatars profil (vraies photos, pas Dicebear).
+AVATAR_PICSUM_PORTRAIT_IDS: tuple[int, ...] = (
+    64, 65, 91, 177, 213, 338, 399, 429, 582, 659, 668, 837, 1011, 1012, 1025, 1027,
+)
+
+# Pool général si le thème ne matche pas.
+REAL_PHOTO_PICSUM_IDS: tuple[int, ...] = (
+    10, 11, 15, 16, 18, 28, 29, 37, 43, 64, 65, 91, 104, 119, 158, 177, 213, 237, 250,
+    292, 312, 317, 326, 338, 366, 399, 417, 429, 431,
+)
 
 _IMAGE_THEME_RE = re.compile(
     r'_(architecture|food|japan|workspace|tattoo|plants|baking|streetwear|yoga|colors|'
@@ -527,52 +538,36 @@ def _extract_image_theme(seed_key: str) -> str | None:
 
 
 def candidate_seed_image_urls(seed_key: str, width: int, height: int) -> list[str]:
-    """Photos réelles en priorité (Picsum thématique + Wikimedia) ; placehold en dernier recours."""
-    safe = _safe_seed_slug(f'{seed_key}_{width}x{height}')
-    hid = abs(hash(str(seed_key))) % 1084 + 1
+    """Photos réelles Picsum (nature, personnes, paysages) — pas d’illustrations ni placeholders."""
     theme = _extract_image_theme(seed_key)
+    digest = abs(hash(str(seed_key)))
     curated: list[str] = []
     if theme and theme in IMAGE_THEME_PICSUM_IDS:
         ids = IMAGE_THEME_PICSUM_IDS[theme]
-        primary_id = ids[abs(hash(seed_key)) % len(ids)]
+        primary_id = ids[digest % len(ids)]
         curated.append(f'https://picsum.photos/id/{primary_id}/{width}/{height}')
         for pid in ids:
             if pid != primary_id:
                 curated.append(f'https://picsum.photos/id/{pid}/{width}/{height}')
-    photo_urls = [
-        f'https://picsum.photos/seed/{safe}/{width}/{height}',
-        f'https://picsum.photos/id/{hid}/{width}/{height}',
-        f'https://picsum.photos/id/{(hid % 300) + 1}/{width}/{height}',
-        f'https://picsum.photos/seed/alt_{safe}/{height}/{width}',
-    ]
-    wiki_thumb = random.choice(('320', '440', '480'))
-    wikimedia = [
-        (
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/'
-            'Sunflower_from_Silesia_UK.jpg/{w}px-Sunflower_from_Silesia_UK.jpg'
-        ).format(w=wiki_thumb),
-        (
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/'
-            'Cat03.jpg/{w}px-Cat03.jpg'
-        ).format(w=wiki_thumb),
-        (
-            'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/'
-            'Image_created_with_a_mobile_phone.png/{w}px-Image_created_with_a_mobile_phone.png'
-        ).format(w=wiki_thumb),
-    ]
-    fallback = [
-        f'https://placehold.co/{width}x{height}.jpg',
-    ]
-    return curated + photo_urls + wikimedia + fallback
+    pool_ids = REAL_PHOTO_PICSUM_IDS
+    start = digest % len(pool_ids)
+    for offset in range(min(8, len(pool_ids))):
+        pid = pool_ids[(start + offset) % len(pool_ids)]
+        url = f'https://picsum.photos/id/{pid}/{width}/{height}'
+        if url not in curated:
+            curated.append(url)
+    return curated
 
 
 def candidate_avatar_urls(username: str) -> list[str]:
-    seed = quote(_safe_seed_slug(username, 48))
+    """Portraits photo réels (Picsum) — un ID stable par utilisateur."""
+    digest = abs(hash(_safe_seed_slug(username, 48)))
+    primary = AVATAR_PICSUM_PORTRAIT_IDS[digest % len(AVATAR_PICSUM_PORTRAIT_IDS)]
+    alt = AVATAR_PICSUM_PORTRAIT_IDS[(digest + 3) % len(AVATAR_PICSUM_PORTRAIT_IDS)]
     return [
-        f'https://api.dicebear.com/9.x/avataaars/png?seed={seed}&size=256',
-        f'https://api.dicebear.com/9.x/personas/png?seed={seed}&size=256',
-        f'https://api.dicebear.com/9.x/lorelei/png?seed={seed}&size=256',
-        f'https://picsum.photos/seed/avatar_{seed}/256/256',
+        f'https://picsum.photos/id/{primary}/400/400',
+        f'https://picsum.photos/id/{primary}/256/256',
+        f'https://picsum.photos/id/{alt}/400/400',
     ]
 
 
@@ -649,8 +644,8 @@ def fetch_avatar_image_file(username: str, skip_network: bool):
     for url in candidate_avatar_urls(username):
         tmp, ext = download_image_to_temp(url)
         if tmp:
-            write_cached_seed_image(cache_key, tmp, ext or 'png')
-            return tmp, f'{_safe_seed_slug(username, 40)}.{ext or "png"}'
+            write_cached_seed_image(cache_key, tmp, ext or 'jpg')
+            return tmp, f'{_safe_seed_slug(username, 40)}.{ext or "jpg"}'
     logger.warning('Avatar distant indisponible pour %s — avatar_color conservé.', username)
     return None, None
 
@@ -1796,6 +1791,23 @@ def seed_board_collaboration_invite_sample(boards_by_user: dict[int, list[Board]
     logger.info('BoardCollaborationInvite (pending) créée.')
 
 
+def seed_pin_feed_thumbnails(created_pins: list[Pin]) -> None:
+    """Miniatures feed (max 400px) pour les pins catalogue (hors stories)."""
+    candidates = [
+        p for p in created_pins
+        if not p.is_story and p.image and getattr(p.image, 'name', '')
+    ]
+    ok = 0
+    for pin in candidates:
+        try:
+            pin.refresh_from_db()
+            if ensure_pin_feed_thumbnail(pin, force=True):
+                ok += 1
+        except Exception as exc:
+            logger.warning('Miniature feed seed pin=%s : %s', pin.pk, exc)
+    logger.info('Miniatures feed pins : %d/%d.', ok, len(candidates))
+
+
 def seed_pin_variants_square_sample(created_pins: list[Pin]) -> None:
     """Variantes carrées (hors story) pour tester les crops API / front."""
     candidates = [p for p in created_pins if p.image and not p.is_story]
@@ -2096,16 +2108,22 @@ def seed_david_fan_army(david_user: User) -> None:
 def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> bool:
     stem = Path(fname).stem if fname else f'pin_{pin.pk}'
     if temp_img:
-        pin.image.save(fname, File(temp_img))
+        pin.image.save(fname, File(temp_img), save=True)
         SEED_IMAGE_STATS['pin_remote'] += 1
-        return True
-    seed = str(pin.pk or pin.slug or stem)
-    pin.image.save(
-        f'{stem}.png',
-        seed_placeholder_content(seed),
-        save=True,
-    )
-    SEED_IMAGE_STATS['pin_placeholder'] += 1
+    else:
+        seed = str(pin.pk or pin.slug or stem)
+        pin.image.save(
+            f'{stem}.png',
+            seed_placeholder_content(seed),
+            save=True,
+        )
+        SEED_IMAGE_STATS['pin_placeholder'] += 1
+    if not pin.is_story and pin.image and getattr(pin.image, 'name', ''):
+        try:
+            if ensure_pin_feed_thumbnail(pin, force=True):
+                SEED_IMAGE_STATS['pin_feed_thumb'] += 1
+        except Exception as exc:
+            logger.warning('Miniature feed attach pin=%s : %s', pin.pk, exc)
     return True
 
 
@@ -2605,6 +2623,7 @@ def seed_data():
 
     finalize_seed_stories_for_active_ring(story_pins)
 
+    seed_pin_feed_thumbnails(created_pins)
     seed_pin_variants_square_sample(created_pins)
 
     # Interactions aléatoires (likes/saves/views) pour les pins publics
@@ -2899,6 +2918,7 @@ def seed_data():
         f'{len(regular_users)} utilisateurs — '
         f'pins distants={SEED_IMAGE_STATS["pin_remote"]} '
         f'placeholders={SEED_IMAGE_STATS["pin_placeholder"]} '
+        f'feed_thumbs={SEED_IMAGE_STATS["pin_feed_thumb"]} '
         f'avatars={SEED_IMAGE_STATS["avatar_remote"]}.'
     )
 
