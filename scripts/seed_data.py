@@ -8,8 +8,9 @@ Usage :
 Variables d'environnement optionnelles :
   SEED_SUPERUSER_USERNAME / SEED_SUPERUSER_EMAIL / SEED_SUPERUSER_PASSWORD
   SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420 ; 120 sur Render)
-  SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG colorés (Pillow) en local.
-                              Activé par défaut sur Render (variable RENDER=true).
+  SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG colorés (Pillow).
+                              Activé par défaut sur Render (variable RENDER=true). En local : SEED_SKIP_NETWORK=0.
+  SEED_FORCE_NETWORK=1    — force le téléchargement d’images même sur Render (utile si le cache est préchauffé).
   SEED_IMAGE_CACHE_DIR    — dossier cache disque des images téléchargées (défaut : .seed_image_cache/).
 
   David Anato (david1anato) : la vague « fans » (followers, likes, PinViewEvent) est toujours exécutée
@@ -447,6 +448,47 @@ def download_image_to_temp(url: str):
     return None, None
 
 
+# Compteurs téléchargements vs placeholders (résumé en fin de seed).
+SEED_IMAGE_STATS: dict[str, int] = {
+    'pin_remote': 0,
+    'pin_placeholder': 0,
+    'avatar_remote': 0,
+    'campaign_remote': 0,
+    'campaign_placeholder': 0,
+}
+
+# IDs Picsum stables par thème (photos réelles, pas de placehold.co).
+IMAGE_THEME_PICSUM_IDS: dict[str, tuple[int, ...]] = {
+    'architecture': (104, 158, 239, 417),
+    'food': (292, 312, 326, 431),
+    'japan': (317, 250, 349),
+    'workspace': (180, 366, 0),
+    'tattoo': (65, 399, 64),
+    'plants': (10, 16, 18),
+    'baking': (312, 326, 292),
+    'streetwear': (64, 119, 177),
+    'yoga': (429, 447, 338),
+    'colors': (274, 275, 366),
+    'paris': (236, 338, 250),
+    'macrame': (96, 97, 108),
+    'nature': (10, 11, 28, 29),
+    'design': (180, 201, 366),
+    'art': (62, 82, 429),
+    'decor': (158, 167, 108),
+    'kitchen': (292, 312, 326),
+    'beach': (167, 168, 169),
+    'mountain': (15, 29, 43),
+    'city': (0, 1, 237),
+    'portrait': (64, 65, 177),
+    'neon': (274, 366, 180),
+    'coffee': (30, 60, 312),
+}
+
+_IMAGE_THEME_RE = re.compile(
+    r'_(architecture|food|japan|workspace|tattoo|plants|baking|streetwear|yoga|colors|'
+    r'paris|macrame|nature|design|art|decor|kitchen|beach|mountain|city|portrait|neon|coffee)(?:_|$)'
+)
+
 # Portrait / paysage / carré, tailles mobiles et bannières.
 SEED_IMAGE_DIMENSIONS: list[tuple[int, int]] = [
     (600, 900),
@@ -474,30 +516,37 @@ def _safe_seed_slug(key: str, max_len: int = 56) -> str:
     return s[:max_len]
 
 
+def _extract_image_theme(seed_key: str) -> str | None:
+    m = _IMAGE_THEME_RE.search(str(seed_key))
+    if m:
+        return m.group(1)
+    for theme in IMAGE_THEME_PICSUM_IDS:
+        if theme in str(seed_key):
+            return theme
+    return None
+
+
 def candidate_seed_image_urls(seed_key: str, width: int, height: int) -> list[str]:
-    """Fournisseurs fiables en tête ; le reste en secours."""
+    """Photos réelles en priorité (Picsum thématique + Wikimedia) ; placehold en dernier recours."""
     safe = _safe_seed_slug(f'{seed_key}_{width}x{height}')
-    short_txt = quote(_safe_seed_slug(seed_key, 10))
-    hid = abs(hash(str(seed_key))) % 999 + 1
-    hex_bg = f'{(abs(hash(seed_key)) >> 16) & 0xFFFFFF:06x}'
-    hex_fg = 'eeeeee'
-    av_seed = _safe_seed_slug(seed_key, 48)
-    smax = max(128, min(width, height, 512))
-    wiki_thumb = random.choice(('320', '440', '480'))
-    primary = [
+    hid = abs(hash(str(seed_key))) % 1084 + 1
+    theme = _extract_image_theme(seed_key)
+    curated: list[str] = []
+    if theme and theme in IMAGE_THEME_PICSUM_IDS:
+        ids = IMAGE_THEME_PICSUM_IDS[theme]
+        primary_id = ids[abs(hash(seed_key)) % len(ids)]
+        curated.append(f'https://picsum.photos/id/{primary_id}/{width}/{height}')
+        for pid in ids:
+            if pid != primary_id:
+                curated.append(f'https://picsum.photos/id/{pid}/{width}/{height}')
+    photo_urls = [
         f'https://picsum.photos/seed/{safe}/{width}/{height}',
         f'https://picsum.photos/id/{hid}/{width}/{height}',
-        f'https://placehold.co/{width}x{height}/{hex_bg}/{hex_fg}.jpg',
-        f'https://placehold.co/{width}x{height}.jpg',
-        f'https://dummyimage.com/{width}x{height}/{hex_bg}/{hex_fg}.jpg&text={short_txt}',
-    ]
-    secondary = [
-        f'https://picsum.photos/id/{(hid % 200) + 1}/{width}/{height}?grayscale',
-        f'https://picsum.photos/{width}/{height}?random={hid}',
-        f'https://placehold.co/{width}x{height}.png',
-        f'https://placehold.co/{width}x{height}.webp',
+        f'https://picsum.photos/id/{(hid % 300) + 1}/{width}/{height}',
         f'https://picsum.photos/seed/alt_{safe}/{height}/{width}',
-        f'https://api.dicebear.com/9.x/shapes/png?seed={av_seed}&size={smax}',
+    ]
+    wiki_thumb = random.choice(('320', '440', '480'))
+    wikimedia = [
         (
             'https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/'
             'Sunflower_from_Silesia_UK.jpg/{w}px-Sunflower_from_Silesia_UK.jpg'
@@ -506,9 +555,25 @@ def candidate_seed_image_urls(seed_key: str, width: int, height: int) -> list[st
             'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/'
             'Cat03.jpg/{w}px-Cat03.jpg'
         ).format(w=wiki_thumb),
+        (
+            'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/'
+            'Image_created_with_a_mobile_phone.png/{w}px-Image_created_with_a_mobile_phone.png'
+        ).format(w=wiki_thumb),
     ]
-    random.shuffle(secondary)
-    return primary + secondary
+    fallback = [
+        f'https://placehold.co/{width}x{height}.jpg',
+    ]
+    return curated + photo_urls + wikimedia + fallback
+
+
+def candidate_avatar_urls(username: str) -> list[str]:
+    seed = quote(_safe_seed_slug(username, 48))
+    return [
+        f'https://api.dicebear.com/9.x/avataaars/png?seed={seed}&size=256',
+        f'https://api.dicebear.com/9.x/personas/png?seed={seed}&size=256',
+        f'https://api.dicebear.com/9.x/lorelei/png?seed={seed}&size=256',
+        f'https://picsum.photos/seed/avatar_{seed}/256/256',
+    ]
 
 
 def seed_image_cache_dir() -> Path:
@@ -556,8 +621,8 @@ def write_cached_seed_image(seed_key: str, tmp, ext: str) -> None:
         pass
 
 
-def fetch_seed_image_file(seed_key: str, skip_network: bool, tries: int = 12):
-    """Cache disque + jusqu’à `tries` URLs fiables."""
+def fetch_seed_image_file(seed_key: str, skip_network: bool, tries: int = 14):
+    """Cache disque + jusqu’à `tries` URLs (photos Picsum / Wikimedia en priorité)."""
     w, h = random.choice(SEED_IMAGE_DIMENSIONS)
     if skip_network:
         return None, f'{_safe_seed_slug(seed_key, 52)}.png'
@@ -570,7 +635,34 @@ def fetch_seed_image_file(seed_key: str, skip_network: bool, tries: int = 12):
         if tmp:
             write_cached_seed_image(seed_key, tmp, ext or 'jpg')
             return tmp, f'{_safe_seed_slug(seed_key, 52)}.{ext or "jpg"}'
+    logger.warning('Aucune image distante pour %s (%s essais) — placeholder local.', seed_key, tries)
     return None, 'seed_failed.jpg'
+
+
+def fetch_avatar_image_file(username: str, skip_network: bool):
+    if skip_network:
+        return None, None
+    cache_key = f'avatar_{username}'
+    cached, cached_name = read_cached_seed_image(cache_key)
+    if cached:
+        return cached, cached_name
+    for url in candidate_avatar_urls(username):
+        tmp, ext = download_image_to_temp(url)
+        if tmp:
+            write_cached_seed_image(cache_key, tmp, ext or 'png')
+            return tmp, f'{_safe_seed_slug(username, 40)}.{ext or "png"}'
+    logger.warning('Avatar distant indisponible pour %s — avatar_color conservé.', username)
+    return None, None
+
+
+def attach_profile_avatar(profile: Profile, username: str, skip_network: bool) -> None:
+    tmp, fname = fetch_avatar_image_file(username, skip_network)
+    if not tmp or not fname:
+        return
+    if profile.avatar:
+        profile.avatar.delete(save=False)
+    profile.avatar.save(fname, File(tmp), save=True)
+    SEED_IMAGE_STATS['avatar_remote'] += 1
 
 
 def render_seed_placeholder_png(seed: str, width: int = 640, height: int = 960) -> bytes:
@@ -710,12 +802,14 @@ def attach_partner_campaign_image(campaign: PartnerCampaign, seed_key: str, skip
     try:
         if temp_img:
             campaign.image.save(fname or f'{seed_key}.jpg', File(temp_img), save=True)
+            SEED_IMAGE_STATS['campaign_remote'] += 1
         elif skip_network:
             campaign.image.save(
                 f'{seed_key}.png',
                 seed_placeholder_content(seed_key),
                 save=True,
             )
+            SEED_IMAGE_STATS['campaign_placeholder'] += 1
     finally:
         if temp_img:
             temp_img.close()
@@ -941,6 +1035,7 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
             campaign.media.save(fname or f'{seed_key}.jpg', File(temp_img), save=False)
             campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
             campaign.save(update_fields=['media', 'media_type', 'updated_at'])
+            SEED_IMAGE_STATS['campaign_remote'] += 1
         elif skip_network:
             campaign.media.save(
                 f'{seed_key}.png',
@@ -949,6 +1044,7 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
             )
             campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
             campaign.save(update_fields=['media', 'media_type', 'updated_at'])
+            SEED_IMAGE_STATS['campaign_placeholder'] += 1
         else:
             campaign.media.save(
                 f'{seed_key}_fallback.png',
@@ -957,6 +1053,7 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
             )
             campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
             campaign.save(update_fields=['media', 'media_type', 'updated_at'])
+            SEED_IMAGE_STATS['campaign_placeholder'] += 1
     finally:
         if temp_img:
             temp_img.close()
@@ -2000,6 +2097,7 @@ def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> b
     stem = Path(fname).stem if fname else f'pin_{pin.pk}'
     if temp_img:
         pin.image.save(fname, File(temp_img))
+        SEED_IMAGE_STATS['pin_remote'] += 1
         return True
     seed = str(pin.pk or pin.slug or stem)
     pin.image.save(
@@ -2007,22 +2105,33 @@ def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> b
         seed_placeholder_content(seed),
         save=True,
     )
+    SEED_IMAGE_STATS['pin_placeholder'] += 1
     return True
 
 
+def resolve_skip_network() -> bool:
+    """Réseau off si SEED_SKIP_NETWORK ; SEED_FORCE_NETWORK=1 l’emporte sur Render."""
+    if os.environ.get('SEED_FORCE_NETWORK', '').lower() in ('1', 'true', 'yes'):
+        return False
+    return os.environ.get('SEED_SKIP_NETWORK', '').lower() in ('1', 'true', 'yes')
+
+
 def _apply_deploy_defaults() -> None:
-    """Sur Render : seed sans téléchargement d'images et volume pins modéré."""
+    """Sur Render : seed sans téléchargement d'images et volume pins modéré (sauf SEED_FORCE_NETWORK)."""
     on_render = os.environ.get('RENDER', '').lower() in ('true', '1', 'yes')
     if not on_render:
         return
-    os.environ.setdefault('SEED_SKIP_NETWORK', '1')
+    if os.environ.get('SEED_FORCE_NETWORK', '').lower() not in ('1', 'true', 'yes'):
+        os.environ.setdefault('SEED_SKIP_NETWORK', '1')
     os.environ.setdefault('SEED_PIN_COUNT', '120')
 
 
 def seed_data():
     _apply_deploy_defaults()
+    for key in SEED_IMAGE_STATS:
+        SEED_IMAGE_STATS[key] = 0
     logger.info('Mise à jour complète de la base de données (seed)…')
-    skip_network = os.environ.get('SEED_SKIP_NETWORK', '').lower() in ('1', 'true', 'yes')
+    skip_network = resolve_skip_network()
     pin_target = int(os.environ.get('SEED_PIN_COUNT', '420'))
 
     cleanup_seed()
@@ -2112,6 +2221,7 @@ def seed_data():
             if traits.get('birth_date'):
                 profile.birth_date = traits['birth_date']
         profile.save()
+        attach_profile_avatar(profile, uname, skip_network)
         profiles_by_username[uname] = profile
         users.append(user)
 
@@ -2142,6 +2252,7 @@ def seed_data():
     dprof.tips_enabled = True
     dprof.tips_url = ''
     dprof.save()
+    attach_profile_avatar(dprof, 'david1anato', skip_network)
     profiles_by_username['david1anato'] = dprof
     users.append(david_user)
 
@@ -2785,7 +2896,10 @@ def seed_data():
     logger.info(
         'Seed terminé — connexion test : password123 — '
         f'réseau images seed={"off" if skip_network else "on"} — '
-        f'{len(regular_users)} utilisateurs.'
+        f'{len(regular_users)} utilisateurs — '
+        f'pins distants={SEED_IMAGE_STATS["pin_remote"]} '
+        f'placeholders={SEED_IMAGE_STATS["pin_placeholder"]} '
+        f'avatars={SEED_IMAGE_STATS["avatar_remote"]}.'
     )
 
 

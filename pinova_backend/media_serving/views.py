@@ -36,8 +36,8 @@ def serve_media(request, path):
     reason = getattr(request, 'pinova_media_access_reason', 'public')
     ctl = _cache_control_for_reason(reason)
 
-    use_s3 = getattr(settings, 'USE_S3_MEDIA', False)
-    if use_s3:
+    use_remote = getattr(settings, 'USE_S3_MEDIA', False) or getattr(settings, 'USE_CLOUDINARY_MEDIA', False)
+    if use_remote:
         if not default_storage.exists(path):
             raise Http404('Media not found')
         content_type, _encoding = mimetypes.guess_type(path)

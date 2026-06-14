@@ -97,10 +97,13 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
 
 _csp_cdn = (os.environ.get('MEDIA_CDN_DOMAIN') or os.environ.get('CSP_IMG_CDN_HOST') or '').strip()
+_use_cloudinary_media = os.environ.get('USE_CLOUDINARY_MEDIA', '').lower() in ('1', 'true', 'yes')
 _csp_img_src = ["'self'", 'data:']
+if _use_cloudinary_media:
+    _csp_img_src.append('https://res.cloudinary.com')
 if _csp_cdn:
     _csp_img_src.append(f'https://{_csp_cdn}')
-else:
+elif not _use_cloudinary_media:
     _csp_img_src.append('https:')
 CONTENT_SECURITY_POLICY = os.environ.get(
     'CONTENT_SECURITY_POLICY',
@@ -230,6 +233,12 @@ SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 #
 # PostgreSQL si DATABASE_URL (ou variables POSTGRES_*/PG*) est défini ; sinon SQLite local (dev sans Postgres).
+# Supabase : clés API (REST / Realtime) + DATABASE_URL (chaîne Postgres depuis le dashboard).
+
+SUPABASE_URL = (os.environ.get('SUPABASE_URL') or '').strip().rstrip('/')
+SUPABASE_PUBLISHABLE_KEY = (os.environ.get('SUPABASE_PUBLISHABLE_KEY') or '').strip()
+SUPABASE_SECRET_KEY = (os.environ.get('SUPABASE_SECRET_KEY') or '').strip()
+DATABASE_DIRECT_URL = (os.environ.get('DATABASE_DIRECT_URL') or '').strip()
 
 
 def _postgres_url_from_split_env() -> str | None:
@@ -252,13 +261,24 @@ def _resolved_database_url() -> str | None:
     raw = (os.environ.get('DATABASE_URL') or '').strip()
     if raw:
         return raw
+    direct = (os.environ.get('DATABASE_DIRECT_URL') or '').strip()
+    if direct:
+        return direct
     return _postgres_url_from_split_env()
+
+
+def _is_supabase_database_url(url: str) -> bool:
+    low = (url or '').lower()
+    return 'supabase.co' in low or 'pooler.supabase.com' in low
 
 
 _db_url = _resolved_database_url()
 
 if _db_url:
-    DATABASES = {'default': dj_database_url.parse(_db_url, conn_max_age=600)}
+    _db_parse_kwargs: dict = {'conn_max_age': 600}
+    if _is_supabase_database_url(_db_url):
+        _db_parse_kwargs['ssl_require'] = True
+    DATABASES = {'default': dj_database_url.parse(_db_url, **_db_parse_kwargs)}
 else:
     # Pas de Postgres dans l’env (ni DATABASE_URL ni POSTGRES_*/PG*) : SQLite local pour le dev.
     DATABASES = {
@@ -416,9 +436,48 @@ CLAMD_HOST = os.environ.get('CLAMD_HOST', '127.0.0.1')
 CLAMD_PORT = int(os.environ.get('CLAMD_PORT', '3310'))
 CLAMD_SCAN_TIMEOUT_SECONDS = int(os.environ.get('CLAMD_SCAN_TIMEOUT_SECONDS', '120'))
 
+# Stockage Cloudinary (optionnel — CDN + transformations ; médias privés via /media/ signé)
+USE_CLOUDINARY_MEDIA = os.environ.get('USE_CLOUDINARY_MEDIA', '').lower() in ('1', 'true', 'yes')
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '').strip()
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
+
 # Stockage S3 / Cloudflare R2 (optionnel — bucket privé, accès via /media/ + signatures)
 USE_S3_MEDIA = os.environ.get('USE_S3_MEDIA', '').lower() in ('1', 'true', 'yes')
-if USE_S3_MEDIA:
+if USE_CLOUDINARY_MEDIA and USE_S3_MEDIA:
+    raise ImproperlyConfigured('USE_CLOUDINARY_MEDIA et USE_S3_MEDIA sont mutuellement exclusifs.')
+
+if USE_CLOUDINARY_MEDIA:
+    if not (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
+        raise ImproperlyConfigured(
+            'USE_CLOUDINARY_MEDIA=1 requiert CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY et CLOUDINARY_API_SECRET.'
+        )
+    if 'cloudinary' not in INSTALLED_APPS:
+        INSTALLED_APPS += ['cloudinary', 'cloudinary_storage']
+    import cloudinary
+
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
+    CLOUDINARY_STORAGE = {
+        'CLOUD_NAME': CLOUDINARY_CLOUD_NAME,
+        'API_KEY': CLOUDINARY_API_KEY,
+        'API_SECRET': CLOUDINARY_API_SECRET,
+        # Garder pins/, avatars/, etc. (contrôle d’accès /media/ inchangé).
+        'PREFIX': '',
+    }
+    STORAGES = {
+        'default': {
+            'BACKEND': 'cloudinary_storage.storage.MediaCloudinaryStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
+elif USE_S3_MEDIA:
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
     AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')

@@ -70,9 +70,25 @@ def build_versioned_media_url(request, field_file) -> str:
     )
 
     relative = field_file.name
+    viewer_id = request.user.id if getattr(request, 'user', None) and request.user.is_authenticated else 0
+
+    if getattr(settings, 'USE_CLOUDINARY_MEDIA', False):
+        from pinova_backend.media_serving.cloudinary_urls import cloudinary_delivery_url
+
+        base = append_cache_version(
+            cloudinary_delivery_url(relative),
+            version_token_for_fieldfile(field_file),
+        )
+        if media_requires_signed_url(relative):
+            proxy = append_cache_version(
+                app_media_url(request, relative),
+                version_token_for_fieldfile(field_file),
+            )
+            return append_signed_query(proxy, relative, viewer_id)
+        return base
+
     base = app_media_url(request, relative)
     base = append_cache_version(base, version_token_for_fieldfile(field_file))
-    viewer_id = request.user.id if getattr(request, 'user', None) and request.user.is_authenticated else 0
     if media_requires_signed_url(relative):
         return append_signed_query(base, relative, viewer_id)
     return base
