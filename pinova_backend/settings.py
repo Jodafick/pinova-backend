@@ -257,12 +257,18 @@ def _postgres_url_from_split_env() -> str | None:
     return f'postgresql://{auth}@{host}:{port}/{quote_plus(name)}'
 
 
+def _is_placeholder_database_url(url: str) -> bool:
+    """Ignore les modèles .env non renseignés ([YOUR-PASSWORD], etc.)."""
+    low = (url or '').lower()
+    return '[your-password]' in low or '[password]' in low
+
+
 def _resolved_database_url() -> str | None:
     raw = (os.environ.get('DATABASE_URL') or '').strip()
-    if raw:
+    if raw and not _is_placeholder_database_url(raw):
         return raw
     direct = (os.environ.get('DATABASE_DIRECT_URL') or '').strip()
-    if direct:
+    if direct and not _is_placeholder_database_url(direct):
         return direct
     return _postgres_url_from_split_env()
 
@@ -272,13 +278,25 @@ def _is_supabase_database_url(url: str) -> bool:
     return 'supabase.co' in low or 'pooler.supabase.com' in low
 
 
+def _is_supabase_transaction_pooler_url(url: str) -> bool:
+    """Pooler Supavisor mode transaction (port 6543) — connexions courtes, pas de prepared statements."""
+    low = (url or '').lower()
+    return 'pooler.supabase.com' in low and ':6543' in low
+
+
 _db_url = _resolved_database_url()
 
 if _db_url:
-    _db_parse_kwargs: dict = {'conn_max_age': 600}
+    _db_parse_kwargs: dict = {}
+    if _is_supabase_transaction_pooler_url(_db_url):
+        _db_parse_kwargs['conn_max_age'] = 0
+    else:
+        _db_parse_kwargs['conn_max_age'] = 600
     if _is_supabase_database_url(_db_url):
         _db_parse_kwargs['ssl_require'] = True
     DATABASES = {'default': dj_database_url.parse(_db_url, **_db_parse_kwargs)}
+    if _is_supabase_transaction_pooler_url(_db_url):
+        DATABASES['default']['DISABLE_SERVER_SIDE_CURSORS'] = True
 else:
     # Pas de Postgres dans l’env (ni DATABASE_URL ni POSTGRES_*/PG*) : SQLite local pour le dev.
     DATABASES = {
