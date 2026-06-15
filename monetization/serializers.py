@@ -2,6 +2,12 @@ import json
 
 from rest_framework import serializers
 
+from pins.upload_security import (
+    validate_image_magic_bytes,
+    validate_image_size,
+    validate_video_magic_bytes,
+)
+
 from .boost_catalog import PACKAGE_KIND_CAMPAIGN, active_packages_for_kind
 from .models import BoostPackage, PartnerCampaign, PinBoost, PinPromoCampaign
 from .targeting import normalize_targeting
@@ -196,6 +202,34 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Type média invalide.')
         return v
 
+    def validate_image(self, value):
+        if not value:
+            return value
+        request = self.context.get('request')
+        validate_image_size(value, request=request)
+        validate_image_magic_bytes(value, request=request)
+        return value
+
+    def validate_media(self, value):
+        if not value:
+            return value
+        request = self.context.get('request')
+        raw_type = self.initial_data.get('media_type')
+        media_type = (raw_type if isinstance(raw_type, str) else '').strip().lower()
+        if not media_type:
+            name = (getattr(value, 'name', '') or '').lower()
+            media_type = (
+                PinPromoCampaign.MEDIA_VIDEO
+                if name.endswith(('.mp4', '.webm', '.mov', '.m4v'))
+                else PinPromoCampaign.MEDIA_IMAGE
+            )
+        if media_type == PinPromoCampaign.MEDIA_VIDEO:
+            validate_video_magic_bytes(value, request=request)
+        else:
+            validate_image_size(value, request=request)
+            validate_image_magic_bytes(value, request=request)
+        return value
+
     def validate(self, attrs):
         headline = (attrs.get('headline') or '').strip()
         cta_url = (attrs.get('cta_url') or '').strip()
@@ -212,6 +246,8 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
         if topic_slug and not targeting.get('topics'):
             targeting['topics'] = [topic_slug.lower()]
         attrs['targeting'] = targeting
+        if attrs.get('media') and attrs.get('media_type') == PinPromoCampaign.MEDIA_VIDEO:
+            attrs.pop('image', None)
         if attrs.get('media') and not attrs.get('media_type'):
             name = (attrs['media'].name or '').lower()
             if name.endswith(('.mp4', '.webm', '.mov', '.m4v')):

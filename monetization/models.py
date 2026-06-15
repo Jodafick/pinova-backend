@@ -158,7 +158,12 @@ class PinPromoCampaign(models.Model):
     headline = models.CharField(max_length=120, blank=True, default='')
     body = models.CharField(max_length=400, blank=True, default='')
     image = models.ImageField(upload_to='creator_ads/', blank=True, null=True)
-    media = models.FileField(upload_to='creator_ads/media/', blank=True, null=True)
+    media = models.FileField(
+        upload_to='creator_ads/media/',
+        blank=True,
+        null=True,
+        storage='monetization.storage.creator_ad_media_storage',
+    )
     MEDIA_IMAGE = 'image'
     MEDIA_VIDEO = 'video'
     MEDIA_TYPE_CHOICES = [
