@@ -12,6 +12,15 @@ def redis_url_from_env() -> str:
     return (os.environ.get('REDIS_URL') or os.environ.get('PINNOVA_REDIS_URL') or '').strip()
 
 
+_REDIS_POOL_KWARGS = {
+    'socket_keepalive': True,
+    'retry_on_timeout': True,
+    'health_check_interval': 15,
+    'socket_connect_timeout': 10,
+    'socket_timeout': 10,
+}
+
+
 def build_caches_config(*, redis_url: str, debug: bool) -> dict:
     if redis_url:
         return {
@@ -20,6 +29,7 @@ def build_caches_config(*, redis_url: str, debug: bool) -> dict:
                 'LOCATION': redis_url,
                 'OPTIONS': {
                     'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                    'CONNECTION_POOL_KWARGS': dict(_REDIS_POOL_KWARGS),
                 },
                 'TIMEOUT': 120,
             }

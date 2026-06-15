@@ -6,7 +6,8 @@ import time
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connection
-from django.http import JsonResponse
+from django.http import HttpRequest, JsonResponse
+from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
 
@@ -124,6 +125,118 @@ def _health_body(checks: dict) -> dict:
         'status': _overall_status(checks),
         'checks': checks,
     }
+
+
+def _wants_json(request: HttpRequest) -> bool:
+    accept = (request.headers.get('Accept') or '').lower()
+    if 'application/json' in accept and 'text/html' not in accept:
+        return True
+    if request.GET.get('format') == 'json':
+        return True
+    return False
+
+
+def _home_payload() -> dict:
+    release = (getattr(settings, 'SENTRY_RELEASE', '') or '').strip()
+    return {
+        'service': 'pinova-api',
+        'status': 'ok',
+        'release': release or None,
+        'environment': getattr(settings, 'SENTRY_ENVIRONMENT', None),
+        'endpoints': {
+            'health': '/api/health/',
+            'ready': '/api/health/ready/',
+            'api': '/api/',
+            'admin': '/admin/',
+        },
+    }
+
+
+def _infra_status_rows(checks: dict) -> list[dict]:
+    rows = [
+        {
+            'label': 'PostgreSQL',
+            'state': 'ok' if checks['db']['ok'] else 'off',
+            'latency': checks['db'].get('latency_ms'),
+        },
+    ]
+    redis = checks['redis']
+    if redis.get('detail') == 'skipped':
+        rows.append({'label': 'Redis', 'state': 'skip', 'latency': None})
+    else:
+        rows.append({
+            'label': 'Redis',
+            'state': 'ok' if redis['ok'] else 'off',
+            'latency': redis.get('latency_ms'),
+        })
+    broker = checks['celery']['broker']
+    rows.append({
+        'label': 'Celery broker',
+        'state': 'ok' if broker['ok'] else 'off',
+        'latency': None,
+    })
+    return rows
+
+
+def _home_endpoints() -> list[dict]:
+    return [
+        {
+            'label': 'Santé',
+            'title': 'Health check',
+            'path': '/api/health/',
+            'url': '/api/health/',
+        },
+        {
+            'label': 'Déploiement',
+            'title': 'Readiness probe',
+            'path': '/api/health/ready/',
+            'url': '/api/health/ready/',
+        },
+        {
+            'label': 'REST',
+            'title': 'API v1',
+            'path': '/api/',
+            'url': '/api/',
+        },
+        {
+            'label': 'Admin',
+            'title': 'Django Admin',
+            'path': '/admin/',
+            'url': '/admin/',
+        },
+    ]
+
+
+@require_GET
+def home(request):
+    """
+    GET /
+    Racine API — page HTML stylée pour les humains, JSON pour les sondes (`Accept: application/json`).
+    """
+    if _wants_json(request):
+        return JsonResponse(_home_payload())
+
+    checks = _collect_checks()
+    overall = _overall_status(checks)
+    status_class = 'warn' if overall == 'degraded' else 'bad' if not checks['db']['ok'] else ''
+    status_label = {
+        'ok': 'Tous les systèmes opérationnels',
+        'degraded': 'Service dégradé — vérifiez /api/health/',
+    }.get(overall, 'Indisponible')
+
+    return render(
+        request,
+        'home.html',
+        {
+            'status_class': status_class,
+            'status_label': status_label,
+            'infra_status': _infra_status_rows(checks),
+            'endpoints': _home_endpoints(),
+            'release': (getattr(settings, 'SENTRY_RELEASE', '') or '').strip(),
+            'environment': getattr(settings, 'SENTRY_ENVIRONMENT', ''),
+            'frontend_url': getattr(settings, 'FRONTEND_URL', ''),
+        },
+    )
 
 
 @require_GET

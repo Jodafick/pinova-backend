@@ -19,9 +19,10 @@ from django.urls import path, include, re_path
 from django.conf import settings
 
 from pinova_backend.media_serving.views import serve_media
-from pinova_backend.health.views import celery_health, health, health_ready
+from pinova_backend.health.views import celery_health, health, health_ready, home
 
 urlpatterns = [
+    path('', home, name='home'),
     path('admin/', admin.site.urls),
     path('api/health/', health, name='health'),
     path('api/health/ready/', health_ready, name='health-ready'),

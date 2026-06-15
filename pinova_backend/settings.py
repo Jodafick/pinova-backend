@@ -182,7 +182,7 @@ ROOT_URLCONF = 'pinova_backend.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'pinova_backend' / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -199,21 +199,9 @@ ASGI_APPLICATION = 'pinova_backend.asgi.application'
 
 _redis_url = (os.environ.get('REDIS_URL') or os.environ.get('PINNOVA_REDIS_URL') or '').strip()
 PINNOVA_SHARED_CACHE = bool(_redis_url)
-if _redis_url:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {
-                'hosts': [_redis_url],
-            },
-        },
-    }
-else:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        },
-    }
+from pinova_backend.config.channel_layers import build_channel_layers_config
+
+CHANNEL_LAYERS = build_channel_layers_config(redis_url=_redis_url)
 
 WS_HEARTBEAT_INTERVAL = 30
 WS_STALE_TIMEOUT = 90

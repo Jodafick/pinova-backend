@@ -5,6 +5,25 @@ from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 
 
+class HomeViewTests(SimpleTestCase):
+    def test_home_json_with_accept_header(self):
+        response = self.client.get(reverse('home'), HTTP_ACCEPT='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/json')
+        data = response.json()
+        self.assertEqual(data['service'], 'pinova-api')
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('health', data['endpoints'])
+
+    def test_home_html_by_default(self):
+        with patch('pinova_backend.health.views._collect_checks', return_value=_mock_checks()):
+            response = self.client.get(reverse('home'), HTTP_ACCEPT='text/html')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('text/html', response['Content-Type'])
+        self.assertContains(response, 'Pinova API')
+        self.assertContains(response, '/api/health/')
+
+
 def _mock_checks(*, db_ok=True, redis_ok=True, broker_ok=True, fedapay_ok=True):
     return {
         'db': {'ok': db_ok, 'detail': 'ok', 'latency_ms': 1.0},
