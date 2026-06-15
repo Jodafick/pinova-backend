@@ -631,7 +631,8 @@ _jwt_access_minutes = int(os.environ.get('JWT_ACCESS_MINUTES', '60'))
 _jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS', '30'))
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=_jwt_access_minutes),
+    # TEMP — test refresh : accès quasi infini ; remettre timedelta(minutes=_jwt_access_minutes)
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=36500),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=_jwt_refresh_days),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
