@@ -85,7 +85,7 @@ if _csrf_origins:
 elif not DEBUG:
     CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
 else:
-    CSRF_TRUSTED_ORIGINS = []
+    CSRF_TRUSTED_ORIGINS = ['https://pinova-backend-8mlq.onrender.com']
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
