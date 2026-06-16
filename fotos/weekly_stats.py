@@ -14,11 +14,11 @@ from .models import Comment, Like, Foto, FotoViewEvent, Save
 
 def creator_period_engagement_totals(user, since):
     """Likes / saves / commentaires sur les fotos de l’auteur pendant [since, now]."""
-    likes = Like.objects.filter(pin__author=user, created_at__gte=since).count()
-    saves = Save.objects.filter(pin__author=user, created_at__gte=since).count()
-    comments = Comment.objects.filter(pin__author=user, created_at__gte=since).count()
+    likes = Like.objects.filter(foto__author=user, created_at__gte=since).count()
+    saves = Save.objects.filter(foto__author=user, created_at__gte=since).count()
+    comments = Comment.objects.filter(foto__author=user, created_at__gte=since).count()
     distinct_viewers = (
-        FotoViewEvent.objects.filter(pin__author=user, created_at__gte=since).aggregate(
+        FotoViewEvent.objects.filter(foto__author=user, created_at__gte=since).aggregate(
             n=Count('user_id', distinct=True)
         )['n']
         or 0
@@ -34,23 +34,23 @@ def creator_period_engagement_totals(user, since):
 def creator_period_engagement_between(user, start, end_exclusive):
     """Même métrique que `creator_period_engagement_totals`, sur [start, end_exclusive)."""
     likes = Like.objects.filter(
-        pin__author=user,
+        foto__author=user,
         created_at__gte=start,
         created_at__lt=end_exclusive,
     ).count()
     saves = Save.objects.filter(
-        pin__author=user,
+        foto__author=user,
         created_at__gte=start,
         created_at__lt=end_exclusive,
     ).count()
     comments = Comment.objects.filter(
-        pin__author=user,
+        foto__author=user,
         created_at__gte=start,
         created_at__lt=end_exclusive,
     ).count()
     distinct_viewers = (
         FotoViewEvent.objects.filter(
-            pin__author=user,
+            foto__author=user,
             created_at__gte=start,
             created_at__lt=end_exclusive,
         ).aggregate(n=Count('user_id', distinct=True))['n']
@@ -66,7 +66,7 @@ def creator_period_engagement_between(user, start, end_exclusive):
 
 def count_foto_view_events_between(user, start, end_exclusive):
     return FotoViewEvent.objects.filter(
-        pin__author=user,
+        foto__author=user,
         created_at__gte=start,
         created_at__lt=end_exclusive,
     ).count()
@@ -76,7 +76,7 @@ def _foto_counts_in_period(model, foto_ids, user, since):
     if not foto_ids:
         return {}
     return dict(
-        model.objects.filter(foto_id__in=foto_ids, pin__author=user, created_at__gte=since)
+        model.objects.filter(foto_id__in=foto_ids, foto__author=user, created_at__gte=since)
         .values('foto_id')
         .annotate(c=Count('id'))
         .values_list('foto_id', 'c')
@@ -98,13 +98,13 @@ def weekly_creator_pins_page(user, days: int = 7, *, page: int = 1, page_size: i
     page_size = max(1, min(int(page_size), 50))
 
     ranked = (
-        FotoViewEvent.objects.filter(pin__author=user, created_at__gte=since)
+        FotoViewEvent.objects.filter(foto__author=user, created_at__gte=since)
         .values('foto_id')
         .annotate(views_week=Count('id'))
         .order_by('-views_week', 'foto_id')
     )
     total_events = FotoViewEvent.objects.filter(
-        pin__author=user,
+        foto__author=user,
         created_at__gte=since,
     ).count()
     total_pins = ranked.count()

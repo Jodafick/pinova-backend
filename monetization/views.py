@@ -154,7 +154,7 @@ class FotoBoostCheckoutView(APIView):
 
         checkout = create_fedapay_checkout(
             request=request,
-            description=f'Fotoce boost · {package.label} · Foto {boost.pin.slug}',
+            description=f'Fotoce boost · {package.label} · Foto {boost.foto.slug}',
             amount=int(package.amount),
             currency_iso=package.currency_iso,
             callback_url=os.environ.get('FEDAPAY_BOOST_CALLBACK_URL') or checkout_return_url('boost', request=request),
@@ -179,7 +179,7 @@ class MyFotoBoostsView(APIView):
     def get(self, request):
         rows = (
             FotoBoost.objects.filter(owner=request.user)
-            .select_related('pin', 'package')
+            .select_related('foto', 'package')
             .order_by('-created_at')[:50]
         )
         ser = FotoBoostHistorySerializer(rows, many=True)
@@ -228,7 +228,7 @@ class FotoPromoCampaignListCreateView(APIView):
     def get(self, request):
         rows = (
             FotoPromoCampaign.objects.filter(owner=request.user)
-            .select_related('pin', 'package')
+            .select_related('foto', 'package')
             .order_by('-created_at')[:100]
         )
         ser = FotoPromoCampaignSerializer(rows, many=True, context={'request': request})
@@ -249,7 +249,7 @@ class FotoPromoCampaignListCreateView(APIView):
             return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         promo_label = (campaign.headline or '').strip() or (
-            f'pin {campaign.pin.slug}' if campaign.foto_id else 'campagne'
+            f'pin {campaign.foto.slug}' if campaign.foto_id else 'campagne'
         )
         from accounts.auth_tokens import checkout_return_url
 
@@ -295,7 +295,7 @@ class FotoPromoCampaignClickView(APIView):
     def post(self, request, campaign_id: int):
         from django.db.models import F
 
-        campaign = FotoPromoCampaign.objects.select_related('pin').filter(
+        campaign = FotoPromoCampaign.objects.select_related('foto').filter(
             pk=campaign_id,
             status=FotoPromoCampaign.STATUS_ACTIVE,
         ).first()
@@ -306,7 +306,7 @@ class FotoPromoCampaignClickView(APIView):
             updates['pin_views'] = F('pin_views') + 1
         FotoPromoCampaign.objects.filter(pk=campaign_id).update(**updates)
         cta_url = (campaign.cta_url or '').strip()
-        foto_slug = campaign.pin.slug if campaign.foto_id else ''
+        foto_slug = campaign.foto.slug if campaign.foto_id else ''
         return Response({'ok': True, 'foto_slug': foto_slug, 'cta_url': cta_url})
 
 

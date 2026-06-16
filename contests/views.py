@@ -37,9 +37,9 @@ def _serialize_foto_contest_row(request, row, rank_one_based):
     comments = int(row.total_comments or 0)
     return {
         'foto_id': row.foto_id,
-        'foto_slug': row.pin.slug,
-        'pin_title': row.pin.title,
-        'pin_image_url': build_versioned_media_url(request, row.pin.image),
+        'foto_slug': row.foto.slug,
+        'pin_title': row.foto.title,
+        'pin_image_url': build_versioned_media_url(request, row.foto.image),
         'creator_id': row.creator_id,
         'creator_username': row.creator.username,
         'rank': rank_one_based,
@@ -73,7 +73,7 @@ class LeaderboardFotosView(APIView):
             limit = min(max(requested, 1), contest_cap)
         ordered = list(
             FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
-            .select_related('pin', 'creator')
+            .select_related('foto', 'creator')
             .order_by('-adjusted_score', 'rank', 'foto_id')
         )
         best_by_creator = {}

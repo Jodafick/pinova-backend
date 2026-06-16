@@ -10,7 +10,7 @@ from .models import ContestSettings, FotoContestScore
 def dedup_best_foto_rows_for_contest(contest: ContestSettings) -> list[FotoContestScore]:
     ordered = list(
         FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
-        .select_related('pin', 'creator')
+        .select_related('foto', 'creator')
         .order_by('-adjusted_score', 'rank', 'foto_id')
     )
     best_by_creator: dict[int, FotoContestScore] = {}

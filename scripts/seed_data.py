@@ -1433,8 +1433,8 @@ def seed_contest_data(public_fotos: list[Foto], regular_users: list[User]) -> No
             entity_id=row.foto_id,
             payload={
                 'foto_id': row.foto_id,
-                'foto_slug': row.pin.slug,
-                'pin_title': row.pin.title,
+                'foto_slug': row.foto.slug,
+                'pin_title': row.foto.title,
                 'creator_id': row.creator_id,
                 'creator_username': row.creator.username,
                 'contest_key': contest.contest_key,
@@ -1814,7 +1814,7 @@ def seed_foto_variants_square_sample(created_fotos: list[Foto]) -> None:
     random.shuffle(candidates)
     n = 0
     for foto in candidates[:14]:
-        if FotoVariant.objects.filter(pin=pin, kind=FotoVariant.KIND_SQUARE).exists():
+        if FotoVariant.objects.filter(foto=pin, kind=FotoVariant.KIND_SQUARE).exists():
             continue
         try:
             foto.image.open('rb')
@@ -1825,7 +1825,7 @@ def seed_foto_variants_square_sample(created_fotos: list[Foto]) -> None:
         suf = Path(pin.image.name).suffix.lower() if foto.image.name else '.jpg'
         if suf not in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
             suf = '.jpg'
-        pv = FotoVariant(pin=pin, kind=FotoVariant.KIND_SQUARE)
+        pv = FotoVariant(foto=pin, kind=FotoVariant.KIND_SQUARE)
         pv.image.save(f'variant_sq_{pin.slug}{suf}', ContentFile(raw), save=True)
         n += 1
     logger.info(f'FotoVariant carré (seed) : {n} fichiers.')
@@ -1850,7 +1850,7 @@ def seed_content_sample_reports(public_fotos: list[Foto], regular_users: list[Us
         reported_user=target,
         defaults={'category': 'harassment', 'details': 'Seed : signalement profil.', 'reason': ''},
     )
-    c = Comment.objects.filter(pin=pin_b, parent__isnull=True).exclude(user=target).first()
+    c = Comment.objects.filter(foto=pin_b, parent__isnull=True).exclude(user=target).first()
     if c:
         ContentReport.objects.get_or_create(
             reporter=r2,
@@ -2514,7 +2514,7 @@ def seed_data():
             foto.image.open('rb')
             raw = foto.image.read()
             foto.image.close()
-            pv = FotoVariant(pin=pin, kind=FotoVariant.KIND_STORY)
+            pv = FotoVariant(foto=pin, kind=FotoVariant.KIND_STORY)
             suf = Path(pin.image.name).suffix.lower() if foto.image and foto.image.name else '.jpg'
             if suf not in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
                 suf = '.jpg'

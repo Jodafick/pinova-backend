@@ -129,10 +129,10 @@ class FotoPromoCampaignSerializer(serializers.ModelSerializer):
         ]
 
     def get_foto_slug(self, obj):
-        return obj.pin.slug if obj.foto_id else ''
+        return obj.foto.slug if obj.foto_id else ''
 
     def get_foto_title(self, obj):
-        return obj.pin.title if obj.foto_id else ''
+        return obj.foto.title if obj.foto_id else ''
 
     def _media_abs(self, obj):
         request = self.context.get('request')
@@ -142,8 +142,8 @@ class FotoPromoCampaignSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.media.url), obj.media_type or FotoPromoCampaign.MEDIA_IMAGE
         if obj.image:
             return request.build_absolute_uri(obj.image.url), FotoPromoCampaign.MEDIA_IMAGE
-        if obj.foto_id and obj.pin.image:
-            return request.build_absolute_uri(obj.pin.image.url), FotoPromoCampaign.MEDIA_IMAGE
+        if obj.foto_id and obj.foto.image:
+            return request.build_absolute_uri(obj.foto.image.url), FotoPromoCampaign.MEDIA_IMAGE
         return '', FotoPromoCampaign.MEDIA_IMAGE
 
     def get_image_url(self, obj):

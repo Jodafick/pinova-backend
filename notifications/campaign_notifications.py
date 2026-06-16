@@ -9,8 +9,8 @@ def _campaign_headline(campaign: FotoPromoCampaign) -> str:
     headline = (campaign.headline or '').strip()
     if headline:
         return headline[:80]
-    if campaign.foto_id and getattr(campaign, 'pin', None):
-        return (campaign.pin.title or 'Foto')[:80]
+    if campaign.foto_id and getattr(campaign, 'foto', None):
+        return (campaign.foto.title or 'Foto')[:80]
     return 'Campagne'
 
 
@@ -25,7 +25,7 @@ def notify_foto_promo_campaign_started(campaign: FotoPromoCampaign) -> None:
         message_fr=f'Votre campagne « {headline} » est en ligne.',
         action_url='/creator/campaigns',
         foto_id=campaign.foto_id,
-        foto_slug=campaign.pin.slug if campaign.foto_id and getattr(campaign, 'pin', None) else None,
+        foto_slug=campaign.foto.slug if campaign.foto_id and getattr(campaign, 'foto', None) else None,
         metadata={
             'kind': 'campaign_started',
             'campaign_id': campaign.id,
@@ -37,7 +37,7 @@ def notify_foto_promo_campaign_started(campaign: FotoPromoCampaign) -> None:
 def notify_foto_boost_started(boost: FotoBoost) -> None:
     if not boost.owner_id:
         return
-    pin_title = (boost.pin.title if boost.foto_id and getattr(boost, 'pin', None) else 'Foto')[:80]
+    pin_title = (boost.foto.title if boost.foto_id and getattr(boost, 'foto', None) else 'Foto')[:80]
     create_localized_notification(
         recipient=boost.owner,
         notification_type='system',
@@ -45,7 +45,7 @@ def notify_foto_boost_started(boost: FotoBoost) -> None:
         message_fr=f'Votre boost sur « {pin_title} » est actif.',
         action_url='/creator/boost',
         foto_id=boost.foto_id,
-        foto_slug=boost.pin.slug if boost.foto_id and getattr(boost, 'pin', None) else None,
+        foto_slug=boost.foto.slug if boost.foto_id and getattr(boost, 'foto', None) else None,
         metadata={
             'kind': 'campaign_boost_started',
             'boost_id': boost.id,

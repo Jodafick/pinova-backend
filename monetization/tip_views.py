@@ -73,7 +73,7 @@ class TipWalletView(APIView):
                         'commission_amount': t.commission_amount,
                         'donor_username': t.donor.username,
                         'message': t.message,
-                        'foto_slug': t.pin.slug if t.foto_id else None,
+                        'foto_slug': t.foto.slug if t.foto_id else None,
                         'created_at': t.created_at.isoformat(),
                     }
                     for t in recent_tips

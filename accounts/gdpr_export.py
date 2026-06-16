@@ -70,11 +70,11 @@ def _pins_payload(user: User) -> list[dict[str, Any]]:
 
 
 def _comments_payload(user: User) -> list[dict[str, Any]]:
-    rows = Comment.objects.filter(user=user).select_related('pin').order_by('-created_at')
+    rows = Comment.objects.filter(user=user).select_related('foto').order_by('-created_at')
     return [
         {
             'id': row.id,
-            'foto_slug': row.pin.slug if row.foto_id else None,
+            'foto_slug': row.foto.slug if row.foto_id else None,
             'text': row.text,
             'gif_url': row.gif_url,
             'parent_id': row.parent_id,

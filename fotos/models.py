@@ -121,6 +121,7 @@ class Foto(models.Model):
         return self.title
 
     class Meta:
+        db_table = 'pins_pin'
         constraints = [
             models.UniqueConstraint(
                 fields=['author', 'upload_idempotency_key'],
@@ -214,6 +215,7 @@ class FotoVariant(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'pins_pinvariant'
         unique_together = [['foto', 'kind']]
         ordering = ['kind']
 
@@ -240,6 +242,7 @@ class FotoBoard(models.Model):
     position = models.PositiveIntegerField(default=0)
 
     class Meta:
+        db_table = 'pins_pinboard'
         unique_together = [['foto', 'board']]
         ordering = ['position', 'id']
 
@@ -253,7 +256,7 @@ class Save(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'pin')
+        unique_together = ('user', 'foto')
 
 class Like(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='likes')
@@ -261,7 +264,7 @@ class Like(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'pin')
+        unique_together = ('user', 'foto')
 
 class Comment(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='comments')
@@ -336,9 +339,9 @@ class ContentReport(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=(
-                    models.Q(pin__isnull=False, comment__isnull=True, reported_user__isnull=True)
-                    | models.Q(pin__isnull=True, comment__isnull=False, reported_user__isnull=True)
-                    | models.Q(pin__isnull=True, comment__isnull=True, reported_user__isnull=False)
+                    models.Q(foto__isnull=False, comment__isnull=True, reported_user__isnull=True)
+                    | models.Q(foto__isnull=True, comment__isnull=False, reported_user__isnull=True)
+                    | models.Q(foto__isnull=True, comment__isnull=True, reported_user__isnull=False)
                 ),
                 name='contentreport_exactly_one_target',
             ),
@@ -348,8 +351,8 @@ class ContentReport(models.Model):
                 name='contentreport_unique_profile_per_reporter',
             ),
             models.UniqueConstraint(
-                fields=['reporter', 'pin'],
-                condition=models.Q(pin__isnull=False),
+                fields=['reporter', 'foto'],
+                condition=models.Q(foto__isnull=False),
                 name='contentreport_unique_foto_per_reporter',
             ),
             models.UniqueConstraint(
@@ -383,7 +386,7 @@ class PrivatePinTag(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'pin', 'tag')
+        unique_together = ('user', 'foto', 'tag')
         ordering = ['tag']
 
     def __str__(self):
@@ -411,6 +414,7 @@ class FotoProvenanceEvent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'pins_pinprovenanceevent'
         ordering = ['created_at']
 
     def __str__(self):
@@ -460,10 +464,11 @@ class MachineTranslationCache(models.Model):
 
 class FotoViewEvent(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='foto_view_events')
-    foto = models.ForeignKey(Foto, on_delete=models.CASCADE, related_name='view_events')
+    foto = models.ForeignKey(Foto, on_delete=models.CASCADE, related_name='view_events', db_column='pin_id')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'pins_pinviewevent'
         ordering = ['-created_at']
 
 
@@ -538,7 +543,7 @@ class TagInvisible(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('pin', 'tag')
+        unique_together = ('foto', 'tag')
         ordering = ['-confidence', 'tag']
 
 

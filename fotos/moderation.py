@@ -55,10 +55,10 @@ CODE_RATE_LIMITED = 'moderation.rate_limited'
 CODE_FLOOD = 'moderation.duplicate_content'
 CODE_TEXT_INAPPROPRIATE = 'moderation.text_inappropriate'
 FIELD_MODERATION_CODES = {
-    'title': 'moderation.pin.title_inappropriate',
-    'description': 'moderation.pin.description_inappropriate',
-    'public_tags_input': 'moderation.pin.public_tags_inappropriate',
-    'private_tags_input': 'moderation.pin.private_tags_inappropriate',
+    'title': 'moderation.foto.title_inappropriate',
+    'description': 'moderation.foto.description_inappropriate',
+    'public_tags_input': 'moderation.foto.public_tags_inappropriate',
+    'private_tags_input': 'moderation.foto.private_tags_inappropriate',
     'text': 'moderation.comment.text_inappropriate',
 }
 

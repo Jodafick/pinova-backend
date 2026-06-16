@@ -10,6 +10,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r'fotos', FotoViewSet)
+router.register(r'pins', FotoViewSet, basename='pins')
 router.register(r'boards', BoardViewSet, basename='boards')
 router.register(r'board-invitations', BoardCollaborationInviteViewSet, basename='board-invitations')
 

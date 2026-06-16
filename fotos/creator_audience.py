@@ -63,25 +63,25 @@ def creator_engagement_breakdown(request, user, *, action: str, days: int, limit
         )
 
     if action == ACTION_LIKES:
-        base = Like.objects.filter(pin__author=user, created_at__gte=since).exclude(user=user)
+        base = Like.objects.filter(foto__author=user, created_at__gte=since).exclude(user=user)
         total = base.count()
         distinct = base.values('user_id').distinct().count()
         rows = list(annotate_top(base, 'user'))
         uid_key = 'user_id'
     elif action == ACTION_SAVES:
-        base = Save.objects.filter(pin__author=user, created_at__gte=since).exclude(user=user)
+        base = Save.objects.filter(foto__author=user, created_at__gte=since).exclude(user=user)
         total = base.count()
         distinct = base.values('user_id').distinct().count()
         rows = list(annotate_top(base, 'user'))
         uid_key = 'user_id'
     elif action == ACTION_COMMENTS:
-        base = Comment.objects.filter(pin__author=user, created_at__gte=since).exclude(user=user)
+        base = Comment.objects.filter(foto__author=user, created_at__gte=since).exclude(user=user)
         total = base.count()
         distinct = base.values('user_id').distinct().count()
         rows = list(annotate_top(base, 'user'))
         uid_key = 'user_id'
     else:  # views
-        base = FotoViewEvent.objects.filter(pin__author=user, created_at__gte=since).exclude(user=user)
+        base = FotoViewEvent.objects.filter(foto__author=user, created_at__gte=since).exclude(user=user)
         total = base.count()
         distinct = base.values('user_id').distinct().count()
         rows = list(annotate_top(base, 'user'))

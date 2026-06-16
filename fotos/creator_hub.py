@@ -50,7 +50,7 @@ def paginated_comment_inbox(user, limit: int, offset: int):
     """
     limit = max(1, min(int(limit), 50))
     offset = max(0, int(offset))
-    base = Comment.objects.filter(pin__author=user).select_related('pin', 'user', 'user__profile')
+    base = Comment.objects.filter(foto__author=user).select_related('foto', 'user', 'user__profile')
     total = base.count()
     comments = list(base.order_by('-created_at')[offset : offset + limit])
     rows = []
@@ -59,8 +59,8 @@ def paginated_comment_inbox(user, limit: int, offset: int):
         rows.append(
             {
                 'id': c.id,
-                'foto_slug': c.pin.slug,
-                'pin_title': c.pin.title,
+                'foto_slug': c.foto.slug,
+                'pin_title': c.foto.title,
                 'author_username': c.user.username,
                 'author_display_name': _comment_author_display(c),
                 'text_preview': text[:400],

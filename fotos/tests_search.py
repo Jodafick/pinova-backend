@@ -43,12 +43,12 @@ class LegacySearchServiceTests(TestCase):
             slug='rose-tattoo',
         )
         tag = Hashtag.objects.create(name='tattoo')
-        self.pin.hashtags.add(tag)
+        self.foto.hashtags.add(tag)
 
     def test_search_fotos_legacy_path(self):
         qs = Foto.objects.filter(visibility=Foto.VISIBILITY_PUBLIC)
         results = search_pins(qs, 'tattoo', limit=5)
-        self.assertTrue(any(p.pk == self.pin.pk for p in results))
+        self.assertTrue(any(p.pk == self.foto.pk for p in results))
 
     def test_search_users_legacy_path(self):
         qs = User.objects.filter(profile__discoverable_profile=True)
@@ -86,7 +86,7 @@ class TypesenseFallbackTests(TestCase):
     def test_search_fotos_falls_back_when_typesense_down(self, _mock_sync, _mock_search):
         with override_settings(SEARCH_USE_TRIGRAM=False):
             results = search_pins(Foto.objects.all(), 'typesense', limit=5)
-        self.assertTrue(any(p.pk == self.pin.pk for p in results))
+        self.assertTrue(any(p.pk == self.foto.pk for p in results))
 
     @mock.patch('fotos.signals_search.sync_foto_typesense.delay')
     def test_typesense_sync_lag_does_not_block_http_search(self, mock_delay):
@@ -117,4 +117,4 @@ class PostgresTrigramTests(TestCase):
     def test_search_fotos_postgres_trgm(self):
         qs = Foto.objects.filter(visibility=Foto.VISIBILITY_PUBLIC)
         results = search_pins(qs, 'postgres', limit=5)
-        self.assertTrue(any(p.pk == self.pin.pk for p in results))
+        self.assertTrue(any(p.pk == self.foto.pk for p in results))

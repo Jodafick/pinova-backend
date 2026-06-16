@@ -56,12 +56,12 @@ class FotoPromoCampaignAdmin(admin.ModelAdmin):
     list_display = ('id', 'owner', 'headline', 'package', 'status', 'impressions', 'clicks', 'created_at')
     list_filter = ('status',)
     search_fields = ('owner__username', 'headline', 'fedapay_transaction_id')
-    raw_id_fields = ('owner', 'pin', 'package')
+    raw_id_fields = ('owner', 'foto', 'package')
 
 
 @admin.register(FotoBoost)
 class FotoBoostAdmin(admin.ModelAdmin):
-    list_display = ('pin', 'owner', 'package', 'status', 'starts_at', 'ends_at')
+    list_display = ('foto', 'owner', 'package', 'status', 'starts_at', 'ends_at')
     list_filter = ('status',)
 
 

@@ -13,10 +13,10 @@ def creator_totals_for_user(user):
     my_fotos = Foto.objects.filter(author=user)
     return {
         'fotos': my_fotos.count(),
-        'likes': Like.objects.filter(pin__author=user).count(),
-        'saves': Save.objects.filter(pin__author=user).count(),
-        'comments': Comment.objects.filter(pin__author=user).count(),
-        'views': FotoViewEvent.objects.filter(pin__author=user).count(),
+        'likes': Like.objects.filter(foto__author=user).count(),
+        'saves': Save.objects.filter(foto__author=user).count(),
+        'comments': Comment.objects.filter(foto__author=user).count(),
+        'views': FotoViewEvent.objects.filter(foto__author=user).count(),
     }
 
 
@@ -34,7 +34,7 @@ def paginated_creator_top_pins(user, *, page: int, page_size: int, pool: int = 4
     pool = max(50, min(int(pool), 2000))
 
     by_views = (
-        FotoViewEvent.objects.filter(pin__author=user)
+        FotoViewEvent.objects.filter(foto__author=user)
         .values('foto_id')
         .annotate(views_total=Count('id'))
         .order_by('-views_total', 'foto_id')[:pool]

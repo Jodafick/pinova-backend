@@ -57,5 +57,5 @@ class FeedThumbnailTests(TestCase):
             image=_large_jpeg_upload(),
         )
         self.assertTrue(
-            FotoVariant.objects.filter(pin=pin, kind=FotoVariant.KIND_FEED).exists()
+            FotoVariant.objects.filter(foto=pin, kind=FotoVariant.KIND_FEED).exists()
         )

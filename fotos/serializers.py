@@ -163,7 +163,7 @@ class BoardSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         rows = (
             FotoBoard.objects.filter(board=obj)
-            .select_related('pin')
+            .select_related('foto')
             .order_by('position', 'id')[:24]
         )
         urls = []
@@ -296,7 +296,7 @@ class CommentSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         request = self.context.get('request')
-        foto = instance.pin
+        foto = instance.foto
         full = viewer_sees_comment_content(instance, foto, request)
         data = super().to_representation(instance)
         if not full:
@@ -773,7 +773,7 @@ class FotoSerializer(serializers.ModelSerializer):
         if request.user != obj.author:
             return []
         return list(
-            PrivatePinTag.objects.filter(pin=obj, user=request.user)
+            PrivatePinTag.objects.filter(foto=obj, user=request.user)
             .values_list('tag', flat=True)
             .order_by('tag')
         )
@@ -860,7 +860,7 @@ class FotoSerializer(serializers.ModelSerializer):
             user_boards_list = list(Board.objects.filter(user=request.user, id__in=board_ids))
             order_map = {bid: i for i, bid in enumerate(board_ids)}
             user_boards_list.sort(key=lambda b: order_map.get(b.id, 999))
-            FotoBoard.objects.filter(pin=pin).delete()
+            FotoBoard.objects.filter(foto=pin).delete()
             for idx, board in enumerate(user_boards_list):
                 FotoBoard.objects.create(pin=pin, board=board, position=idx)
 
@@ -928,7 +928,7 @@ class FotoSerializer(serializers.ModelSerializer):
                 boards_arg = board_ids_list
                 if boards_arg is None:
                     boards_arg = list(
-                        FotoBoard.objects.filter(pin=pin).order_by('position').values_list('board_id', flat=True)
+                        FotoBoard.objects.filter(foto=pin).order_by('position').values_list('board_id', flat=True)
                     )
                 self._apply_foto_tags_and_boards(pin, request, private_tags, public_tags, boards_arg)
         return foto
@@ -1013,13 +1013,13 @@ class BoardDetailSerializer(BoardSerializer):
         request = self.context.get('request')
         links = (
             FotoBoard.objects.filter(board=obj)
-            .select_related('pin', 'pin__author', 'pin__author__profile', 'pin__topic')
+            .select_related('foto', 'foto__author', 'foto__author__profile', 'foto__topic')
             .prefetch_related('pin__hashtags', 'pin__boards')
             .order_by('position', 'id')
         )
         out = []
         for row in links:
-            if not foto_is_visible_for_request(row.pin, request):
+            if not foto_is_visible_for_request(row.foto, request):
                 continue
-            out.append(FotoSerializer(row.pin, context=self.context).data)
+            out.append(FotoSerializer(row.foto, context=self.context).data)
         return out

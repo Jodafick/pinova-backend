@@ -1182,13 +1182,13 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 return Response({'results': data})
 
         topic_rows = (
-            request.user.likes.select_related('pin')
-            .exclude(pin__topic__isnull=True)
-            .values('pin__topic__name')
+            request.user.likes.select_related('foto')
+            .exclude(foto__topic__isnull=True)
+            .values('foto__topic__name')
             .annotate(score=models.Count('id'))
             .order_by('-score')[:8]
         )
-        preferred_topics = [row['pin__topic__name'] for row in topic_rows]
+        preferred_topics = [row['foto__topic__name'] for row in topic_rows]
 
         candidates = (
             User.objects.select_related('profile')

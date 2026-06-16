@@ -80,18 +80,18 @@ class ContestSettingsAdmin(admin.ModelAdmin):
 
 @admin.register(ContestInteractionEvent)
 class ContestInteractionEventAdmin(admin.ModelAdmin):
-    list_display = ('contest', 'interaction_type', 'pin', 'actor', 'is_valid', 'score_delta', 'created_at')
+    list_display = ('contest', 'interaction_type', 'foto', 'actor', 'is_valid', 'score_delta', 'created_at')
     list_filter = ('contest', 'interaction_type', 'is_valid')
-    search_fields = ('pin__title', 'actor__username', 'contest__contest_key')
-    raw_id_fields = ('pin', 'actor')
+    search_fields = ('foto__title', 'actor__username', 'contest__contest_key')
+    raw_id_fields = ('foto', 'actor')
 
 
 @admin.register(FotoContestScore)
 class FotoContestScoreAdmin(admin.ModelAdmin):
-    list_display = ('contest', 'pin', 'creator', 'adjusted_score', 'rank', 'previous_rank', 'updated_at')
+    list_display = ('contest', 'foto', 'creator', 'adjusted_score', 'rank', 'previous_rank', 'updated_at')
     list_filter = ('contest',)
-    search_fields = ('pin__title', 'pin__slug', 'creator__username', 'contest__contest_key')
-    raw_id_fields = ('pin', 'creator')
+    search_fields = ('foto__title', 'foto__slug', 'creator__username', 'contest__contest_key')
+    raw_id_fields = ('foto', 'creator')
 
 
 @admin.register(CreatorContestScore)
@@ -131,7 +131,7 @@ class ContestWinnerPayoutAdmin(admin.ModelAdmin):
     )
     list_filter = ('source', 'payment_status', 'currency')
     search_fields = ('contest__contest_key', 'beneficiary__username', 'payment_reference')
-    raw_id_fields = ('contest', 'beneficiary', 'pin')
+    raw_id_fields = ('contest', 'beneficiary', 'foto')
 
 
 @admin.register(ContestResult)

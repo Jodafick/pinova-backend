@@ -283,29 +283,29 @@ class FotoViewSet(viewsets.ModelViewSet):
             return scores
         recent_likes = (
             Like.objects.filter(user=user)
-            .select_related('pin', 'pin__topic')
+            .select_related('foto', 'foto__topic')
             .order_by('-created_at')[:200]
         )
         recent_saves = (
             Save.objects.filter(user=user)
-            .select_related('pin', 'pin__topic')
+            .select_related('foto', 'foto__topic')
             .order_by('-created_at')[:200]
         )
         recent_views = (
             FotoViewEvent.objects.filter(user=user)
-            .select_related('pin', 'pin__topic')
+            .select_related('foto', 'foto__topic')
             .order_by('-created_at')[:300]
         )
         for item in recent_likes:
-            topic = self._foto_topic_name(item.pin)
+            topic = self._foto_topic_name(item.foto)
             if topic:
                 scores[topic] = scores.get(topic, 0) + 4
         for item in recent_saves:
-            topic = self._foto_topic_name(item.pin)
+            topic = self._foto_topic_name(item.foto)
             if topic:
                 scores[topic] = scores.get(topic, 0) + 4
         for item in recent_views:
-            topic = self._foto_topic_name(item.pin)
+            topic = self._foto_topic_name(item.foto)
             if topic:
                 scores[topic] = scores.get(topic, 0) + 1
         recent_queries = SearchInteraction.objects.filter(user=user).order_by('-created_at')[:100]
@@ -1002,7 +1002,7 @@ class FotoViewSet(viewsets.ModelViewSet):
 
         comments = (
             foto.comments.filter(parent__isnull=True)
-            .select_related('pin', 'user', 'user__profile')
+            .select_related('foto', 'user', 'user__profile')
             .prefetch_related('replies', 'replies__user', 'replies__user__profile', 'hashtags')
         )
         if request.user.is_authenticated:
@@ -1142,7 +1142,7 @@ class FotoViewSet(viewsets.ModelViewSet):
         url_path=r'comments/(?P<comment_id>\d+)/report',
     )
     def report_comment(self, request, comment_id=None):
-        comment = Comment.objects.select_related('pin').filter(id=comment_id).first()
+        comment = Comment.objects.select_related('foto').filter(id=comment_id).first()
         if not comment:
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
         if not self.get_queryset().filter(id=comment.foto_id).exists():
@@ -1194,18 +1194,18 @@ class FotoViewSet(viewsets.ModelViewSet):
     )
     def comment_replies(self, request, comment_id=None):
         try:
-            parent_comment = Comment.objects.select_related('pin').get(id=comment_id)
+            parent_comment = Comment.objects.select_related('foto').get(id=comment_id)
         except Comment.DoesNotExist:
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
 
         # Respect foto visibility when loading replies.
-        foto = parent_comment.pin
+        foto = parent_comment.foto
         if not self.get_queryset().filter(id=pin.id).exists():
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
 
         replies = (
             parent_comment.replies.all()
-            .select_related('pin', 'user', 'user__profile')
+            .select_related('foto', 'user', 'user__profile')
             .prefetch_related('hashtags')
         )
         sort = (request.query_params.get('sort') or 'recent').lower()
@@ -1241,7 +1241,7 @@ class FotoViewSet(viewsets.ModelViewSet):
     )
     def like_comment(self, request, comment_id=None):
         try:
-            comment = Comment.objects.select_related('pin', 'user').get(id=comment_id)
+            comment = Comment.objects.select_related('foto', 'user').get(id=comment_id)
         except Comment.DoesNotExist:
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1261,9 +1261,9 @@ class FotoViewSet(viewsets.ModelViewSet):
                 notification_type='like',
                 message_fr=f"{request.user.username} a aimé votre commentaire.",
                 foto_id=comment.foto_id,
-                foto_slug=comment.pin.slug,
+                foto_slug=comment.foto.slug,
                 comment_id=comment.id,
-                metadata={'is_story': comment.pin.is_story},
+                metadata={'is_story': comment.foto.is_story},
             )
 
         return Response({'status': 'liked', 'likes_count': comment.comment_likes.count()})
@@ -2203,10 +2203,10 @@ class FotoViewSet(viewsets.ModelViewSet):
     def translate_comment(self, request, comment_id=None):
         target_lang = self._resolve_target_lang(request)
         try:
-            comment = Comment.objects.select_related('pin', 'user').get(id=comment_id)
+            comment = Comment.objects.select_related('foto', 'user').get(id=comment_id)
         except Comment.DoesNotExist:
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
-        if not viewer_sees_comment_content(comment, comment.pin, request):
+        if not viewer_sees_comment_content(comment, comment.foto, request):
             return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
         original_language = comment.original_language or detect_original_language(comment.text)
         if comment.original_language != original_language:
@@ -2384,7 +2384,7 @@ class BoardViewSet(viewsets.ModelViewSet):
             foto = Foto.objects.get(slug=foto_slug)
         except Foto.DoesNotExist:
             return Response({'error': 'Foto not found'}, status=status.HTTP_404_NOT_FOUND)
-        FotoBoard.objects.filter(pin=pin, board=board).delete()
+        FotoBoard.objects.filter(foto=pin, board=board).delete()
         return Response({'status': 'removed', 'fotoCount': board.fotos.count()})
 
     @action(detail=True, methods=['get', 'post', 'delete'], url_path='collaborators')
@@ -2567,10 +2567,10 @@ class BoardViewSet(viewsets.ModelViewSet):
         board = self.get_object()
         if not self._can_manage_board_content(request.user, board):
             return Response({'error': 'Not allowed to view this board order'}, status=status.HTTP_403_FORBIDDEN)
-        links = FotoBoard.objects.filter(board=board).select_related('pin').order_by('position', 'id')
+        links = FotoBoard.objects.filter(board=board).select_related('foto').order_by('position', 'id')
         pins_payload = []
         for link in links:
-            foto = link.pin
+            foto = link.foto
             img_url = ''
             if foto.image and getattr(pin.image, 'name', ''):
                 img_url = build_versioned_media_url(request, foto.image)

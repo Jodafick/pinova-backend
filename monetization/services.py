@@ -99,7 +99,7 @@ def pick_foto_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[Fot
         FotoPromoCampaign.objects.filter(status=FotoPromoCampaign.STATUS_ACTIVE)
         .filter(Q(starts_at__isnull=True) | Q(starts_at__lte=now))
         .filter(Q(ends_at__isnull=True) | Q(ends_at__gte=now))
-        .select_related('pin', 'owner', 'pin__author')
+        .select_related('foto', 'owner', 'foto__author')
     )
     candidates: list[FotoPromoCampaign] = []
     for row in qs[:120]:
@@ -118,14 +118,14 @@ def _campaign_media(campaign: FotoPromoCampaign, request) -> tuple[str, str]:
     if campaign.image and request:
         return request.build_absolute_uri(campaign.image.url), FotoPromoCampaign.MEDIA_IMAGE
     if campaign.foto_id:
-        return _foto_image_url(campaign.pin, request), FotoPromoCampaign.MEDIA_IMAGE
+        return _foto_image_url(campaign.foto, request), FotoPromoCampaign.MEDIA_IMAGE
     return '', FotoPromoCampaign.MEDIA_IMAGE
 
 
 def serialize_foto_promo_campaign(campaign: FotoPromoCampaign, request) -> dict[str, Any]:
     owner_username = campaign.owner.username if campaign.owner_id else ''
     if campaign.foto_id:
-        foto = campaign.pin
+        foto = campaign.foto
         title = (campaign.headline or foto.title or '').strip()
         body = (campaign.body or (pin.description or '')[:400]).strip()
         username = foto.author.username if foto.author_id else owner_username
@@ -299,7 +299,7 @@ def apply_boost_to_foto_queryset(qs):
 def activate_foto_promo_campaign(campaign: FotoPromoCampaign) -> None:
     from notifications.campaign_notifications import notify_foto_promo_campaign_started
 
-    campaign = FotoPromoCampaign.objects.select_related('pin', 'owner', 'package').get(pk=campaign.pk)
+    campaign = FotoPromoCampaign.objects.select_related('foto', 'owner', 'package').get(pk=campaign.pk)
     now = timezone.now()
     duration = campaign.package.duration_hours
     campaign.status = FotoPromoCampaign.STATUS_ACTIVE
@@ -309,11 +309,11 @@ def activate_foto_promo_campaign(campaign: FotoPromoCampaign) -> None:
     notify_foto_promo_campaign_started(campaign)
     if campaign.foto_id:
         FotoPromoCampaign.objects.filter(
-            foto=campaign.pin,
+            foto=campaign.foto,
             status=FotoPromoCampaign.STATUS_ACTIVE,
         ).exclude(pk=campaign.pk).update(status=FotoPromoCampaign.STATUS_EXPIRED)
         boost = FotoBoost.objects.create(
-            foto=campaign.pin,
+            foto=campaign.foto,
             owner=campaign.owner,
             package=campaign.package,
             status=FotoBoost.STATUS_PENDING,
@@ -324,7 +324,7 @@ def activate_foto_promo_campaign(campaign: FotoPromoCampaign) -> None:
 def activate_foto_boost(boost: FotoBoost, *, skip_owner_notify: bool = False) -> None:
     from notifications.campaign_notifications import notify_foto_boost_started
 
-    boost = FotoBoost.objects.select_related('pin', 'owner', 'package').get(pk=boost.pk)
+    boost = FotoBoost.objects.select_related('foto', 'owner', 'package').get(pk=boost.pk)
     now = timezone.now()
     duration = boost.package.duration_hours
     boost.status = FotoBoost.STATUS_ACTIVE
@@ -332,7 +332,7 @@ def activate_foto_boost(boost: FotoBoost, *, skip_owner_notify: bool = False) ->
     boost.ends_at = now + timedelta(hours=duration)
     boost.save(update_fields=['status', 'starts_at', 'ends_at', 'updated_at'])
     FotoBoost.objects.filter(
-        foto=boost.pin,
+        foto=boost.foto,
         status=FotoBoost.STATUS_ACTIVE,
     ).exclude(pk=boost.pk).update(status=FotoBoost.STATUS_EXPIRED)
     if not skip_owner_notify:

@@ -3,7 +3,7 @@ from django.apps import AppConfig
 
 class FotosConfig(AppConfig):
     name = 'fotos'
-    label = 'fotos'
+    label = 'pins'
 
     def ready(self):
         from . import signals_media  # noqa: F401

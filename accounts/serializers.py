@@ -418,12 +418,12 @@ class UserSerializer(serializers.ModelSerializer):
             urls = []
             for row in (
                 FotoBoard.objects.filter(board=board_obj)
-                .select_related('pin', 'pin__author', 'pin__author__profile')
+                .select_related('foto', 'foto__author', 'foto__author__profile')
                 .order_by('position', 'id')
             ):
-                if not foto_is_visible_for_request(row.pin, request):
+                if not foto_is_visible_for_request(row.foto, request):
                     continue
-                img = getattr(row.pin, 'image', None)
+                img = getattr(row.foto, 'image', None)
                 if not img or not getattr(img, 'name', None):
                     continue
                 urls.append(build_versioned_media_url(request, img) if request else img.url)

@@ -58,8 +58,8 @@ def ensure_foto_feed_thumbnail(foto: Foto, *, force: bool = False) -> FotoVarian
         return None
 
     existing = (
-        FotoVariant.objects.filter(pin=pin, kind=FotoVariant.KIND_FEED)
-        .select_related('pin')
+        FotoVariant.objects.filter(foto=pin, kind=FotoVariant.KIND_FEED)
+        .select_related('foto')
         .first()
     )
     if existing and not force:
@@ -86,7 +86,7 @@ def ensure_foto_feed_thumbnail(foto: Foto, *, force: bool = False) -> FotoVarian
     with transaction.atomic():
         variant = existing
         if variant is None:
-            variant = FotoVariant(pin=pin, kind=FotoVariant.KIND_FEED)
+            variant = FotoVariant(foto=pin, kind=FotoVariant.KIND_FEED)
         elif variant.image and variant.image.name:
             unlink_field_file(variant.image)
         variant.image.save(filename, content, save=False)

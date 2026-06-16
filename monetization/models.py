@@ -105,7 +105,7 @@ class FotoBoost(models.Model):
         (STATUS_CANCELED, 'Canceled'),
     ]
 
-    foto = models.ForeignKey('fotos.Foto', on_delete=models.CASCADE, related_name='boosts')
+    foto = models.ForeignKey('pins.Foto', on_delete=models.CASCADE, related_name='boosts')
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='foto_boosts')
     package = models.ForeignKey(BoostPackage, on_delete=models.PROTECT, related_name='boosts')
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
@@ -148,7 +148,7 @@ class FotoPromoCampaign(models.Model):
 
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='foto_promo_campaigns')
     foto = models.ForeignKey(
-        'fotos.Foto',
+        'pins.Foto',
         on_delete=models.CASCADE,
         related_name='promo_campaigns',
         null=True,
@@ -261,7 +261,7 @@ class TipTransaction(models.Model):
 
     donor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tips_sent')
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tips_received')
-    foto = models.ForeignKey('fotos.Foto', null=True, blank=True, on_delete=models.SET_NULL, related_name='tips')
+    foto = models.ForeignKey('pins.Foto', null=True, blank=True, on_delete=models.SET_NULL, related_name='tips')
     amount_gross = models.PositiveIntegerField()
     commission_amount = models.PositiveIntegerField()
     amount_net = models.PositiveIntegerField()

@@ -55,16 +55,16 @@ class FotoAdmin(admin.ModelAdmin):
 
 @admin.register(FotoVariant)
 class FotoVariantAdmin(admin.ModelAdmin):
-    list_display = ('pin', 'kind', 'created_at')
+    list_display = ('foto', 'kind', 'created_at')
     search_fields = ('pin__title', 'pin__slug')
 
 
 @admin.register(FotoBoard)
 class FotoBoardAdmin(admin.ModelAdmin):
-    list_display = ('pin', 'board', 'position', 'id')
+    list_display = ('foto', 'board', 'position', 'id')
     list_filter = ('board',)
     search_fields = ('pin__title', 'pin__slug', 'board__name')
-    raw_id_fields = ('pin', 'board')
+    raw_id_fields = ('foto', 'board')
 
 
 @admin.register(Topic)
@@ -90,24 +90,24 @@ class BoardAdmin(admin.ModelAdmin):
 
 @admin.register(Save)
 class SaveAdmin(admin.ModelAdmin):
-    list_display = ('user', 'pin', 'created_at')
+    list_display = ('user', 'foto', 'created_at')
     list_filter = ('created_at',)
-    raw_id_fields = ('user', 'pin')
+    raw_id_fields = ('user', 'foto')
 
 
 @admin.register(Like)
 class LikeAdmin(admin.ModelAdmin):
-    list_display = ('user', 'pin', 'created_at')
+    list_display = ('user', 'foto', 'created_at')
     list_filter = ('created_at',)
-    raw_id_fields = ('user', 'pin')
+    raw_id_fields = ('user', 'foto')
 
 
 @admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'pin', 'parent', 'text_preview', 'created_at')
+    list_display = ('id', 'user', 'foto', 'parent', 'text_preview', 'created_at')
     list_filter = ('created_at', 'moderation_hidden', 'hidden_by_owner')
     search_fields = ('text', 'user__username')
-    raw_id_fields = ('user', 'pin', 'parent')
+    raw_id_fields = ('user', 'foto', 'parent')
 
     @admin.display(description='Text')
     def text_preview(self, obj):
@@ -124,10 +124,10 @@ class CommentLikeAdmin(admin.ModelAdmin):
 
 @admin.register(ContentReport)
 class ContentReportAdmin(admin.ModelAdmin):
-    list_display = ('id', 'reporter', 'category', 'pin', 'comment', 'reported_user', 'created_at')
+    list_display = ('id', 'reporter', 'category', 'foto', 'comment', 'reported_user', 'created_at')
     list_filter = ('created_at', 'category')
     search_fields = ('reason', 'details', 'reporter__username', 'reported_user__username')
-    raw_id_fields = ('reporter', 'pin', 'comment', 'reported_user')
+    raw_id_fields = ('reporter', 'foto', 'comment', 'reported_user')
 
 
 @admin.register(Hashtag)
@@ -138,10 +138,10 @@ class HashtagAdmin(admin.ModelAdmin):
 
 @admin.register(PrivatePinTag)
 class PrivatePinTagAdmin(admin.ModelAdmin):
-    list_display = ('user', 'pin', 'tag', 'created_at')
+    list_display = ('user', 'foto', 'tag', 'created_at')
     list_filter = ('user', 'created_at')
     search_fields = ('tag',)
-    raw_id_fields = ('user', 'pin')
+    raw_id_fields = ('user', 'foto')
 
 
 @admin.register(LegalDocument)
@@ -220,10 +220,10 @@ class BoardCollaborationInviteAdmin(admin.ModelAdmin):
 
 @admin.register(FotoProvenanceEvent)
 class FotoProvenanceEventAdmin(admin.ModelAdmin):
-    list_display = ('pin', 'actor', 'action', 'current_hash', 'created_at')
+    list_display = ('foto', 'actor', 'action', 'current_hash', 'created_at')
     list_filter = ('action', 'created_at')
     search_fields = ('current_hash', 'previous_hash', 'pin__slug')
-    raw_id_fields = ('pin', 'actor')
+    raw_id_fields = ('foto', 'actor')
 
 
 @admin.register(TopicTranslation)
@@ -259,10 +259,10 @@ class MachineTranslationCacheAdmin(admin.ModelAdmin):
 
 @admin.register(FotoViewEvent)
 class FotoViewEventAdmin(admin.ModelAdmin):
-    list_display = ('user', 'pin', 'created_at')
+    list_display = ('user', 'foto', 'created_at')
     list_filter = ('created_at',)
     date_hierarchy = 'created_at'
-    raw_id_fields = ('user', 'pin')
+    raw_id_fields = ('user', 'foto')
 
 
 @admin.register(SearchInteraction)

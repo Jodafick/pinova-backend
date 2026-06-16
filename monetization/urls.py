@@ -31,6 +31,8 @@ urlpatterns = [
     path('monetization/boost-packages/', BoostPackageListView.as_view()),
     path('monetization/fotos/<slug:foto_slug>/boost-estimate/', BoostReachEstimateView.as_view()),
     path('monetization/fotos/<slug:foto_slug>/boost/', FotoBoostCheckoutView.as_view()),
+    path('monetization/pins/<slug:foto_slug>/boost-estimate/', BoostReachEstimateView.as_view()),
+    path('monetization/pins/<slug:foto_slug>/boost/', FotoBoostCheckoutView.as_view()),
     path('monetization/my-boosts/', MyFotoBoostsView.as_view()),
     path('monetization/contextual-ad/', ContextualAdView.as_view()),
     path('monetization/network-ad-config/', NetworkAdConfigView.as_view()),
@@ -38,4 +40,7 @@ urlpatterns = [
     path('monetization/foto-promo-campaigns/', FotoPromoCampaignListCreateView.as_view()),
     path('monetization/foto-promo-campaigns/<int:campaign_id>/', FotoPromoCampaignDetailView.as_view()),
     path('monetization/foto-promo-campaigns/<int:campaign_id>/click/', FotoPromoCampaignClickView.as_view()),
+    path('monetization/pin-promo-campaigns/', FotoPromoCampaignListCreateView.as_view()),
+    path('monetization/pin-promo-campaigns/<int:campaign_id>/', FotoPromoCampaignDetailView.as_view()),
+    path('monetization/pin-promo-campaigns/<int:campaign_id>/click/', FotoPromoCampaignClickView.as_view()),
 ]

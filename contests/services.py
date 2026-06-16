@@ -208,7 +208,7 @@ def _maybe_send_contest_display_rank_notifications(
 
     tit_fr, msg_fr = build_contest_display_rank_notification_fr(
         recipient=recipient_for_copy,
-        pin_title=representative_row.pin.title,
+        pin_title=representative_row.foto.title,
         prev_rank=prev_display_rank,
         new_rank=new_display_rank,
         likes_delta=likes_delta,
@@ -221,7 +221,7 @@ def _maybe_send_contest_display_rank_notifications(
     md = {
         'contest_key': settings.contest_key,
         'foto_id': representative_row.foto_id,
-        'foto_slug': representative_row.pin.slug,
+        'foto_slug': representative_row.foto.slug,
         'display_rank': new_display_rank,
         'previous_display_rank': prev_display_rank,
         'creator_id': recipient.id,
@@ -240,7 +240,7 @@ def _maybe_send_contest_display_rank_notifications(
         message_fr=msg_fr,
         action_url='/contest/live',
         foto_id=representative_row.foto_id,
-        foto_slug=representative_row.pin.slug,
+        foto_slug=representative_row.foto.slug,
         metadata=md,
     )
 
@@ -460,7 +460,7 @@ def finalize_contest(contest: ContestSettings) -> None:
         return
     ordered = list(
         FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
-        .select_related('pin', 'creator')
+        .select_related('foto', 'creator')
         .order_by('-adjusted_score', 'rank', 'foto_id')
     )
     winners = []

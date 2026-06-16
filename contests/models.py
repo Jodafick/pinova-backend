@@ -159,7 +159,7 @@ class ContestInteractionEvent(models.Model):
     ]
 
     contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='events')
-    foto = models.ForeignKey('fotos.Foto', on_delete=models.CASCADE, related_name='contest_events')
+    foto = models.ForeignKey('pins.Foto', on_delete=models.CASCADE, related_name='contest_events')
     actor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contest_events')
     interaction_type = models.CharField(max_length=16, choices=TYPE_CHOICES)
     dwell_seconds = models.PositiveIntegerField(default=0)
@@ -174,14 +174,14 @@ class ContestInteractionEvent(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['contest', 'interaction_type', '-created_at']),
-            models.Index(fields=['contest', 'pin', '-created_at']),
+            models.Index(fields=['contest', 'foto', '-created_at']),
             models.Index(fields=['contest', 'actor', '-created_at']),
         ]
 
 
 class FotoContestScore(models.Model):
     contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='pin_scores')
-    foto = models.ForeignKey('fotos.Foto', on_delete=models.CASCADE, related_name='contest_scores')
+    foto = models.ForeignKey('pins.Foto', on_delete=models.CASCADE, related_name='contest_scores')
     creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contest_foto_scores')
     raw_score = models.FloatField(default=0.0)
     adjusted_score = models.FloatField(default=0.0, db_index=True)
@@ -195,7 +195,7 @@ class FotoContestScore(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [('contest', 'pin')]
+        unique_together = [('contest', 'foto')]
         ordering = ['rank', '-adjusted_score']
 
 
@@ -281,7 +281,7 @@ class ContestWinnerPayout(models.Model):
     source = models.CharField(max_length=16, choices=SOURCE_CHOICES, db_index=True)
     winner_rank = models.PositiveSmallIntegerField()
     beneficiary = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
-    foto = models.ForeignKey('fotos.Foto', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    foto = models.ForeignKey('pins.Foto', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     gross_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     currency = models.CharField(max_length=8, default='EUR')
     payment_status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)

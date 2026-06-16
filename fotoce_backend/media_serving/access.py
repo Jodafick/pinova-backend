@@ -109,20 +109,20 @@ def resolve_foto_for_media_path(relative_path: str) -> Foto | None:
     if rel.startswith('pins/variants/'):
         variant = (
             FotoVariant.objects.filter(image=rel)
-            .select_related('pin', 'pin__author', 'pin__author__profile')
+            .select_related('foto', 'foto__author', 'foto__author__profile')
             .first()
         )
-        return variant.pin if variant else None
+        return variant.foto if variant else None
     if rel.startswith('pins/') or rel.startswith('pin_download_variants/'):
         foto = qs.filter(image=rel).first()
         if foto:
             return foto
         variant = (
             FotoVariant.objects.filter(image=rel)
-            .select_related('pin', 'pin__author', 'pin__author__profile')
+            .select_related('foto', 'foto__author', 'foto__author__profile')
             .first()
         )
-        return variant.pin if variant else None
+        return variant.foto if variant else None
     return None
 
 
@@ -141,7 +141,7 @@ def resolve_comment_for_media_path(relative_path: str) -> Comment | None:
         return None
     return (
         Comment.objects.filter(media=rel)
-        .select_related('pin', 'pin__author', 'pin__author__profile')
+        .select_related('foto', 'foto__author', 'foto__author__profile')
         .first()
     )
 
@@ -156,7 +156,7 @@ def resolve_media_resource(relative_path: str) -> MediaResource | None:
         return MediaResource(kind='profile', relative_path=rel, profile=profile)
     comment = resolve_comment_for_media_path(rel)
     if comment:
-        return MediaResource(kind='comment', relative_path=rel, comment=comment, foto=comment.pin)
+        return MediaResource(kind='comment', relative_path=rel, comment=comment, foto=comment.foto)
     if rel.startswith('topic_covers/'):
         if Topic.objects.filter(cover_image=rel).exists():
             return MediaResource(kind='topic_cover', relative_path=rel)
@@ -170,16 +170,16 @@ def media_policy(resource: MediaResource | None, *, viewer_user_id: int | None =
         return 'deny'
     if resource.kind in ('topic_cover', 'ad'):
         return 'public'
-    if resource.kind == 'pin' and resource.pin:
-        if pin_is_public_for_media(resource.pin):
+    if resource.kind == 'pin' and resource.foto:
+        if pin_is_public_for_media(resource.foto):
             return 'public'
         return 'signed'
     if resource.kind == 'profile' and resource.profile:
         if profile_media_requires_signed_url(resource.profile, viewer_user_id=viewer_user_id):
             return 'signed'
         return 'public'
-    if resource.kind == 'comment' and resource.pin:
-        if pin_is_public_for_media(resource.pin):
+    if resource.kind == 'comment' and resource.foto:
+        if pin_is_public_for_media(resource.foto):
             return 'public'
         return 'signed'
     return 'deny'
@@ -199,10 +199,10 @@ def media_visible_for_viewer(resource: MediaResource, request: HttpRequest, *, u
         viewer_id = request.user.id
     viewer_req = viewer_request_for_user_id(viewer_id)
 
-    if resource.kind == 'pin' and resource.pin:
-        return foto_is_visible_for_request(resource.pin, viewer_req)
-    if resource.kind == 'comment' and resource.pin:
-        return foto_is_visible_for_request(resource.pin, viewer_req)
+    if resource.kind == 'pin' and resource.foto:
+        return foto_is_visible_for_request(resource.foto, viewer_req)
+    if resource.kind == 'comment' and resource.foto:
+        return foto_is_visible_for_request(resource.foto, viewer_req)
     if resource.kind == 'profile' and resource.profile:
         profile = resource.profile
         if not profile_media_requires_signed_url(profile, viewer_user_id=viewer_id):
@@ -241,8 +241,8 @@ def evaluate_media_access(request: HttpRequest, relative_path: str) -> tuple[boo
         return False, 'unknown', resource
 
     if policy == 'public':
-        if resource and resource.kind in ('pin', 'comment') and resource.pin:
-            if not foto_is_visible_for_request(resource.pin, request):
+        if resource and resource.kind in ('pin', 'comment') and resource.foto:
+            if not foto_is_visible_for_request(resource.foto, request):
                 return False, 'visibility_denied', resource
         return True, 'public', resource
 
@@ -274,6 +274,6 @@ def media_requires_signed_url(relative_path: str, *, foto: Foto | None = None, p
         return profile_media_requires_signed_url(profile)
     comment = resolve_comment_for_media_path(rel)
     if comment:
-        return pin_media_requires_signed_url(comment.pin)
+        return pin_media_requires_signed_url(comment.foto)
     resource = resolve_media_resource(rel)
     return media_policy(resource) == 'signed'

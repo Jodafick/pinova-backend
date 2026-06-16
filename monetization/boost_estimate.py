@@ -17,7 +17,7 @@ _DURATION_MULTIPLIERS: dict[int, float] = {
 
 def _baseline_views(pin, days: int = 7) -> int:
     since = timezone.now() - timedelta(days=days)
-    return FotoViewEvent.objects.filter(pin=pin, created_at__gte=since).count()
+    return FotoViewEvent.objects.filter(foto=pin, created_at__gte=since).count()
 
 
 def estimate_boost_reach(pin, duration_hours: int) -> dict:
