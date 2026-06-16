@@ -29,7 +29,7 @@ class ContestSettings(models.Model):
     leaderboard_display_pins = models.PositiveSmallIntegerField(
         default=10,
         validators=[MinValueValidator(1), MaxValueValidator(500)],
-        help_text='Pins shown on the live leaderboard (one row per creator, best pin). Caps the public pins API.',
+        help_text='Pins shown on the live leaderboard (one row per creator, best foto). Caps the public fotos API.',
     )
     distribution_mode = models.CharField(
         max_length=20,
@@ -70,7 +70,7 @@ class ContestSettings(models.Model):
     )
     referral_min_engagement_actions = models.PositiveIntegerField(
         default=1,
-        help_text="Nombre minimum d'interactions concours pins valides (filleul) pour débloquer la récompense.",
+        help_text="Nombre minimum d'interactions concours fotos valides (filleul) pour débloquer la récompense.",
     )
     referral_reward_delay_hours = models.PositiveIntegerField(
         default=1,
@@ -98,7 +98,7 @@ class ContestSettings(models.Model):
     )
     referral_min_pins_published = models.PositiveIntegerField(
         default=0,
-        help_text='Nombre minimum de pins publics publiés par le filleul (0 = désactivé).',
+        help_text='Nombre minimum de fotos publics publiés par le filleul (0 = désactivé).',
     )
 
     notify_top_100 = models.BooleanField(default=True)
@@ -106,7 +106,7 @@ class ContestSettings(models.Model):
     notify_winner = models.BooleanField(default=True)
     notify_leaderboard_rank_changes = models.BooleanField(
         default=True,
-        help_text='Notify creators when their displayed contest rank (best pin) changes; uses anti-spam throttling.',
+        help_text='Notify creators when their displayed contest rank (best foto) changes; uses anti-spam throttling.',
     )
     notify_rank_change_threshold = models.PositiveIntegerField(default=5)
 
@@ -159,7 +159,7 @@ class ContestInteractionEvent(models.Model):
     ]
 
     contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='events')
-    pin = models.ForeignKey('pins.Pin', on_delete=models.CASCADE, related_name='contest_events')
+    foto = models.ForeignKey('fotos.Foto', on_delete=models.CASCADE, related_name='contest_events')
     actor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contest_events')
     interaction_type = models.CharField(max_length=16, choices=TYPE_CHOICES)
     dwell_seconds = models.PositiveIntegerField(default=0)
@@ -179,10 +179,10 @@ class ContestInteractionEvent(models.Model):
         ]
 
 
-class PinContestScore(models.Model):
+class FotoContestScore(models.Model):
     contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='pin_scores')
-    pin = models.ForeignKey('pins.Pin', on_delete=models.CASCADE, related_name='contest_scores')
-    creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contest_pin_scores')
+    foto = models.ForeignKey('fotos.Foto', on_delete=models.CASCADE, related_name='contest_scores')
+    creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contest_foto_scores')
     raw_score = models.FloatField(default=0.0)
     adjusted_score = models.FloatField(default=0.0, db_index=True)
     rank = models.PositiveIntegerField(default=0, db_index=True)
@@ -216,7 +216,7 @@ class LeaderboardEvent(models.Model):
     contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='leaderboard_events')
     sequence = models.BigAutoField(primary_key=True)
     event_type = models.CharField(max_length=32, db_index=True)
-    entity_type = models.CharField(max_length=16, db_index=True)  # pin or creator
+    entity_type = models.CharField(max_length=16, db_index=True)  # foto or creator
     entity_id = models.PositiveIntegerField(db_index=True)
     payload = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
@@ -229,7 +229,7 @@ class LeaderboardSnapshot(models.Model):
     TYPE_PIN = 'pin'
     TYPE_CREATOR = 'creator'
     SNAPSHOT_TYPE_CHOICES = [
-        (TYPE_PIN, 'Pin'),
+        (TYPE_PIN, 'Foto'),
         (TYPE_CREATOR, 'Creator'),
     ]
     contest = models.ForeignKey(ContestSettings, on_delete=models.CASCADE, related_name='snapshots')
@@ -259,7 +259,7 @@ class ContestResult(models.Model):
 class ContestWinnerPayout(models.Model):
     """Suivi ops / audit des primes attribuées (pins ou parrainage) pour un mois de concours."""
 
-    SOURCE_PINS = 'pins'
+    SOURCE_PINS = 'fotos'
     SOURCE_REFERRAL = 'referral'
     SOURCE_CHOICES = [
         (SOURCE_PINS, 'Pins'),
@@ -281,7 +281,7 @@ class ContestWinnerPayout(models.Model):
     source = models.CharField(max_length=16, choices=SOURCE_CHOICES, db_index=True)
     winner_rank = models.PositiveSmallIntegerField()
     beneficiary = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
-    pin = models.ForeignKey('pins.Pin', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    foto = models.ForeignKey('fotos.Foto', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     gross_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     currency = models.CharField(max_length=8, default='EUR')
     payment_status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)

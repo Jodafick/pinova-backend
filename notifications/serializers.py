@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
-from pins.topic_i18n import SUPPORTED_TOPIC_LANGS
+from fotos.topic_i18n import SUPPORTED_TOPIC_LANGS
 
-from pinova_backend.media_serving.cache import build_versioned_media_url
+from fotoce_backend.media_serving.cache import build_versioned_media_url
 
 from .models import Notification, PushSubscription
 
@@ -20,8 +20,8 @@ class NotificationSerializer(serializers.ModelSerializer):
             'message',
             'action_url',
             'metadata',
-            'pin_id',
-            'pin_slug',
+            'foto_id',
+            'foto_slug',
             'comment_id',
             'is_read',
             'created_at',
@@ -31,7 +31,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         ]
 
     def get_sender_username(self, obj):
-        return obj.sender.username if obj.sender else "PINOVA"
+        return obj.sender.username if obj.sender else "FOTOCE"
 
     def get_sender_avatar_color(self, obj):
         if obj.sender_id and getattr(obj.sender, 'profile', None):

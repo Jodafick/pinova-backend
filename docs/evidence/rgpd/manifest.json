@@ -18,7 +18,7 @@
     },
     {
       "id": "minors",
-      "steps": ["PATCH birth_date under 13 -> 400", "teen POST /api/pins/ -> 400"],
+      "steps": ["PATCH birth_date under 13 -> 400", "teen POST /api/fotos/ -> 400"],
       "evidence": ["backend-tests-gdpr.log", "playwright-gdpr.log"],
       "status": "pass"
     },
@@ -37,7 +37,7 @@
     "privacy_updated": "2026-06-06",
     "terms_updated": "2026-06-06",
     "attorney_review": "placeholder in PRIVACY_FR / PRIVACY_EN",
-    "source": "pinova-backend/pins/legal_defaults.py"
+    "source": "fotoce-backend/pins/legal_defaults.py"
   },
   "scores": {
     "juridique": "10/10",

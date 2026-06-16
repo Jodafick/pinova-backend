@@ -1,5 +1,5 @@
 """
-Seed complet pour développement / démo Pinova.
+Seed complet pour développement / démo Fotoce.
 
 Usage :
   python seed_data.py
@@ -7,31 +7,31 @@ Usage :
 
 Variables d'environnement optionnelles :
   SEED_SUPERUSER_USERNAME / SEED_SUPERUSER_EMAIL / SEED_SUPERUSER_PASSWORD
-  SEED_PIN_COUNT          — nombre de pins « catalogue » (défaut 420 ; 120 sur Render)
+  SEED_PIN_COUNT          — nombre de fotos « catalogue » (défaut 420 ; 120 sur Render)
   SEED_SKIP_NETWORK=1     — pas de téléchargement distant ; placeholders PNG colorés (Pillow).
                               Activé par défaut sur Render (variable RENDER=true). En local : SEED_SKIP_NETWORK=0.
   SEED_FORCE_NETWORK=1    — force le téléchargement d’images même sur Render (utile si le cache est préchauffé).
   SEED_IMAGE_CACHE_DIR    — dossier cache disque des images téléchargées (défaut : .seed_image_cache/).
 
-  David Anato (david1anato) : la vague « fans » (followers, likes, PinViewEvent) est toujours exécutée
-  après création des pins ; volumes modérés pour le dev (voir constantes SEED_DAVID_FAN_* en tête de
+  David Anato (david1anato) : la vague « fans » (followers, likes, FotoViewEvent) est toujours exécutée
+  après création des fotos ; volumes modérés pour le dev (voir constantes SEED_DAVID_FAN_* en tête de
   seed_david_fan_army dans ce fichier).
 
   Images avec réseau : Picsum (IDs stables — nature, personnes, paysages) ; avatars profil = portraits Picsum.
-  Miniatures feed générées automatiquement pour chaque pin catalogue (hors stories).
+  Miniatures feed générées automatiquement pour chaque foto catalogue (hors stories).
 
 Les utilisateurs de test ont le mot de passe : password123
 
 Modèles couverts (création ou nettoyage) : User ; Profile ; EmailOTP ; SubscriptionPricing ;
-PinovaSubscriptionConfig ; SubscriptionPayment ; SubscriptionSeatInvitation ; SubscriptionSeatMember ;
+FotoceSubscriptionConfig ; SubscriptionPayment ; SubscriptionSeatInvitation ; SubscriptionSeatMember ;
 SupportTicket ; UserBlock ; Notification ; PushSubscription ; Topic ; TopicTranslation ; LegalDocument ; FaqItem ;
-Hashtag ; Board ; BoardCollaborationInvite ; Pin ; PinVariant ; PinBoard ; Save ; Like ; Comment ;
-CommentLike ; ContentReport ; PrivatePinTag ; PinProvenanceEvent ; PinViewEvent ; SearchInteraction ;
+Hashtag ; Board ; BoardCollaborationInvite ; Foto ; FotoVariant ; FotoBoard ; Save ; Like ; Comment ;
+CommentLike ; ContentReport ; PrivatePinTag ; FotoProvenanceEvent ; FotoViewEvent ; SearchInteraction ;
 ExpoPushToken (jeton factice mobile, idempotent par user id).
-Stories : finalisation alignée sur `pins/active-stories` (éphémères + `story_expires_at` futur).
+Stories : finalisation alignée sur `fotos/active-stories` (éphémères + `story_expires_at` futur).
 Concours parrainage : `ReferrerReferralScore` + `ReferralLeaderboardEvent` (scores ≥ seuil API).
-Monétisation : `BoostPackage` ; `PartnerCampaign` (pubs fil + ciblage) ; `PinPromoCampaign` (campagnes créateur) ;
-`PinBoost` (pins boostés actifs / expirés).
+Monétisation : `BoostPackage` ; `PartnerCampaign` (pubs fil + ciblage) ; `FotoPromoCampaign` (campagnes créateur) ;
+`FotoBoost` (pins boostés actifs / expirés).
 Préférences pub sur `Profile` : `ad_ads_enabled`, `partner_ads_enabled` (selon plan).
 
 Noms aléatoires (fans seed, etc.) : Faker (fr_FR) lorsque le paquet est installé.
@@ -68,7 +68,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pinova_backend.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fotoce_backend.settings')
 django.setup()
 
 import django.utils.timezone as dj_tz
@@ -82,7 +82,7 @@ from django.db import transaction
 
 from accounts.models import (
     EmailOTP,
-    PinovaSubscriptionConfig,
+    FotoceSubscriptionConfig,
     Profile,
     SubscriptionPayment,
     SubscriptionPricing,
@@ -100,15 +100,15 @@ from contests.models import (
     CreatorContestScore,
     LeaderboardEvent,
     LeaderboardSnapshot,
-    PinContestScore,
+    FotoContestScore,
 )
 from referrals.models import ReferralContestSettings, ReferralLeaderboardEvent, ReferrerReferralScore
 from monetization.models import (
     BoostPackage,
     CreatorWallet,
     PartnerCampaign,
-    PinBoost,
-    PinPromoCampaign,
+    FotoBoost,
+    FotoPromoCampaign,
     TipPlatformConfig,
     TipTransaction,
     TipWithdrawal,
@@ -119,11 +119,11 @@ from referrals.services import MIN_REFERRAL_LEADERBOARD_SCORE
 from contests.services import (
     create_monthly_contest_if_missing,
     estimate_contest_adjusted_score_from_counts,
-    get_pin_contest_display_counts,
+    get_foto_contest_display_counts,
 )
-from pins.serializers import extract_mentions
-from pins.media_variants import ensure_pin_feed_thumbnail
-from pins.models import (
+from fotos.serializers import extract_mentions
+from fotos.media_variants import ensure_foto_feed_thumbnail
+from fotos.models import (
     Board,
     BoardCollaborationInvite,
     Comment,
@@ -133,11 +133,11 @@ from pins.models import (
     LegalDocument,
     FaqItem,
     Like,
-    Pin,
-    PinBoard,
-    PinProvenanceEvent,
-    PinVariant,
-    PinViewEvent,
+    Foto,
+    FotoBoard,
+    FotoProvenanceEvent,
+    FotoVariant,
+    FotoViewEvent,
     PrivatePinTag,
     Save,
     SearchInteraction,
@@ -321,7 +321,7 @@ HEX_AVATAR_POOL = [
 ]
 
 HASHTAG_POOL = [
-    'pinova',
+    'fotoce',
     'inspiration',
     'design',
     'daily',
@@ -408,7 +408,7 @@ def download_image_to_temp(url: str):
         response = requests.get(
             url,
             timeout=30,
-            headers={'User-Agent': 'PinovaSeed/1.2 (+https://pinova.invalid/seed)', 'Accept': 'image/*'},
+            headers={'User-Agent': 'FotoceSeed/1.2 (+https://fotoce.invalid/seed)', 'Accept': 'image/*'},
             allow_redirects=True,
         )
         if response.status_code != 200:
@@ -523,7 +523,7 @@ SEED_IMAGE_DIMENSIONS: list[tuple[int, int]] = [
 def _safe_seed_slug(key: str, max_len: int = 56) -> str:
     s = re.sub(r'[^a-zA-Z0-9_-]', '_', str(key)).strip('_')
     if not s:
-        s = 'pinova'
+        s = 'fotoce'
     return s[:max_len]
 
 
@@ -684,7 +684,7 @@ def render_seed_placeholder_png(seed: str, width: int = 640, height: int = 960) 
     )
 
 
-def placeholder_png_bytes(seed: str = 'pinova', width: int = 640, height: int = 960) -> bytes:
+def placeholder_png_bytes(seed: str = 'fotoce', width: int = 640, height: int = 960) -> bytes:
     """Image PNG valide pour mode hors réseau (taille réaliste)."""
     return render_seed_placeholder_png(seed, width, height)
 
@@ -697,28 +697,28 @@ def seed_placeholder_content(seed: str, width: int | None = None, height: int | 
     return ContentFile(render_seed_placeholder_png(seed, w, h))
 
 
-def cleanup_existing_pin_media():
-    logger.info('Suppression des médias pins / variants / commentaires…')
-    for v in PinVariant.objects.iterator():
+def cleanup_existing_foto_media():
+    logger.info('Suppression des médias fotos / variants / commentaires…')
+    for v in FotoVariant.objects.iterator():
         if v.image:
             v.image.delete(save=False)
-    PinVariant.objects.all().delete()
+    FotoVariant.objects.all().delete()
 
     for c in Comment.objects.exclude(media='').iterator():
         if c.media:
             c.media.delete(save=False)
 
-    for pin in Pin.objects.exclude(image='').iterator():
-        if pin.image:
-            pin.image.delete(save=False)
+    for foto in Foto.objects.exclude(image='').iterator():
+        if foto.image:
+            foto.image.delete(save=False)
 
-    pins_dir = Path(settings.MEDIA_ROOT) / 'pins'
+    pins_dir = Path(settings.MEDIA_ROOT) / 'fotos'
     if pins_dir.exists():
         for file_path in pins_dir.rglob('*'):
             if file_path.is_file():
                 file_path.unlink(missing_ok=True)
 
-    Pin.objects.all().delete()
+    Foto.objects.all().delete()
     Hashtag.objects.all().delete()
 
 
@@ -741,11 +741,11 @@ def cleanup_relational_data():
     Comment.objects.all().delete()
     Save.objects.all().delete()
     Like.objects.all().delete()
-    PinViewEvent.objects.all().delete()
+    FotoViewEvent.objects.all().delete()
     SearchInteraction.objects.all().delete()
-    PinProvenanceEvent.objects.all().delete()
+    FotoProvenanceEvent.objects.all().delete()
     PrivatePinTag.objects.all().delete()
-    PinBoard.objects.all().delete()
+    FotoBoard.objects.all().delete()
 
     Board.collaborators.through.objects.all().delete()
     Board.objects.all().delete()
@@ -755,15 +755,15 @@ def cleanup_relational_data():
     LeaderboardSnapshot.objects.all().delete()
     LeaderboardEvent.objects.all().delete()
     CreatorContestScore.objects.all().delete()
-    PinContestScore.objects.all().delete()
+    FotoContestScore.objects.all().delete()
     ContestInteractionEvent.objects.all().delete()
     ContestSettings.objects.all().delete()
 
     TipWithdrawal.objects.all().delete()
     TipTransaction.objects.all().delete()
     CreatorWallet.objects.all().delete()
-    PinBoost.objects.all().delete()
-    PinPromoCampaign.objects.all().delete()
+    FotoBoost.objects.all().delete()
+    FotoPromoCampaign.objects.all().delete()
     PartnerCampaign.objects.all().delete()
 
 
@@ -816,16 +816,16 @@ def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_n
     frontend = str(getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:5174').rstrip('/')
     specs = [
         {
-            'title': 'Pinova Plus — printemps créatif',
+            'title': 'Fotoce Plus — printemps créatif',
             'body': 'Passez en Plus : moins de pubs réseau, tags privés illimités et boards collaboratifs.',
-            'sponsor_name': 'Pinova',
+            'sponsor_name': 'Fotoce',
             'cta_label': 'Voir les offres',
             'cta_url': f'{frontend}/premium',
             'topic_slug': '',
             'priority': 30,
             'impressions': 240,
             'clicks': 19,
-            'seed_key': 'partner_pinova_plus',
+            'seed_key': 'partner_fotoce_plus',
         },
         {
             'title': 'Atelier déco — mobilier afro-contemporain',
@@ -918,19 +918,19 @@ def seed_partner_campaigns(admin: User, topics_by_name: dict[str, Topic], skip_n
     logger.info('PartnerCampaign : %d campagnes seed.', PartnerCampaign.objects.filter(is_active=True).count())
 
 
-def _david_public_pins(public_pins: list[Pin], limit: int = 16) -> list[Pin]:
+def _david_public_fotos(public_fotos: list[Foto], limit: int = 16) -> list[Foto]:
     """Pins publics non-story de david1anato (boosts + promos liées)."""
     david = User.objects.filter(username='david1anato').first()
     if not david:
         return []
     return [
         p
-        for p in public_pins
-        if p.author_id == david.id and not p.is_story and p.visibility == Pin.VISIBILITY_PUBLIC
+        for p in public_fotos
+        if p.author_id == david.id and not p.is_story and p.visibility == Foto.VISIBILITY_PUBLIC
     ][:limit]
 
 
-def seed_david_pin_boosts(public_pins: list[Pin]) -> int:
+def seed_david_foto_boosts(public_fotos: list[Foto]) -> int:
     """Boosts actifs / expirés / en attente pour david1anato."""
     pkg_24 = BoostPackage.objects.filter(slug='24h', is_active=True).first()
     pkg_72 = BoostPackage.objects.filter(slug='72h', is_active=True).first()
@@ -943,92 +943,92 @@ def seed_david_pin_boosts(public_pins: list[Pin]) -> int:
     if not david:
         return 0
 
-    david_pins = _david_public_pins(public_pins, limit=20)
+    david_pins = _david_public_fotos(public_fotos, limit=20)
     if not david_pins:
-        logger.warning('Boosts David ignorés (aucun pin public).')
+        logger.warning('Boosts David ignorés (aucun foto public).')
         return 0
 
     now = dj_tz.now()
     boosts_created = 0
     boost_specs: list[tuple[int, BoostPackage, str, timedelta, timedelta]] = [
-        (0, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=5), timedelta(hours=19)),
-        (1, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=2), timedelta(hours=22)),
-        (2, pkg_72, PinBoost.STATUS_ACTIVE, timedelta(hours=8), timedelta(hours=64)),
-        (3, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=1), timedelta(hours=23)),
-        (4, pkg_7d or pkg_72, PinBoost.STATUS_ACTIVE, timedelta(days=1), timedelta(days=6)),
-        (5, pkg_24, PinBoost.STATUS_ACTIVE, timedelta(hours=12), timedelta(hours=12)),
-        (6, pkg_72, PinBoost.STATUS_EXPIRED, timedelta(days=5), timedelta(days=2)),
-        (7, pkg_24, PinBoost.STATUS_EXPIRED, timedelta(days=3), timedelta(days=2)),
-        (8, pkg_24, PinBoost.STATUS_PENDING, timedelta(hours=0), timedelta(hours=24)),
+        (0, pkg_24, FotoBoost.STATUS_ACTIVE, timedelta(hours=5), timedelta(hours=19)),
+        (1, pkg_24, FotoBoost.STATUS_ACTIVE, timedelta(hours=2), timedelta(hours=22)),
+        (2, pkg_72, FotoBoost.STATUS_ACTIVE, timedelta(hours=8), timedelta(hours=64)),
+        (3, pkg_24, FotoBoost.STATUS_ACTIVE, timedelta(hours=1), timedelta(hours=23)),
+        (4, pkg_7d or pkg_72, FotoBoost.STATUS_ACTIVE, timedelta(days=1), timedelta(days=6)),
+        (5, pkg_24, FotoBoost.STATUS_ACTIVE, timedelta(hours=12), timedelta(hours=12)),
+        (6, pkg_72, FotoBoost.STATUS_EXPIRED, timedelta(days=5), timedelta(days=2)),
+        (7, pkg_24, FotoBoost.STATUS_EXPIRED, timedelta(days=3), timedelta(days=2)),
+        (8, pkg_24, FotoBoost.STATUS_PENDING, timedelta(hours=0), timedelta(hours=24)),
     ]
-    for pin_idx, package, status, started_ago, ends_in in boost_specs:
-        if pin_idx >= len(david_pins):
+    for foto_idx, package, status, started_ago, ends_in in boost_specs:
+        if foto_idx >= len(david_pins):
             break
         if package is None:
             continue
-        PinBoost.objects.create(
-            pin=david_pins[pin_idx],
+        FotoBoost.objects.create(
+            foto=david_pins[foto_idx],
             owner=david,
             package=package,
             status=status,
             starts_at=now - started_ago,
-            ends_at=now + ends_in if status == PinBoost.STATUS_ACTIVE else now - ends_in,
-            fedapay_transaction_id=f'seed_boost_david_{pin_idx}_{uuid.uuid4().hex[:12]}',
+            ends_at=now + ends_in if status == FotoBoost.STATUS_ACTIVE else now - ends_in,
+            fedapay_transaction_id=f'seed_boost_david_{foto_idx}_{uuid.uuid4().hex[:12]}',
         )
         boosts_created += 1
 
-    logger.info('David — PinBoost : %d entrées (actifs, expirés, pending).', boosts_created)
+    logger.info('David — FotoBoost : %d entrées (actifs, expirés, pending).', boosts_created)
     return boosts_created
 
 
-def seed_pin_boosts(public_pins: list[Pin]) -> None:
+def seed_foto_boosts(public_fotos: list[Foto]) -> None:
     """Pins boostés pour tester badge fil + ranking discover."""
-    boosts_created = seed_david_pin_boosts(public_pins)
+    boosts_created = seed_david_foto_boosts(public_fotos)
 
     pkg_24 = BoostPackage.objects.filter(slug='24h', is_active=True).first()
     if not pkg_24:
         if boosts_created == 0:
-            logger.warning('PinBoost seed ignoré (BoostPackage 24h absent).')
+            logger.warning('FotoBoost seed ignoré (BoostPackage 24h absent).')
         return
 
     now = dj_tz.now()
 
-    def _pin_candidates(username: str, limit: int = 6) -> list[Pin]:
+    def _foto_candidates(username: str, limit: int = 6) -> list[Foto]:
         author = User.objects.filter(username=username).first()
         if not author:
             return []
         return [
             p
-            for p in public_pins
-            if p.author_id == author.id and not p.is_story and p.visibility == Pin.VISIBILITY_PUBLIC
+            for p in public_fotos
+            if p.author_id == author.id and not p.is_story and p.visibility == Foto.VISIBILITY_PUBLIC
         ][:limit]
 
     for uname in ('clara', 'max', 'emma'):
         author = User.objects.filter(username=uname).first()
         if not author:
             continue
-        pins_u = _pin_candidates(uname, 2)
+        pins_u = _foto_candidates(uname, 2)
         if not pins_u:
             continue
-        PinBoost.objects.create(
-            pin=pins_u[0],
+        FotoBoost.objects.create(
+            foto=pins_u[0],
             owner=author,
             package=pkg_24,
-            status=PinBoost.STATUS_ACTIVE,
+            status=FotoBoost.STATUS_ACTIVE,
             starts_at=now - timedelta(hours=1),
             ends_at=now + timedelta(hours=23),
         )
         boosts_created += 1
 
-    logger.info('PinBoost : %d entrées seed (David + autres créateurs).', boosts_created)
+    logger.info('FotoBoost : %d entrées seed (David + autres créateurs).', boosts_created)
 
 
-def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, skip_network: bool) -> None:
+def attach_creator_campaign_media(campaign: FotoPromoCampaign, seed_key: str, skip_network: bool) -> None:
     temp_img, fname = fetch_seed_image_file(seed_key, skip_network)
     try:
         if temp_img:
             campaign.media.save(fname or f'{seed_key}.jpg', File(temp_img), save=False)
-            campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
+            campaign.media_type = FotoPromoCampaign.MEDIA_IMAGE
             campaign.save(update_fields=['media', 'media_type', 'updated_at'])
             SEED_IMAGE_STATS['campaign_remote'] += 1
         elif skip_network:
@@ -1037,7 +1037,7 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
                 seed_placeholder_content(seed_key),
                 save=False,
             )
-            campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
+            campaign.media_type = FotoPromoCampaign.MEDIA_IMAGE
             campaign.save(update_fields=['media', 'media_type', 'updated_at'])
             SEED_IMAGE_STATS['campaign_placeholder'] += 1
         else:
@@ -1046,7 +1046,7 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
                 seed_placeholder_content(seed_key),
                 save=False,
             )
-            campaign.media_type = PinPromoCampaign.MEDIA_IMAGE
+            campaign.media_type = FotoPromoCampaign.MEDIA_IMAGE
             campaign.save(update_fields=['media', 'media_type', 'updated_at'])
             SEED_IMAGE_STATS['campaign_placeholder'] += 1
     finally:
@@ -1054,13 +1054,13 @@ def attach_creator_campaign_media(campaign: PinPromoCampaign, seed_key: str, ski
             temp_img.close()
 
 
-def seed_pin_promo_campaigns(
+def seed_foto_promo_campaigns(
     david: User | None,
-    public_pins: list[Pin],
+    public_fotos: list[Foto],
     topics_by_name: dict[str, Topic],
     skip_network: bool,
 ) -> None:
-    """Campagnes publicitaires créateur David (autonomes + liées à des pins)."""
+    """Campagnes publicitaires créateur David (autonomes + liées à des fotos)."""
     if not david:
         return
     pkg = BoostPackage.objects.filter(slug='72h', is_active=True).first()
@@ -1068,10 +1068,10 @@ def seed_pin_promo_campaigns(
     if not pkg:
         pkg = BoostPackage.objects.filter(is_active=True).first()
     if not pkg:
-        logger.warning('PinPromoCampaign seed ignoré (aucun BoostPackage).')
+        logger.warning('FotoPromoCampaign seed ignoré (aucun BoostPackage).')
         return
 
-    david_pins = _david_public_pins(public_pins, limit=12)
+    david_pins = _david_public_fotos(public_fotos, limit=12)
     now = dj_tz.now()
     frontend = str(getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:5174').rstrip('/')
     deco_topic = 'Maison et déco'
@@ -1098,7 +1098,7 @@ def seed_pin_promo_campaigns(
             'pin_views': 420,
             'seed_key': 'creator_david_presets',
             'package': pkg,
-            'status': PinPromoCampaign.STATUS_ACTIVE,
+            'status': FotoPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Shoot Cotonou — série urbaine 2026',
@@ -1118,7 +1118,7 @@ def seed_pin_promo_campaigns(
             'pin_index': 0,
             'seed_key': 'creator_david_cotonou',
             'package': pkg_7d or pkg,
-            'status': PinPromoCampaign.STATUS_ACTIVE,
+            'status': FotoPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Portfolio David — UI/UX & photo',
@@ -1138,7 +1138,7 @@ def seed_pin_promo_campaigns(
             'pin_index': 2,
             'seed_key': 'creator_david_portfolio',
             'package': pkg,
-            'status': PinPromoCampaign.STATUS_ACTIVE,
+            'status': FotoPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Atelier voyage — carnets créatifs',
@@ -1160,11 +1160,11 @@ def seed_pin_promo_campaigns(
             'pin_views': 180,
             'seed_key': 'creator_travel_notebooks',
             'package': pkg,
-            'status': PinPromoCampaign.STATUS_ACTIVE,
+            'status': FotoPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Masterclass — retouche mobile Pro',
-            'body': 'Session live : workflow Lightroom mobile + export pour Pinova.',
+            'body': 'Session live : workflow Lightroom mobile + export pour Fotoce.',
             'cta_label': "S'inscrire",
             'cta_url': f'{frontend}/profile/david1anato',
             'topic_slug': photo_topic if photo_topic in topics_by_name else '',
@@ -1180,11 +1180,11 @@ def seed_pin_promo_campaigns(
             'pin_index': 4,
             'seed_key': 'creator_david_masterclass',
             'package': pkg_7d or pkg,
-            'status': PinPromoCampaign.STATUS_PAUSED,
+            'status': FotoPromoCampaign.STATUS_PAUSED,
         },
         {
             'headline': 'Formation Pro — monétiser sa création',
-            'body': 'Webinaire gratuit : boosts, campagnes et pourboires sur Pinova.',
+            'body': 'Webinaire gratuit : boosts, campagnes et pourboires sur Fotoce.',
             'cta_label': "S'inscrire",
             'cta_url': f'{frontend}/premium',
             'topic_slug': '',
@@ -1198,7 +1198,7 @@ def seed_pin_promo_campaigns(
             'pin_views': 42,
             'seed_key': 'creator_pro_webinar',
             'package': pkg,
-            'status': PinPromoCampaign.STATUS_ACTIVE,
+            'status': FotoPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Textures Afrique — pack HD',
@@ -1217,7 +1217,7 @@ def seed_pin_promo_campaigns(
             'pin_index': 6,
             'seed_key': 'creator_david_textures',
             'package': pkg,
-            'status': PinPromoCampaign.STATUS_ACTIVE,
+            'status': FotoPromoCampaign.STATUS_ACTIVE,
         },
         {
             'headline': 'Campagne expirée — soldes presets',
@@ -1231,17 +1231,17 @@ def seed_pin_promo_campaigns(
             'pin_views': 0,
             'seed_key': 'creator_david_expired',
             'package': pkg,
-            'status': PinPromoCampaign.STATUS_EXPIRED,
+            'status': FotoPromoCampaign.STATUS_EXPIRED,
             'starts_at': now - timedelta(days=45),
             'ends_at': now - timedelta(days=5),
         },
     ]
     for idx, row in enumerate(specs):
-        pin = None
+        foto = None
         pin_index = row.get('pin_index')
         if pin_index is not None and pin_index < len(david_pins):
-            pin = david_pins[pin_index]
-        campaign, created = PinPromoCampaign.objects.update_or_create(
+            foto = david_pins[pin_index]
+        campaign, created = FotoPromoCampaign.objects.update_or_create(
             owner=david,
             headline=row['headline'],
             defaults={
@@ -1251,22 +1251,22 @@ def seed_pin_promo_campaigns(
                 'topic_slug': row.get('topic_slug', ''),
                 'targeting': row.get('targeting', {}),
                 'package': row.get('package', pkg),
-                'status': row.get('status', PinPromoCampaign.STATUS_ACTIVE),
+                'status': row.get('status', FotoPromoCampaign.STATUS_ACTIVE),
                 'starts_at': row.get('starts_at', now - timedelta(days=2)),
                 'ends_at': row.get('ends_at', now + timedelta(days=30)),
                 'impressions': row.get('impressions', 0),
                 'clicks': row.get('clicks', 0),
                 'pin_views': row.get('pin_views', 0),
-                'pin': pin,
+                'pin': foto,
                 'fedapay_transaction_id': f'seed_promo_david_{idx}_{uuid.uuid4().hex[:12]}',
             },
         )
         if created or not campaign.media:
             attach_creator_campaign_media(campaign, row['seed_key'], skip_network)
     logger.info(
-        'David — PinPromoCampaign : %d campagnes actives, %d au total.',
-        PinPromoCampaign.objects.filter(owner=david, status=PinPromoCampaign.STATUS_ACTIVE).count(),
-        PinPromoCampaign.objects.filter(owner=david).count(),
+        'David — FotoPromoCampaign : %d campagnes actives, %d au total.',
+        FotoPromoCampaign.objects.filter(owner=david, status=FotoPromoCampaign.STATUS_ACTIVE).count(),
+        FotoPromoCampaign.objects.filter(owner=david).count(),
     )
 
 
@@ -1279,7 +1279,7 @@ def seed_profile_ad_preferences(profiles_by_username: dict[str, Profile]) -> Non
     logger.info('Préférences publicitaires profils seed à jour.')
 
 
-def seed_internal_tips(public_pins: list[Pin]) -> None:
+def seed_internal_tips(public_fotos: list[Foto]) -> None:
     """Portefeuilles et pourboires internes approuvés (démo)."""
     TipPlatformConfig.load()
     david = User.objects.filter(username='david1anato').first()
@@ -1294,14 +1294,14 @@ def seed_internal_tips(public_pins: list[Pin]) -> None:
     wallet.save(update_fields=['payout_phone', 'payout_label', 'updated_at'])
 
     donors = [u for u in (clara, max_user) if u]
-    pin = next((p for p in public_pins if p.author_id == david.id), None)
+    foto = next((p for p in public_fotos if p.author_id == david.id), None)
     amounts = [1000, 2500, 5000]
     for donor, amount in zip(donors, amounts[: len(donors)]):
         commission, net = split_tip_amount(amount, cfg.commission_percent)
         tip = TipTransaction.objects.create(
             donor=donor,
             recipient=david,
-            pin=pin,
+            foto=pin,
             amount_gross=amount,
             commission_amount=commission,
             amount_net=net,
@@ -1321,7 +1321,7 @@ def seed_internal_tips(public_pins: list[Pin]) -> None:
 
 def seed_monetization(
     admin: User,
-    public_pins: list[Pin],
+    public_fotos: list[Foto],
     topics_by_name: dict[str, Topic],
     profiles_by_username: dict[str, Profile],
     skip_network: bool,
@@ -1330,17 +1330,17 @@ def seed_monetization(
     seed_boost_packages()
     seed_profile_ad_preferences(profiles_by_username)
     seed_partner_campaigns(admin, topics_by_name, skip_network)
-    seed_pin_boosts(public_pins)
+    seed_foto_boosts(public_fotos)
     david = User.objects.filter(username='david1anato').first()
-    seed_pin_promo_campaigns(david, public_pins, topics_by_name, skip_network)
-    seed_internal_tips(public_pins)
+    seed_foto_promo_campaigns(david, public_fotos, topics_by_name, skip_network)
+    seed_internal_tips(public_fotos)
 
 
-def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None:
+def seed_contest_data(public_fotos: list[Foto], regular_users: list[User]) -> None:
     """Données concours : settings actifs + scores dérivés des vrais likes / vues / saves / commentaires / partages."""
     logger.debug('seed_contest_data: %d utilisateurs seed (non utilisés pour le classement).', len(regular_users))
-    if not public_pins:
-        logger.info('Contest seed ignoré (aucun pin public).')
+    if not public_fotos:
+        logger.info('Contest seed ignoré (aucun foto public).')
         return
 
     contest = create_monthly_contest_if_missing()
@@ -1375,27 +1375,27 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
         },
     )
 
-    non_story_public = [p for p in public_pins if not p.is_story]
+    non_story_public = [p for p in public_fotos if not p.is_story]
     eligible = [p for p in non_story_public if contest.start_at <= p.created_at < contest.end_at]
     if not eligible:
         eligible = non_story_public[: min(120, len(non_story_public))]
 
-    ranked: list[tuple[Pin, float, dict[str, int]]] = []
-    for pin in eligible:
-        counts = get_pin_contest_display_counts(pin)
-        score = estimate_contest_adjusted_score_from_counts(contest, pin, counts)
-        ranked.append((pin, score, counts))
+    ranked: list[tuple[Foto, float, dict[str, int]]] = []
+    for foto in eligible:
+        counts = get_foto_contest_display_counts(foto)
+        score = estimate_contest_adjusted_score_from_counts(contest, foto, counts)
+        ranked.append((foto, score, counts))
 
     ranked.sort(key=lambda row: (-row[1], row[0].pk))
     chosen_tuples = ranked[: min(120, len(ranked))]
     pin_scores_created = []
     creator_totals: dict[int, float] = {}
 
-    for rank, (pin, score, counts) in enumerate(chosen_tuples, start=1):
-        obj = PinContestScore.objects.create(
+    for rank, (foto, score, counts) in enumerate(chosen_tuples, start=1):
+        obj = FotoContestScore.objects.create(
             contest=contest,
-            pin=pin,
-            creator=pin.author,
+            foto=foto,
+            creator=foto.author,
             raw_score=score,
             adjusted_score=score,
             rank=rank,
@@ -1419,7 +1419,7 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
             previous_rank=rank,
         )
 
-    # Flux live initial pour web/mobile (valeurs cohérentes avec PinContestScore).
+    # Flux live initial pour web/mobile (valeurs cohérentes avec FotoContestScore).
     for row in pin_scores_created[:40]:
         likes = int(row.total_likes or 0)
         views = int(row.total_views or 0)
@@ -1430,10 +1430,10 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
             contest=contest,
             event_type='pin_rank_updated',
             entity_type='pin',
-            entity_id=row.pin_id,
+            entity_id=row.foto_id,
             payload={
-                'pin_id': row.pin_id,
-                'pin_slug': row.pin.slug,
+                'foto_id': row.foto_id,
+                'foto_slug': row.pin.slug,
                 'pin_title': row.pin.title,
                 'creator_id': row.creator_id,
                 'creator_username': row.creator.username,
@@ -1469,8 +1469,8 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
         )
 
     ordered_win = list(
-        PinContestScore.objects.filter(contest=contest, pin__is_story=False)
-        .order_by('-adjusted_score', 'rank', 'pin_id')
+        FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
+        .order_by('-adjusted_score', 'rank', 'foto_id')
         .select_related('creator')
     )
     winners = []
@@ -1488,7 +1488,7 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
             'winners_json': [
                 {
                     'rank': idx + 1,
-                    'pin_id': row.pin_id,
+                    'foto_id': row.foto_id,
                     'creator_id': row.creator_id,
                     'score': row.adjusted_score,
                 }
@@ -1503,7 +1503,7 @@ def seed_contest_data(public_pins: list[Pin], regular_users: list[User]) -> None
     )
     logger.info(
         f'Contest seed OK — {contest.contest_key}: '
-        f'{PinContestScore.objects.filter(contest=contest).count()} pins, '
+        f'{FotoContestScore.objects.filter(contest=contest).count()} fotos, '
         f'{CreatorContestScore.objects.filter(contest=contest).count()} créateurs.'
     )
 
@@ -1593,7 +1593,7 @@ def seed_referral_contest_leaderboard(contest, regular_users: list[User]) -> Non
 
 def cleanup_seed():
     cleanup_relational_data()
-    cleanup_existing_pin_media()
+    cleanup_existing_foto_media()
 
 
 def seed_subscription_pricing():
@@ -1626,17 +1626,17 @@ def seed_subscription_pricing():
     logger.info('Tarifs SubscriptionPricing à jour.')
 
 
-def seed_pinova_subscription_config():
-    cfg = PinovaSubscriptionConfig.load()
+def seed_fotoce_subscription_config():
+    cfg = FotoceSubscriptionConfig.load()
     if cfg.annual_discount_percent != 12:
         cfg.annual_discount_percent = 12
         cfg.save(update_fields=['annual_discount_percent'])
-    logger.info('PinovaSubscriptionConfig (singleton) à jour.')
+    logger.info('FotoceSubscriptionConfig (singleton) à jour.')
 
 
 def seed_legal_documents():
-    """Pages légales + contact (alignées sur pins.legal_defaults)."""
-    from pins.legal_defaults import (
+    """Pages légales + contact (alignées sur fotos.legal_defaults)."""
+    from fotos.legal_defaults import (
         CONTACT_EN,
         CONTACT_FR,
         PRIVACY_EN,
@@ -1675,7 +1675,7 @@ def seed_legal_documents():
             'title_en': default_title('contact', 'en'),
             'body_fr': CONTACT_FR,
             'body_en': CONTACT_EN,
-            'contact_email': 'support@pinova.app',
+            'contact_email': 'support@fotoce.app',
             'translations_cache': {},
         },
     )
@@ -1690,12 +1690,12 @@ def seed_faq_items():
             'question_fr': 'Comment gérer la confidentialité de mon compte ?',
             'question_en': 'How do I manage my account privacy?',
             'answer_fr': (
-                'Paramétrez la visibilité de vos pins, la politique de commentaires et les informations '
+                'Paramétrez la visibilité de vos fotos, la politique de commentaires et les informations '
                 'affichées sur votre profil. Pour savoir quelles données nous traitons, consultez la '
                 'politique de confidentialité.'
             ),
             'answer_en': (
-                'Adjust pin visibility, comments policy, and profile information. '
+                'Adjust foto visibility, comments policy, and profile information. '
                 'See our Privacy Policy for details on data processing.'
             ),
             'related_legal_slug': LegalDocument.SLUG_PRIVACY,
@@ -1705,11 +1705,11 @@ def seed_faq_items():
             'question_fr': 'Quelles sont les règles d’utilisation de la plateforme ?',
             'question_en': 'What are the platform rules?',
             'answer_fr': (
-                'Pinova attend un comportement respectueux des lois et de la communauté. Contenus interdits, '
+                'Fotoce attend un comportement respectueux des lois et de la communauté. Contenus interdits, '
                 'comptes et responsabilités sont décrits dans les conditions d’utilisation.'
             ),
             'answer_en': (
-                'Pinova requires lawful, respectful behaviour. Prohibited content and account rules are '
+                'Fotoce requires lawful, respectful behaviour. Prohibited content and account rules are '
                 'described in our Terms of Service.'
             ),
             'related_legal_slug': LegalDocument.SLUG_TERMS,
@@ -1758,11 +1758,11 @@ def seed_faq_items():
     logger.info('FaqItem (seed) à jour.')
 
 
-def random_pin_content_flags() -> dict:
+def random_foto_content_flags() -> dict:
     """Politique commentaires + flags modération / sensible (échantillon)."""
     return {
         'comments_policy': random.choices(
-            [Pin.COMMENTS_OPEN, Pin.COMMENTS_FOLLOWERS_ONLY, Pin.COMMENTS_CLOSED],
+            [Foto.COMMENTS_OPEN, Foto.COMMENTS_FOLLOWERS_ONLY, Foto.COMMENTS_CLOSED],
             weights=[0.88, 0.09, 0.03],
             k=1,
         )[0],
@@ -1791,59 +1791,59 @@ def seed_board_collaboration_invite_sample(boards_by_user: dict[int, list[Board]
     logger.info('BoardCollaborationInvite (pending) créée.')
 
 
-def seed_pin_feed_thumbnails(created_pins: list[Pin]) -> None:
-    """Miniatures feed (max 400px) pour les pins catalogue (hors stories)."""
+def seed_foto_feed_thumbnails(created_fotos: list[Foto]) -> None:
+    """Miniatures feed (max 400px) pour les fotos catalogue (hors stories)."""
     candidates = [
-        p for p in created_pins
+        p for p in created_fotos
         if not p.is_story and p.image and getattr(p.image, 'name', '')
     ]
     ok = 0
-    for pin in candidates:
+    for foto in candidates:
         try:
-            pin.refresh_from_db()
-            if ensure_pin_feed_thumbnail(pin, force=True):
+            foto.refresh_from_db()
+            if ensure_foto_feed_thumbnail(pin, force=True):
                 ok += 1
         except Exception as exc:
-            logger.warning('Miniature feed seed pin=%s : %s', pin.pk, exc)
-    logger.info('Miniatures feed pins : %d/%d.', ok, len(candidates))
+            logger.warning('Miniature feed seed foto=%s : %s', foto.pk, exc)
+    logger.info('Miniatures feed fotos : %d/%d.', ok, len(candidates))
 
 
-def seed_pin_variants_square_sample(created_pins: list[Pin]) -> None:
+def seed_foto_variants_square_sample(created_fotos: list[Foto]) -> None:
     """Variantes carrées (hors story) pour tester les crops API / front."""
-    candidates = [p for p in created_pins if p.image and not p.is_story]
+    candidates = [p for p in created_fotos if p.image and not p.is_story]
     random.shuffle(candidates)
     n = 0
-    for pin in candidates[:14]:
-        if PinVariant.objects.filter(pin=pin, kind=PinVariant.KIND_SQUARE).exists():
+    for foto in candidates[:14]:
+        if FotoVariant.objects.filter(pin=pin, kind=FotoVariant.KIND_SQUARE).exists():
             continue
         try:
-            pin.image.open('rb')
-            raw = pin.image.read()
-            pin.image.close()
+            foto.image.open('rb')
+            raw = foto.image.read()
+            foto.image.close()
         except Exception:
             continue
-        suf = Path(pin.image.name).suffix.lower() if pin.image.name else '.jpg'
+        suf = Path(pin.image.name).suffix.lower() if foto.image.name else '.jpg'
         if suf not in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
             suf = '.jpg'
-        pv = PinVariant(pin=pin, kind=PinVariant.KIND_SQUARE)
+        pv = FotoVariant(pin=pin, kind=FotoVariant.KIND_SQUARE)
         pv.image.save(f'variant_sq_{pin.slug}{suf}', ContentFile(raw), save=True)
         n += 1
-    logger.info(f'PinVariant carré (seed) : {n} fichiers.')
+    logger.info(f'FotoVariant carré (seed) : {n} fichiers.')
 
 
-def seed_content_sample_reports(public_pins: list[Pin], regular_users: list[User]) -> None:
-    """Signalements pin / profil / commentaire (contraintes uniques)."""
-    if len(public_pins) < 2 or len(regular_users) < 4:
+def seed_content_sample_reports(public_fotos: list[Foto], regular_users: list[User]) -> None:
+    """Signalements foto / profil / commentaire (contraintes uniques)."""
+    if len(public_fotos) < 2 or len(regular_users) < 4:
         logger.info('ContentReport : ignoré (données insuffisantes).')
         return
-    pin_a, pin_b = public_pins[0], public_pins[1]
+    pin_a, pin_b = public_fotos[0], public_fotos[1]
     r0, r1, r2 = regular_users[0], regular_users[1], regular_users[2]
     target = next((u for u in regular_users if u.id not in (r0.id, r1.id, r2.id)), regular_users[3])
 
     ContentReport.objects.get_or_create(
         reporter=r0,
-        pin=pin_a,
-        defaults={'category': 'spam', 'details': 'Seed : signalement pin.', 'reason': ''},
+        foto=pin_a,
+        defaults={'category': 'spam', 'details': 'Seed : signalement foto.', 'reason': ''},
     )
     ContentReport.objects.get_or_create(
         reporter=r1,
@@ -1917,21 +1917,21 @@ def seed_topic_translations(topics_by_name: dict[str, Topic]):
     print('TopicTranslation (échantillon) créées.')
 
 
-def finalize_seed_stories_for_active_ring(story_pins: list[Pin]) -> None:
+def finalize_seed_stories_for_active_ring(story_fotos: list[Foto]) -> None:
     """
-    Aligne les stories seed avec l’API GET `pins/active-stories` :
+    Aligne les stories seed avec l’API GET `fotos/active-stories` :
     - filtres : is_story, publication non planifiée dans le futur, story_expires_at non nul et > now ;
     - les stories « grille » (story_ephemeral=False) ont story_expires_at=None côté save() → exclues du bandeau ;
     - on force story_ephemeral=True + une expiration dans le futur, un created_at récent (UX),
-      et on annule toute planification future qui masquerait encore le pin.
+      et on annule toute planification future qui masquerait encore le foto.
 
     (Sans ceci, expires tombe à NULL pour non-éphémère, ou avec des dates passées après recul de created_at.)
     """
-    if not story_pins:
+    if not story_fotos:
         return
     now = dj_tz.now()
     n = 0
-    for p in story_pins:
+    for p in story_fotos:
         p.refresh_from_db()
         minutes_ago = random.randint(3, 220)
         created_at = now - timedelta(minutes=minutes_ago)
@@ -1946,7 +1946,7 @@ def finalize_seed_stories_for_active_ring(story_pins: list[Pin]) -> None:
         if p.scheduled_publish_at and p.scheduled_publish_at > now:
             upd['scheduled_publish_at'] = None
 
-        Pin.objects.filter(pk=p.pk).update(**upd)
+        Foto.objects.filter(pk=p.pk).update(**upd)
         n += 1
     logger.info(
         'Stories seed (%s) : story_ephemeral=True, story_expires_at dans 10–22 h, '
@@ -1965,7 +1965,7 @@ SEED_DAVID_FAN_VIEW_EVENTS_CAP = 1000000000
 
 def seed_david_fan_army(david_user: User) -> None:
     """
-    Followers + likes + PinViewEvent pour david1anato (compteurs API réels).
+    Followers + likes + FotoViewEvent pour david1anato (compteurs API réels).
 
     Les volumes très élevés en une seule commande restent limités par les constantes ci-dessus
     (temps / disque / mémoire).
@@ -1993,14 +1993,14 @@ def seed_david_fan_army(david_user: User) -> None:
     person = Person(Locale.FR)
     pw_hash = make_password('!seed_fan_inactive!')
     david_profile = Profile.objects.get(user_id=david_user.id)
-    pin_ids = list(Pin.objects.filter(author=david_user).values_list('id', flat=True))
-    if not pin_ids:
-        logger.info('seed_david_fan_army : aucun pin David — skip.')
+    foto_ids = list(Foto.objects.filter(author=david_user).values_list('id', flat=True))
+    if not foto_ids:
+        logger.info('seed_david_fan_army : aucun foto David — skip.')
         return
 
     logger.info(
         f'seed_david_fan_army : followers={n_followers}, vues≈{n_views}, '
-        f'likes/fan≤{likes_per_fan} (pins David={len(pin_ids)})…',
+        f'likes/fan≤{likes_per_fan} (pins David={len(foto_ids)})…',
     )
 
     FollowingThrough = Profile.following.through
@@ -2015,7 +2015,7 @@ def seed_david_fan_army(david_user: User) -> None:
             users_chunk.append(
                 User(
                     username=uname[:150],
-                    email=f'{uname}@seed.pinova.invalid',
+                    email=f'{uname}@seed.fotoce.invalid',
                     password=pw_hash,
                     is_active=True,
                 )
@@ -2066,19 +2066,19 @@ def seed_david_fan_army(david_user: User) -> None:
         like_objs: list[Like] = []
         rng = random.Random(424242)
         for uid in fan_user_ids:
-            k = min(likes_per_fan, len(pin_ids))
+            k = min(likes_per_fan, len(foto_ids))
             if k <= 0:
                 continue
-            for pid in rng.sample(pin_ids, k=k):
-                like_objs.append(Like(user_id=uid, pin_id=pid))
+            for pid in rng.sample(foto_ids, k=k):
+                like_objs.append(Like(user_id=uid, foto_id=pid))
         for i in range(0, len(like_objs), 8000):
             Like.objects.bulk_create(like_objs[i : i + 8000], ignore_conflicts=True)
         logger.info(f'  -> {len(like_objs)} likes créés.')
 
     if fan_user_ids and n_views > 0:
         logger.info(f'  -> Génération de {n_views} vues (simulées via bulk)...')
-        view_batch: list[PinViewEvent] = []
-        n_pins = len(pin_ids)
+        view_batch: list[FotoViewEvent] = []
+        n_pins = len(foto_ids)
         n_fans = len(fan_user_ids)
         chunk_target = 25000
         total_views_created = 0
@@ -2087,12 +2087,12 @@ def seed_david_fan_army(david_user: User) -> None:
             limit = min(chunk_target, n_views - offset)
             for k in range(limit):
                 view_batch.append(
-                    PinViewEvent(
+                    FotoViewEvent(
                         user_id=fan_user_ids[(offset + k) % n_fans],
-                        pin_id=pin_ids[(offset + k) % n_pins],
+                        foto_id=foto_ids[(offset + k) % n_pins],
                     )
                 )
-            PinViewEvent.objects.bulk_create(view_batch, batch_size=8000)
+            FotoViewEvent.objects.bulk_create(view_batch, batch_size=8000)
             total_views_created += limit
             if total_views_created % 100000 == 0 or total_views_created == n_views:
                 logger.info(f'     - {total_views_created}/{n_views} vues...')
@@ -2105,25 +2105,25 @@ def seed_david_fan_army(david_user: User) -> None:
     )
 
 
-def attach_image_to_pin(pin: Pin, temp_img, fname: str, skip_network: bool) -> bool:
+def attach_image_to_pin(foto: Foto, temp_img, fname: str, skip_network: bool) -> bool:
     stem = Path(fname).stem if fname else f'pin_{pin.pk}'
     if temp_img:
-        pin.image.save(fname, File(temp_img), save=True)
+        foto.image.save(fname, File(temp_img), save=True)
         SEED_IMAGE_STATS['pin_remote'] += 1
     else:
-        seed = str(pin.pk or pin.slug or stem)
-        pin.image.save(
+        seed = str(pin.pk or foto.slug or stem)
+        foto.image.save(
             f'{stem}.png',
             seed_placeholder_content(seed),
             save=True,
         )
         SEED_IMAGE_STATS['pin_placeholder'] += 1
-    if not pin.is_story and pin.image and getattr(pin.image, 'name', ''):
+    if not foto.is_story and foto.image and getattr(pin.image, 'name', ''):
         try:
-            if ensure_pin_feed_thumbnail(pin, force=True):
+            if ensure_foto_feed_thumbnail(pin, force=True):
                 SEED_IMAGE_STATS['pin_feed_thumb'] += 1
         except Exception as exc:
-            logger.warning('Miniature feed attach pin=%s : %s', pin.pk, exc)
+            logger.warning('Miniature feed attach foto=%s : %s', foto.pk, exc)
     return True
 
 
@@ -2135,7 +2135,7 @@ def resolve_skip_network() -> bool:
 
 
 def _apply_deploy_defaults() -> None:
-    """Sur Render : seed sans téléchargement d'images et volume pins modéré (sauf SEED_FORCE_NETWORK)."""
+    """Sur Render : seed sans téléchargement d'images et volume fotos modéré (sauf SEED_FORCE_NETWORK)."""
     on_render = os.environ.get('RENDER', '').lower() in ('true', '1', 'yes')
     if not on_render:
         return
@@ -2158,7 +2158,7 @@ def seed_data():
     User.objects.exclude(is_superuser=True).delete()
 
     seed_subscription_pricing()
-    seed_pinova_subscription_config()
+    seed_fotoce_subscription_config()
     seed_legal_documents()
     seed_faq_items()
 
@@ -2251,7 +2251,7 @@ def seed_data():
     dprof: Profile = david_user.profile
     dprof.display_name = 'David Anato'
     dprof.subscription_plan = Profile.PLAN_PRO
-    dprof.bio = 'Créateur Pinova — design, photo & voyage.'
+    dprof.bio = 'Créateur Fotoce — design, photo & voyage.'
     dprof.avatar_color = '#e11d48'
     dprof.subscription_seat_bundle = 'family'
     dprof.discoverable_profile = True
@@ -2430,21 +2430,21 @@ def seed_data():
         'coffee',
     ]
 
-    created_pins: list[Pin] = []
-    story_pins: list[Pin] = []
+    created_fotos: list[Foto] = []
+    story_fotos: list[Foto] = []
 
-    logger.info(f'Création de ~{pin_target} pins — multi-sources JPG/PNG/WebP/GIF, dimensions variées (stories free/plus/pro)…')
+    logger.info(f'Création de ~{pin_target} fotos — multi-sources JPG/PNG/WebP/GIF, dimensions variées (stories free/plus/pro)…')
 
     def maybe_visibility(u: User, topic_obj: Topic) -> str:
         pr = profiles_by_username[u.username]
         if pr.private_profile and random.random() < 0.25:
-            return Pin.VISIBILITY_FOLLOWERS
+            return Foto.VISIBILITY_FOLLOWERS
         roll = random.random()
         if roll < 0.82:
-            return Pin.VISIBILITY_PUBLIC
+            return Foto.VISIBILITY_PUBLIC
         if roll < 0.94:
-            return Pin.VISIBILITY_FOLLOWERS
-        return Pin.VISIBILITY_PRIVATE
+            return Foto.VISIBILITY_FOLLOWERS
+        return Foto.VISIBILITY_PRIVATE
 
     for i in range(100, 100 + pin_target):
         query = random.choice(image_queries)
@@ -2469,7 +2469,7 @@ def seed_data():
         ):
             scheduled = dj_tz.now() + timedelta(days=random.randint(1, 14))
 
-        pin = Pin.objects.create(
+        foto = Foto.objects.create(
             title=f"Inspiration {query.capitalize()} {i + 1}",
             description=f"Découverte sur le thème {query} — {topic}. #seed",
             author=author,
@@ -2478,44 +2478,44 @@ def seed_data():
             link=f'https://example.com/ref/{i}' if random.random() < 0.15 else '',
             is_story=is_story,
             scheduled_publish_at=scheduled,
-            **random_pin_content_flags(),
+            **random_foto_content_flags(),
         )
 
         if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
-            pin.refresh_from_db()
+            foto.refresh_from_db()
 
         # Hashtags (sous-ensemble)
         if random.random() < 0.35:
             for hn in random.sample(HASHTAG_POOL, k=random.randint(1, 3)):
                 ht, _ = Hashtag.objects.get_or_create(name=hn.lower())
-                pin.hashtags.add(ht)
+                foto.hashtags.add(ht)
 
-        # PinBoard : rattacher une partie des pins aux boards du même auteur
+        # FotoBoard : rattacher une partie des fotos aux boards du même auteur
         author_boards = boards_by_user.get(author.id, [])
         if author_boards and random.random() < 0.45:
             b = random.choice(author_boards)
-            PinBoard.objects.update_or_create(
-                pin=pin,
+            FotoBoard.objects.update_or_create(
+                foto=pin,
                 board=b,
                 defaults={'position': random.randint(0, 40)},
             )
 
-        created_pins.append(pin)
+        created_fotos.append(foto)
         if is_story:
-            story_pins.append(pin)
+            story_fotos.append(foto)
 
         # Variantes pour quelques stories Pro / Plus (image dupliquée)
         if (
             is_story
             and pr.subscription_plan in {Profile.PLAN_PLUS, Profile.PLAN_PRO}
             and random.random() < 0.35
-            and pin.image
+            and foto.image
         ):
-            pin.image.open('rb')
-            raw = pin.image.read()
-            pin.image.close()
-            pv = PinVariant(pin=pin, kind=PinVariant.KIND_STORY)
-            suf = Path(pin.image.name).suffix.lower() if pin.image and pin.image.name else '.jpg'
+            foto.image.open('rb')
+            raw = foto.image.read()
+            foto.image.close()
+            pv = FotoVariant(pin=pin, kind=FotoVariant.KIND_STORY)
+            suf = Path(pin.image.name).suffix.lower() if foto.image and foto.image.name else '.jpg'
             if suf not in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
                 suf = '.jpg'
             pv.image.save(f'story_variant_{pin.slug}{suf}', ContentFile(raw), save=True)
@@ -2523,10 +2523,10 @@ def seed_data():
         # Historique provenance minimal
         if random.random() < 0.08:
             h = hashlib.sha256(f'{pin.id}-{pin.slug}'.encode()).hexdigest()
-            PinProvenanceEvent.objects.create(
-                pin=pin,
+            FotoProvenanceEvent.objects.create(
+                foto=pin,
                 actor=author,
-                action=PinProvenanceEvent.ACTION_CREATE,
+                action=FotoProvenanceEvent.ACTION_CREATE,
                 previous_hash='',
                 current_hash=h,
                 metadata={'seed': True},
@@ -2539,7 +2539,7 @@ def seed_data():
         ):
             PrivatePinTag.objects.get_or_create(
                 user=author,
-                pin=pin,
+                foto=pin,
                 tag=random.choice(['brief', 'client-a', 'draft', 'à-revoir']),
             )
 
@@ -2549,7 +2549,7 @@ def seed_data():
         if (i - 99) % 80 == 0:
             logger.info(f'  … {i - 99}/{pin_target} pins')
 
-    logger.info(f'Pins créés : {len(created_pins)} dont {len(story_pins)} stories.')
+    logger.info(f'Pins créés : {len(created_fotos)} dont {len(story_fotos)} stories.')
 
     david_u = User.objects.filter(username='david1anato').first()
     if david_u and topics_by_name:
@@ -2563,30 +2563,30 @@ def seed_data():
             topic_obj = topics_by_name[topic]
             sid = 70000 + di
             temp_img, media_fname = fetch_seed_image_file(f'david_{sid}_{q}', skip_network)
-            vis = Pin.VISIBILITY_PUBLIC if random.random() < 0.88 else Pin.VISIBILITY_FOLLOWERS
+            vis = Foto.VISIBILITY_PUBLIC if random.random() < 0.88 else Foto.VISIBILITY_FOLLOWERS
             is_story = random.random() < 0.12
-            pin = Pin.objects.create(
+            foto = Foto.objects.create(
                 title=f'David — {q.capitalize()} #{di + 1}',
                 description=f'Seed tableau David Anato · {topic}.',
                 author=david_u,
                 topic=topic_obj,
                 visibility=vis,
-                link=f'https://pinova.invalid/ref/david/{sid}' if random.random() < 0.12 else '',
+                link=f'https://fotoce.invalid/ref/david/{sid}' if random.random() < 0.12 else '',
                 is_story=is_story,
-                **random_pin_content_flags(),
+                **random_foto_content_flags(),
             )
             if attach_image_to_pin(pin, temp_img, media_fname, skip_network):
-                pin.refresh_from_db()
+                foto.refresh_from_db()
             if d_boards and random.random() < 0.78:
                 b = random.choice(d_boards)
-                PinBoard.objects.update_or_create(
-                    pin=pin,
+                FotoBoard.objects.update_or_create(
+                    foto=pin,
                     board=b,
                     defaults={'position': random.randint(0, 60)},
                 )
-            created_pins.append(pin)
+            created_fotos.append(foto)
             if is_story:
-                story_pins.append(pin)
+                story_fotos.append(foto)
             if temp_img:
                 temp_img.close()
         logger.info(f'Pins David : +180 (boards remplis).')
@@ -2604,47 +2604,47 @@ def seed_data():
         q = extra_story_queries[j % len(extra_story_queries)]
         sid = 9000 + j
         temp_img, media_fname = fetch_seed_image_file(f'story_extra_{sid}_{q}', skip_network)
-        pin = Pin.objects.create(
+        foto = Foto.objects.create(
             title=f'Story — {author.username} · {q}',
             description=f'Story seed #{j} ({author.profile.subscription_plan}).',
             author=author,
             topic=topic_obj,
-            visibility=Pin.VISIBILITY_PUBLIC,
+            visibility=Foto.VISIBILITY_PUBLIC,
             is_story=True,
-            **random_pin_content_flags(),
+            **random_foto_content_flags(),
         )
         attach_image_to_pin(pin, temp_img, media_fname, skip_network)
-        story_pins.append(pin)
-        created_pins.append(pin)
+        story_fotos.append(foto)
+        created_fotos.append(foto)
         if temp_img:
             temp_img.close()
 
-    logger.info(f'Après boost stories : {len(story_pins)} stories au total.')
+    logger.info(f'Après boost stories : {len(story_fotos)} stories au total.')
 
-    finalize_seed_stories_for_active_ring(story_pins)
+    finalize_seed_stories_for_active_ring(story_fotos)
 
-    seed_pin_feed_thumbnails(created_pins)
-    seed_pin_variants_square_sample(created_pins)
+    seed_foto_feed_thumbnails(created_fotos)
+    seed_foto_variants_square_sample(created_fotos)
 
-    # Interactions aléatoires (likes/saves/views) pour les pins publics
-    public_pins = [p for p in created_pins if p.visibility == Pin.VISIBILITY_PUBLIC]
-    sample_pins = random.sample(public_pins, min(160, len(public_pins)))
+    # Interactions aléatoires (likes/saves/views) pour les fotos publics
+    public_fotos = [p for p in created_fotos if p.visibility == Foto.VISIBILITY_PUBLIC]
+    sample_pins = random.sample(public_fotos, min(160, len(public_fotos)))
 
     logger.info('Likes, saves, vues, recherches…')
-    for pin in sample_pins:
+    for foto in sample_pins:
         likers = random.sample(regular_users, k=min(random.randint(1, 7), len(regular_users)))
         for liker in likers:
-            if liker.id != pin.author_id:
-                Like.objects.get_or_create(user=liker, pin=pin)
+            if liker.id != foto.author_id:
+                Like.objects.get_or_create(user=liker, foto=pin)
 
         savers = random.sample(regular_users, k=min(random.randint(0, 4), len(regular_users)))
         for saver in savers:
-            if saver.id != pin.author_id:
-                Save.objects.get_or_create(user=saver, pin=pin)
+            if saver.id != foto.author_id:
+                Save.objects.get_or_create(user=saver, foto=pin)
 
         viewers = random.sample(regular_users, k=min(random.randint(1, 5), len(regular_users)))
         for viewer in viewers:
-            PinViewEvent.objects.create(user=viewer, pin=pin)
+            FotoViewEvent.objects.create(user=viewer, foto=pin)
 
     seed_david_fan_army(david_user)
 
@@ -2658,26 +2658,26 @@ def seed_data():
 
     # Commentaires & réponses (couverture élargie + mentions @)
     logger.info('Commentaires…')
-    if not public_pins:
+    if not public_fotos:
         comment_pins = []
     else:
-        n_sample = min(len(public_pins), max(160, len(public_pins) // 3))
-        comment_pin_ids = set(random.sample(public_pins, n_sample))
+        n_sample = min(len(public_fotos), max(160, len(public_fotos) // 3))
+        comment_foto_ids = set(random.sample(public_fotos, n_sample))
         david_ref = User.objects.filter(username='david1anato').first()
         if david_ref:
             david_public = [
-                p for p in public_pins if p.author_id == david_ref.id
+                p for p in public_fotos if p.author_id == david_ref.id
             ]
             if david_public:
                 n_d = min(len(david_public), 70)
-                comment_pin_ids.update(random.sample(david_public, n_d))
-        comment_pins = list(comment_pin_ids)
+                comment_foto_ids.update(random.sample(david_public, n_d))
+        comment_pins = list(comment_foto_ids)
         random.shuffle(comment_pins)
 
     all_users_for_comments = regular_users + [admin]
 
-    for pin in comment_pins:
-        authors_pool = [x for x in all_users_for_comments if x.id != pin.author_id]
+    for foto in comment_pins:
+        authors_pool = [x for x in all_users_for_comments if x.id != foto.author_id]
         if not authors_pool:
             continue
         n_root = random.choices([1, 2, 3, 4, 5], weights=[18, 35, 28, 13, 6], k=1)[0]
@@ -2704,7 +2704,7 @@ def seed_data():
             mentions_seed = extract_mentions(base_txt)
             c = Comment.objects.create(
                 user=cu,
-                pin=pin,
+                foto=pin,
                 text=base_txt,
                 gif_url=gif_url_val,
                 original_language='fr',
@@ -2729,7 +2729,7 @@ def seed_data():
                     rtxt = f'{rtxt} @{moz}'
                 child = Comment.objects.create(
                     user=replier,
-                    pin=pin,
+                    foto=pin,
                     text=rtxt,
                     parent=parent,
                     original_language='fr',
@@ -2742,7 +2742,7 @@ def seed_data():
                     rtxt2 = random.choice(COMMENT_REPLY_SNIPPETS_FR)
                     gc = Comment.objects.create(
                         user=rp2,
-                        pin=pin,
+                        foto=pin,
                         text=rtxt2,
                         parent=child,
                         original_language='fr',
@@ -2756,17 +2756,17 @@ def seed_data():
             for lc in likers_c:
                 CommentLike.objects.get_or_create(user=lc, comment=c)
 
-    seed_contest_data(public_pins, regular_users)
+    seed_contest_data(public_fotos, regular_users)
 
     seed_monetization(
         admin,
-        public_pins,
+        public_fotos,
         topics_by_name,
         profiles_by_username,
         skip_network,
     )
 
-    seed_content_sample_reports(public_pins, regular_users)
+    seed_content_sample_reports(public_fotos, regular_users)
     seed_user_blocks_sample()
 
     # Notifications factices (variété de types)
@@ -2774,16 +2774,16 @@ def seed_data():
     notif_specs = []
     if len(regular_users) >= 2:
         u1, u2 = regular_users[0], regular_users[1]
-        pin0 = public_pins[0] if public_pins else None
+        pin0 = public_fotos[0] if public_fotos else None
         if pin0:
             notif_specs.append(
                 Notification(
                     recipient=u2,
                     sender=u1,
                     notification_type='like',
-                    message=f'{u1.username} a aimé votre pin.',
-                    pin_id=pin0.id,
-                    pin_slug=pin0.slug,
+                    message=f'{u1.username} a aimé votre foto.',
+                    foto_id=pin0.id,
+                    foto_slug=pin0.slug,
                 )
             )
         notif_specs.append(
@@ -2800,7 +2800,7 @@ def seed_data():
                 sender=None,
                 notification_type='welcome',
                 title='Bienvenue',
-                message='Merci de tester Pinova (seed).',
+                message='Merci de tester Fotoce (seed).',
             )
         )
         clara_n = User.objects.filter(username='clara').first()
@@ -2824,7 +2824,7 @@ def seed_data():
     for u in regular_users[: min(3, len(regular_users))]:
         PushSubscription.objects.create(
             user=u,
-            endpoint=f'https://updates.seed.pinova.invalid/push/{secrets.token_hex(16)}',
+            endpoint=f'https://updates.seed.fotoce.invalid/push/{secrets.token_hex(16)}',
             p256dh=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('ascii').rstrip('=')[
                 :255
             ],
@@ -2836,11 +2836,11 @@ def seed_data():
 
     for u in regular_users[: min(2, len(regular_users))]:
         ExpoPushToken.objects.get_or_create(
-            token=f'expo-seed-pinova-{u.id}',
+            token=f'expo-seed-fotoce-{u.id}',
             defaults={
                 'user': u,
                 'platform': 'seed',
-                'user_agent': 'PinovaSeed/Expo',
+                'user_agent': 'FotoceSeed/Expo',
                 'is_active': True,
             },
         )
@@ -2893,7 +2893,7 @@ def seed_data():
     SupportTicket.objects.create(
         user=random.choice(regular_users),
         subject='Bug affichage board',
-        message='Les pins ne se réordonnent pas sur Safari.',
+        message='Les fotos ne se réordonnent pas sur Safari.',
         status=SupportTicket.STATUS_IN_PROGRESS,
         priority=SupportTicket.PRIORITY_PRIORITY,
     )

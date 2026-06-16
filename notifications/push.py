@@ -6,7 +6,7 @@ from urllib.parse import quote
 import requests
 from pywebpush import WebPushException, webpush
 
-from pinova_backend.security.resilience import ExternalRetryableError, external_call
+from fotoce_backend.security.resilience import ExternalRetryableError, external_call
 from .models import ExpoPushToken, PushSubscription
 
 logger = logging.getLogger(__name__)
@@ -57,11 +57,11 @@ def _push_action_url(notification):
     meta = getattr(notification, 'metadata', None) if notification else None
     if not isinstance(meta, dict):
         meta = {}
-    slug = getattr(notification, 'pin_slug', None)
+    slug = getattr(notification, 'foto_slug', None)
     if slug and meta.get('is_story'):
         return f"/?story={quote(str(slug), safe='')}"
     if slug:
-        return f'/pin/{slug}'
+        return f'/foto/{slug}'
     return '/'
 
 
@@ -78,12 +78,12 @@ def is_push_configured():
 
 
 def _notification_payload_dict(notification):
-    slug = getattr(notification, 'pin_slug', None)
+    slug = getattr(notification, 'foto_slug', None)
     metadata = getattr(notification, 'metadata', None)
     if not isinstance(metadata, dict):
         metadata = {}
     out = {
-        'title': notification.title or 'PINOVA',
+        'title': notification.title or 'FOTOCE',
         'body': notification.message,
         'notification_type': notification.notification_type,
         'action_url': _push_action_url(notification),
@@ -91,7 +91,7 @@ def _notification_payload_dict(notification):
         'metadata_json': json.dumps(metadata, ensure_ascii=False, separators=(',', ':')),
     }
     if slug:
-        out['pin_slug'] = str(slug)
+        out['foto_slug'] = str(slug)
     cid = getattr(notification, 'comment_id', None)
     if cid is not None:
         out['comment_id'] = str(int(cid))
@@ -170,7 +170,7 @@ def _expo_push_request_headers():
 def _build_expo_message(token: str, payload_dict: dict) -> dict:
     return {
         'to': token,
-        'title': str(payload_dict.get('title') or 'PINOVA'),
+        'title': str(payload_dict.get('title') or 'FOTOCE'),
         'body': str(payload_dict.get('body') or ''),
         'sound': 'default',
         'priority': 'high',

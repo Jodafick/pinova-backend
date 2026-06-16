@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from accounts.blocking import blocked_mutual_user_ids
 
-from pinova_backend.middleware.unread_notifications import invalidate_unread_notifications_header_cache
+from fotoce_backend.middleware.unread_notifications import invalidate_unread_notifications_header_cache
 
 from .models import ExpoPushToken, Notification, PushSubscription
 from .serializers import (
@@ -35,8 +35,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
                 'message',
                 'action_url',
                 'metadata',
-                'pin_id',
-                'pin_slug',
+                'foto_id',
+                'foto_slug',
                 'comment_id',
                 'is_read',
                 'created_at',

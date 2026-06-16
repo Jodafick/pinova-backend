@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Crée ou met à jour le dashboard business PINOVA dans PostHog (API EU).
+Crée ou met à jour le dashboard business FOTOCE dans PostHog (API EU).
 
 Usage:
   export POSTHOG_PERSONAL_API_KEY=phx_...
@@ -29,7 +29,7 @@ EVIDENCE_PATH = ROOT / 'docs' / 'evidence' / 'posthog-analytics-live.json'
 sys.path.insert(0, str(SCRIPT_DIR))
 from verify_posthog_business_events import verify_events  # noqa: E402
 
-DASHBOARD_NAME = 'PINOVA — Business'
+DASHBOARD_NAME = 'FOTOCE — Business'
 
 
 def _api_base() -> str:
@@ -96,7 +96,7 @@ def _create_insight(project_id: str, api_key: str, spec: dict) -> dict:
             'kind': spec.get('kind', 'TrendsQuery'),
             'filter': filters,
         },
-        'tags': ['pinova', 'business'],
+        'tags': ['fotoce', 'business'],
     }
     return _request('POST', _project_url(project_id, 'insights/'), api_key, payload)
 

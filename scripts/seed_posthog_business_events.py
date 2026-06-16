@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     'total_events': 100,
     'register_completed': 35,
-    'first_pin_24h': 21,
+    'first_foto_24h': 21,
     'activation_rate_24h_pct': 60.0,
     'guest_conversions': 7,
     'guest_conversion_rate_pct': 20.0,
@@ -63,7 +63,7 @@ def _build_events() -> list[dict]:
         })
 
     for i in range(21):
-        add(f'kpi-user-{i:03d}', 'first_pin_published', 71 - i * 0.4)
+        add(f'kpi-user-{i:03d}', 'first_foto_published', 71 - i * 0.4)
 
     for i in range(10):
         add(f'ref-visitor-{i:03d}', 'referral_link_opened', 48 - i, {'ref_code': f'REF{i % 5}'})
@@ -135,7 +135,7 @@ def _send_posthog(events: list[dict]) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Seed 100 events KPI PostHog PINOVA')
+    parser = argparse.ArgumentParser(description='Seed 100 events KPI PostHog FOTOCE')
     parser.add_argument('--send', action='store_true', help='Envoyer vers PostHog')
     parser.add_argument('--export', default='docs/evidence/kpi-seed-validation.json')
     args = parser.parse_args()

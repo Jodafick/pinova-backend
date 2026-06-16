@@ -19,7 +19,7 @@ EMAIL_DELIVERY_USER_MESSAGE = (
     'Vous pouvez vous connecter ou créer un compte avec Google à la place, sans attendre de code.'
 )
 
-RESEND_BACKEND = 'pinova_backend.email_backends.resend.ResendBackend'
+RESEND_BACKEND = 'fotoce_backend.email_backends.resend.ResendBackend'
 SMTP_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 
@@ -53,7 +53,7 @@ def _mail_backend_chain() -> list[str]:
     return ordered
 
 
-def send_pinova_mail(
+def send_fotoce_mail(
     subject: str,
     message: str,
     from_email: str | None,

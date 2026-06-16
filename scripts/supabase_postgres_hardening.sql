@@ -1,4 +1,4 @@
--- Pinova : durcissement Supabase quand PostgreSQL sert UNIQUEMENT Django (pas PostgREST / pas client Supabase direct).
+-- Fotoce : durcissement Supabase quand PostgreSQL sert UNIQUEMENT Django (pas PostgREST / pas client Supabase direct).
 --
 -- Contexte : l’Advisor signale « RLS Disabled in Public » car le schéma public est exposé par défaut
 -- aux rôles Supabase `anon` et `authenticated`. Django se connecte en postgres (superuser) : RLS ne

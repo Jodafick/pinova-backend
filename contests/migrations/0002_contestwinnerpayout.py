@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('contests', '0001_initial'),
-        ('pins', '0001_initial'),
+        ('fotos', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
             name='ContestWinnerPayout',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('source', models.CharField(choices=[('pins', 'Pins'), ('referral', 'Referral')], db_index=True, max_length=16)),
+                ('source', models.CharField(choices=[('fotos', 'Pins'), ('referral', 'Referral')], db_index=True, max_length=16)),
                 ('winner_rank', models.PositiveSmallIntegerField()),
                 ('gross_amount', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=14)),
                 ('currency', models.CharField(default='EUR', max_length=8)),
@@ -64,7 +64,7 @@ class Migration(migrations.Migration):
                         null=True,
                         on_delete=django.db.models.deletion.SET_NULL,
                         related_name='+',
-                        to='pins.pin',
+                        to='fotos.pin',
                     ),
                 ),
             ],

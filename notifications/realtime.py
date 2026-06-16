@@ -4,7 +4,7 @@ import logging
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
-from pinova_backend.security.resilience import log_external_call
+from fotoce_backend.security.resilience import log_external_call
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,8 @@ def notification_ws_payload(notification) -> dict:
         'message': notification.message,
         'action_url': notification.action_url or '',
         'metadata': metadata,
-        'pin_id': notification.pin_id,
-        'pin_slug': notification.pin_slug,
+        'foto_id': notification.foto_id,
+        'foto_slug': notification.foto_slug,
         'comment_id': notification.comment_id,
         'is_read': bool(notification.is_read),
         'created_at': notification.created_at.isoformat(),

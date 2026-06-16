@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pinova_backend.security.throttling import IPThrottleMixin, _clean_ident
+from fotoce_backend.security.throttling import IPThrottleMixin, _clean_ident
 from rest_framework.throttling import SimpleRateThrottle
 
 from accounts.otp_security import normalize_otp_email

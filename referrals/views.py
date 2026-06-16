@@ -4,7 +4,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from pinova_backend.observability.analytics import capture_referral_link_opened
+from fotoce_backend.observability.analytics import capture_referral_link_opened
 
 from .services import (
     build_public_resolve_payload,

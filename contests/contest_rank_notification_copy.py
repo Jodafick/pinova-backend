@@ -53,16 +53,16 @@ def _momentum_clause(
     if views_total is not None and views_total >= 2500 and random.random() < 0.35:
         return random.choice(
             [
-                'Les vues s’accumulent sur ton pin 👀 ',
-                'Ton pin attire du monde 🔥 ',
-                'Beaucoup d’œil sur ce pin en ce moment ⚡ ',
+                'Les vues s’accumulent sur ton foto 👀 ',
+                'Ton foto attire du monde 🔥 ',
+                'Beaucoup d’œil sur ce foto en ce moment ⚡ ',
             ]
         )
     if views_total is not None and views_total >= 800 and random.random() < 0.28:
         return random.choice(
             [
                 'Le buzz monte doucement 📈 ',
-                'Ton pin circule bien 👀 ',
+                'Ton foto circule bien 👀 ',
             ]
         )
     bump = likes_d + views_d + comments_d
@@ -79,14 +79,14 @@ def _momentum_clause(
         return random.choice(
             [
                 'Encore des vues qui rentrent 👀 ',
-                'Ton pin se fait voir 📈 ',
+                'Ton foto se fait voir 📈 ',
             ]
         )
     if comments_d >= 1 and random.random() < 0.5:
         return random.choice(
             [
-                'Un commentaire vient de booster le pin 💬 ',
-                'La convo s’anime sur ton pin 🔥 ',
+                'Un commentaire vient de booster le foto 💬 ',
+                'La convo s’anime sur ton foto 🔥 ',
             ]
         )
     if bump >= 1 and random.random() < 0.25:
@@ -99,13 +99,13 @@ def _social_cta() -> str:
         return ''
     return ' ' + random.choice(
         [
-            'Fais tourner ton pin, ça aide 🔥',
+            'Fais tourner ton foto, ça aide 🔥',
             'Partage-le : plus il circule, plus ça grimpe 🚀',
             'Envoie-le à ton crew pour liker et commenter 👀',
             'Tes potes peuvent te propulser vers le haut ⚡',
             'Ne lâche pas les partages — la concurrence dort jamais 🏆',
             'Un story ou un lien en plus = plus de chances 👀',
-            'Plus ton pin voyage, plus le classement te suit 🔥',
+            'Plus ton foto voyage, plus le classement te suit 🔥',
         ]
     )
 
@@ -126,11 +126,11 @@ def build_contest_display_rank_notification_fr(
     views_total: int | None = None,
 ) -> tuple[str, str]:
     """
-    Retourne (title_fr, message_fr). Rang = place affichée (meilleur pin / créateur).
+    Retourne (title_fr, message_fr). Rang = place affichée (meilleur foto / créateur).
     Plusieurs variantes aléatoires par scénario.
     """
     name = _display_name(recipient)
-    pin = _fmt_pin(pin_title)
+    foto = _fmt_pin(pin_title)
     prev_s = '—' if prev_rank is None else str(prev_rank)
     new_s = '—' if new_rank is None else str(new_rank)
 
@@ -145,7 +145,7 @@ def build_contest_display_rank_notification_fr(
     if new_rank is None:
         tit, body = _pick(
             [
-                ('Le mois bouge 👀', f'{name}, ton pin « {pin} » vient de prendre un coup de boost.'),
+                ('Le mois bouge 👀', f'{name}, ton foto « {pin} » vient de prendre un coup de boost.'),
                 ('Classement en mouvement ⚡', f'{name}, « {pin} » : le concours accélère autour de toi.'),
             ]
         )
@@ -167,7 +167,7 @@ def build_contest_display_rank_notification_fr(
                 ),
                 (
                     'Ça glisse 👀',
-                    f'{name}, ton pin « {pin} » a reculé au n°{new_s} (tu étais n°{prev_s}). La compèt’ accélère — motive ton squad 🔥',
+                    f'{name}, ton foto « {pin} » a reculé au n°{new_s} (tu étais n°{prev_s}). La compèt’ accélère — motive ton squad 🔥',
                 ),
                 (
                     'Pas le moment de lâcher',
@@ -179,11 +179,11 @@ def build_contest_display_rank_notification_fr(
                 ),
                 (
                     'Ouch — top 3 perdu',
-                    f'{name}, « {pin} » passe n°{new_s} (tu étais n°{prev_s}). Plus ton pin circule, plus tu reviens 📈',
+                    f'{name}, « {pin} » passe n°{new_s} (tu étais n°{prev_s}). Plus ton foto circule, plus tu reviens 📈',
                 ),
                 (
                     'Urgence concours 🏆',
-                    f'{name}, hors podium pour « {pin} » (n°{new_s}, avant n°{prev_s}). Fais tourner le pin, la remontada est possible 🔥',
+                    f'{name}, hors podium pour « {pin} » (n°{new_s}, avant n°{prev_s}). Fais tourner le foto, la remontada est possible 🔥',
                 ),
             ]
         )
@@ -207,7 +207,7 @@ def build_contest_display_rank_notification_fr(
                     ),
                     (
                         '🔥 Le podium est à toi',
-                        f'{name}, n°1 avec « {pin} » (tu étais n°{prev_s}). Fais tourner le pin pour rester intouchable 👀',
+                        f'{name}, n°1 avec « {pin} » (tu étais n°{prev_s}). Fais tourner le foto pour rester intouchable 👀',
                     ),
                     (
                         '🏆 Exploit',
@@ -240,7 +240,7 @@ def build_contest_display_rank_notification_fr(
                     ),
                     (
                         '🥈 Place de vice-champion',
-                        f'{name}, « {pin} » au n°{new_s} (avant n°{prev_s}). Fais tourner le pin pour viser encore plus haut 🚀',
+                        f'{name}, « {pin} » au n°{new_s} (avant n°{prev_s}). Fais tourner le foto pour viser encore plus haut 🚀',
                     ),
                     (
                         '🥉 Podium assuré',
@@ -267,7 +267,7 @@ def build_contest_display_rank_notification_fr(
                 ),
                 (
                     '👀 Ils te collent au classement',
-                    f'{name}, « {pin} » passe n°{new_s} (avant n°{prev_s}). Fais tourner ton pin pour reprendre l’avantage 🔥',
+                    f'{name}, « {pin} » passe n°{new_s} (avant n°{prev_s}). Fais tourner ton foto pour reprendre l’avantage 🔥',
                 ),
                 (
                     '🏆 Toujours podium',
@@ -342,11 +342,11 @@ def build_contest_display_rank_notification_fr(
                 ),
                 (
                     '⚡ Momentum',
-                    f'{name}, « {pin} » au n°{new_s} depuis n°{prev_s}. Plus ton pin voyage, plus ça grimpe 🔥',
+                    f'{name}, « {pin} » au n°{new_s} depuis n°{prev_s}. Plus ton foto voyage, plus ça grimpe 🔥',
                 ),
                 (
                     '👀 On te voit monter',
-                    f'{name}, n°{new_s} pour « {pin} » (avant n°{prev_s}). Fais tourner le pin, la compèt’ est vivante 🏆',
+                    f'{name}, n°{new_s} pour « {pin} » (avant n°{prev_s}). Fais tourner le foto, la compèt’ est vivante 🏆',
                 ),
                 (
                     '🏆 Belle avancée',
@@ -377,7 +377,7 @@ def build_contest_display_rank_notification_fr(
                 ),
                 (
                     '🔥 Pas le moment de dormir',
-                    f'{name}, « {pin} » recule au n°{new_s} (ex n°{prev_s}). Fais tourner le pin pour remonter 👀',
+                    f'{name}, « {pin} » recule au n°{new_s} (ex n°{prev_s}). Fais tourner le foto pour remonter 👀',
                 ),
                 (
                     '🏆 Rattrape-les',
@@ -397,7 +397,7 @@ def build_contest_display_rank_notification_fr(
     else:
         tit, body = _pick(
             [
-                ('Pinova concours 🏆', f'{name}, « {pin} » : n°{new_s} affiché. Reste dans le game 👀'),
+                ('Fotoce concours 🏆', f'{name}, « {pin} » : n°{new_s} affiché. Reste dans le game 👀'),
                 ('Classement live ⚡', f'{name}, « {pin} » se place n°{new_s}. Fais tourner pour monter 🔥'),
             ]
         )

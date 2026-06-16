@@ -1,6 +1,6 @@
-# Métriques business PINOVA — PostHog
+# Métriques business FOTOCE — PostHog
 
-Ce document décrit les funnels, cohortes, revenus et KPIs du dashboard **PINOVA — Business** (PostHog EU). Il sert de référence produit / data pour interpréter les chiffres sans double comptage.
+Ce document décrit les funnels, cohortes, revenus et KPIs du dashboard **FOTOCE — Business** (PostHog EU). Il sert de référence produit / data pour interpréter les chiffres sans double comptage.
 
 ## Prérequis
 
@@ -14,7 +14,7 @@ Ce document décrit les funnels, cohortes, revenus et KPIs du dashboard **PINOVA
 Création / mise à jour du dashboard :
 
 ```bash
-cd pinova-backend
+cd fotoce-backend
 export POSTHOG_PERSONAL_API_KEY=phx_...
 export POSTHOG_PROJECT_ID=12345
 python scripts/setup_posthog_business_dashboard.py
@@ -33,7 +33,7 @@ Configuration de référence : `docs/posthog/business-dashboard.json`.
 | `register_with_ref_code` | Backend | Inscription avec parrainage |
 | `referral_link_opened` | Backend (`POST referrals/intent/`) | Ouverture lien parrain |
 | `onboarding_completed` | Web, mobile | Fin onboarding |
-| `first_pin_published` | Web, mobile (`trackOnce`) | Activation produit |
+| `first_foto_published` | Web, mobile (`trackOnce`) | Activation produit |
 | `premium_viewed` → `checkout_started` → `checkout_success` | Clients | Funnel monétisation (UX) |
 | `revenue_recorded` | Backend webhook FedaPay | **Revenu authoritative** (`$revenue`, `$currency`) |
 | `retention_cohort_j1/j7/j30` | Web, mobile (`trackOnce`) | Cohortes rétention |
@@ -53,18 +53,18 @@ Configuration de référence : `docs/posthog/business-dashboard.json`.
 ### 1. Acquisition
 
 ```
-landing_viewed → register_started → onboarding_completed → first_pin_published
+landing_viewed → register_started → onboarding_completed → first_foto_published
 ```
 
 **Interprétation**
 
-- Mesure le parcours visiteur → utilisateur activé (premier pin publié).
+- Mesure le parcours visiteur → utilisateur activé (premier foto publié).
 - Fenêtre recommandée : 14 jours entre la première et la dernière étape.
 - Breakdown utile : `signup_platform`, `signup_channel`.
 
 **Activation rate (< 24 h)** — insight séparé :
 
-- Numérateur : utilisateurs avec `first_pin_published` dans les 24 h après `register_completed`.
+- Numérateur : utilisateurs avec `first_foto_published` dans les 24 h après `register_completed`.
 - Dénominateur : `register_completed` sur la même période.
 - HogQL (approximation) :
 
@@ -79,7 +79,7 @@ FROM (
 ) reg
 LEFT JOIN (
   SELECT distinct_id, min(timestamp) AS timestamp
-  FROM events WHERE event = 'first_pin_published' GROUP BY distinct_id
+  FROM events WHERE event = 'first_foto_published' GROUP BY distinct_id
 ) fp ON reg.distinct_id = fp.distinct_id
 ```
 
@@ -128,7 +128,7 @@ Breakdown recommandé : **`signup_channel`** (`web`, `mobile`, `referral`).
 **Interprétation**
 
 - Ce ne sont pas des cohortes PostHog « classiques » (retour J+N sur une action) mais des **marqueurs de passage** émis au premier lancement après le seuil.
-- Pour une rétention stricte « % actifs J7 », croiser avec `trackPageview` ou une action produit (ex. `pin_viewed`) dans une cohorte PostHog basée sur `register_completed`.
+- Pour une rétention stricte « % actifs J7 », croiser avec `trackPageview` ou une action produit (ex. `foto_viewed`) dans une cohorte PostHog basée sur `register_completed`.
 
 ---
 
@@ -156,7 +156,7 @@ Ou insight PostHog **Revenue** natif filtré sur `revenue_recorded`.
 
 | KPI | Formule / filtre | Notes |
 |-----|------------------|-------|
-| **Activation rate 24 h** | `first_pin_published` ≤ 24 h après `register_completed` | Voir HogQL ci-dessus |
+| **Activation rate 24 h** | `first_foto_published` ≤ 24 h après `register_completed` | Voir HogQL ci-dessus |
 | **Guest conversion rate** | `register_completed` avec props guest (`guest_conversion_*`) / sessions invité | Props `guestConversion` sur register |
 | **ARPU** | `revenue_recorded` + `$revenue`, source webhook uniquement | Exclure `client_estimate` |
 | **Boost attach rate** | `checkout_success` ou `revenue_recorded` où `flow = boost` / total checkouts premium+boost | Numérateur : flows `boost` ; dénominateur : tous les `revenue_recorded` payants |
@@ -187,8 +187,8 @@ WHERE event = 'revenue_recorded'
 
 | Zone | Fichier |
 |------|---------|
-| Schéma événements | `packages/pinova-shared/src/analytics/` |
-| Revenue serveur | `pinova-backend/pinova_backend/analytics.py` |
-| Webhook FedaPay | `pinova-backend/monetization/webhook_processing.py` |
-| Referral intent | `pinova-backend/referrals/views.py` |
-| Dashboard script | `pinova-backend/scripts/setup_posthog_business_dashboard.py` |
+| Schéma événements | `packages/fotoce-shared/src/analytics/` |
+| Revenue serveur | `fotoce-backend/fotoce_backend/analytics.py` |
+| Webhook FedaPay | `fotoce-backend/monetization/webhook_processing.py` |
+| Referral intent | `fotoce-backend/referrals/views.py` |
+| Dashboard script | `fotoce-backend/scripts/setup_posthog_business_dashboard.py` |

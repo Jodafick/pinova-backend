@@ -1,7 +1,7 @@
-# Configuration sécurité production PINOVA
+# Configuration sécurité production FOTOCE
 
 **Date** : 6 juin 2026  
-**Périmètre** : `pinova-backend` (API Django)  
+**Périmètre** : `fotoce-backend` (API Django)  
 **Validation** : `python manage.py check --deploy` + `audit_public_api_permissions --fail-on-findings`
 
 ---
@@ -10,20 +10,20 @@
 
 | Variable | Valeur attendue | Rôle | Check Django |
 |----------|-----------------|------|--------------|
-| `DEBUG` | `False` ou `0` | Désactive mode debug, active HSTS/CSP | `pinova.E001` |
-| `DJANGO_SECRET_KEY` | Clé forte (≠ dev) | Sessions, JWT signing | `pinova.E002` |
+| `DEBUG` | `False` ou `0` | Désactive mode debug, active HSTS/CSP | `fotoce.E001` |
+| `DJANGO_SECRET_KEY` | Clé forte (≠ dev) | Sessions, JWT signing | `fotoce.E002` |
 | `ALLOWED_HOSTS` | Hôtes API (CSV) | Host header validation | Django natif |
 | `CORS_ALLOWED_ORIGINS` | Origines web (CSV) | Pas de wildcard CORS | Django natif |
-| `REDIS_URL` | `redis://…` | Cache partagé, throttles, Channels | `pinova.E003`–`E006` |
-| `FEDAPAY_WEBHOOK_SECRET` | Secret partagé FedaPay | Validation webhooks paiement | `pinova.E007` |
-| `MEDIA_SIGNING_SECRET` | Secret dédié (≠ `SECRET_KEY`) | URLs médias signées HMAC | `pinova.E008` |
-| `JWT_AUTH_HTTPONLY` | `1` (défaut si `DEBUG=False`) | Refresh token cookie HttpOnly | `pinova.E009` |
+| `REDIS_URL` | `redis://…` | Cache partagé, throttles, Channels | `fotoce.E003`–`E006` |
+| `FEDAPAY_WEBHOOK_SECRET` | Secret partagé FedaPay | Validation webhooks paiement | `fotoce.E007` |
+| `MEDIA_SIGNING_SECRET` | Secret dédié (≠ `SECRET_KEY`) | URLs médias signées HMAC | `fotoce.E008` |
+| `JWT_AUTH_HTTPONLY` | `1` (défaut si `DEBUG=False`) | Refresh token cookie HttpOnly | `fotoce.E009` |
 
 ---
 
 ## Durcissement automatique quand `DEBUG=False`
 
-Défini dans `pinova_backend/settings.py` :
+Défini dans `fotoce_backend/settings.py` :
 
 | Contrôle | Comportement |
 |----------|--------------|
@@ -31,7 +31,7 @@ Défini dans `pinova_backend/settings.py` :
 | **SSL** | `SECURE_SSL_REDIRECT=True`, `SECURE_PROXY_SSL_HEADER` pour reverse proxy |
 | **CSP** | En-tête via `ContentSecurityPolicyMiddleware` — `default-src 'self'`, PostHog EU autorisé |
 | **Cookies** | `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `JWT_AUTH_SECURE=True` |
-| **JWT HttpOnly** | `REST_AUTH['JWT_AUTH_HTTPONLY']=True` — refresh **uniquement** cookie `pinova-refresh-token` |
+| **JWT HttpOnly** | `REST_AUTH['JWT_AUTH_HTTPONLY']=True` — refresh **uniquement** cookie `fotoce-refresh-token` |
 | **CORS** | Origines explicites obligatoires (`CORS_ALLOWED_ORIGINS`) |
 
 ### Exemple `.env` production
@@ -39,9 +39,9 @@ Défini dans `pinova_backend/settings.py` :
 ```env
 DEBUG=False
 DJANGO_SECRET_KEY=<générer-50+-chars>
-ALLOWED_HOSTS=api.pinova.app
-CORS_ALLOWED_ORIGINS=https://app.pinova.app
-CSRF_TRUSTED_ORIGINS=https://app.pinova.app
+ALLOWED_HOSTS=api.fotoce.app
+CORS_ALLOWED_ORIGINS=https://app.fotoce.app
+CSRF_TRUSTED_ORIGINS=https://app.fotoce.app
 REDIS_URL=redis://default:xxx@redis-host:6379/0
 FEDAPAY_WEBHOOK_SECRET=<secret-fourni-ou-généré>
 MEDIA_SIGNING_SECRET=<secret-dédié-médias>
@@ -81,7 +81,7 @@ En production, **tous les workers doivent partager le même compteur** (OTP, log
 ## Audit permissions API
 
 ```bash
-cd pinova-backend
+cd fotoce-backend
 python manage.py audit_public_api_permissions --fail-on-findings
 ```
 
@@ -98,10 +98,10 @@ Tous les autres endpoints publics héritent des throttles DRF par défaut (`Anon
 ## Commandes de validation CI
 
 ```bash
-cd pinova-backend
-python manage.py test pinova_backend.tests.tests_pentest_internal \
-  pinova_backend.tests.tests_media_access \
-  pinova_backend.tests.tests_security_headers \
+cd fotoce-backend
+python manage.py test fotoce_backend.tests.tests_pentest_internal \
+  fotoce_backend.tests.tests_media_access \
+  fotoce_backend.tests.tests_security_headers \
   monetization.tests_fedapay_webhook accounts.tests_otp_security -v 1
 python manage.py audit_public_api_permissions --fail-on-findings
 python manage.py check --deploy

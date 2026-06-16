@@ -7,8 +7,8 @@ from .models import (
     BoostPackage,
     CreatorWallet,
     PartnerCampaign,
-    PinBoost,
-    PinPromoCampaign,
+    FotoBoost,
+    FotoPromoCampaign,
     TipPlatformConfig,
     TipTransaction,
     TipWithdrawal,
@@ -33,7 +33,7 @@ class PartnerCampaignAdmin(admin.ModelAdmin):
 
 @admin.register(BoostPackage)
 class BoostPackageAdmin(admin.ModelAdmin):
-    """Tarifs boost pin et campagnes pub — même principe que SubscriptionPricing (backoffice)."""
+    """Tarifs boost foto et campagnes pub — même principe que SubscriptionPricing (backoffice)."""
     form = BoostPackageAdminForm
     list_display = ('slug', 'label', 'package_kind', 'duration_hours', 'amount', 'currency_iso', 'is_active', 'updated_at')
     list_filter = ('package_kind', 'is_active', 'currency_iso')
@@ -51,16 +51,16 @@ class BoostPackageAdmin(admin.ModelAdmin):
     readonly_fields = ('updated_at',)
 
 
-@admin.register(PinPromoCampaign)
-class PinPromoCampaignAdmin(admin.ModelAdmin):
+@admin.register(FotoPromoCampaign)
+class FotoPromoCampaignAdmin(admin.ModelAdmin):
     list_display = ('id', 'owner', 'headline', 'package', 'status', 'impressions', 'clicks', 'created_at')
     list_filter = ('status',)
     search_fields = ('owner__username', 'headline', 'fedapay_transaction_id')
     raw_id_fields = ('owner', 'pin', 'package')
 
 
-@admin.register(PinBoost)
-class PinBoostAdmin(admin.ModelAdmin):
+@admin.register(FotoBoost)
+class FotoBoostAdmin(admin.ModelAdmin):
     list_display = ('pin', 'owner', 'package', 'status', 'starts_at', 'ends_at')
     list_filter = ('status',)
 

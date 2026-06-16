@@ -59,7 +59,7 @@ WS_ONLY_KINDS = frozenset({'contest_display_rank_change'})
 COALESCABLE_PUSH_TYPES = frozenset({'like', 'save', 'comment', 'follow'})
 PUSH_COALESCE_TTL_SEC = 120
 
-_COALESCE_CACHE_PREFIX = 'pinova:notif_push_coalesce:'
+_COALESCE_CACHE_PREFIX = 'fotoce:notif_push_coalesce:'
 
 
 def _metadata(notification) -> dict[str, Any]:
@@ -138,9 +138,9 @@ def resolve_in_app_toast(notification) -> bool:
 
 def push_group_key(notification) -> str:
     ntype = str(getattr(notification, 'notification_type', '') or '').strip().lower()
-    pin_id = getattr(notification, 'pin_id', None)
-    if pin_id and ntype in COALESCABLE_PUSH_TYPES:
-        return f'{ntype}:pin:{int(pin_id)}'
+    foto_id = getattr(notification, 'foto_id', None)
+    if foto_id and ntype in COALESCABLE_PUSH_TYPES:
+        return f'{ntype}:pin:{int(foto_id)}'
     sender_id = getattr(notification, 'sender_id', None)
     if ntype == 'follow' and sender_id:
         return f'follow:user:{int(sender_id)}'
@@ -155,7 +155,7 @@ def _coalesce_summary_body(notification, count: int) -> str:
     ntype = str(getattr(notification, 'notification_type', '') or '').strip().lower()
     title = (getattr(notification, 'title', None) or '').strip()
     if count <= 1:
-        return (getattr(notification, 'message', None) or '').strip() or title or 'PINOVA'
+        return (getattr(notification, 'message', None) or '').strip() or title or 'FOTOCE'
     if ntype == 'like':
         return f"{count} nouvelles mentions J'aime"
     if ntype == 'save':
@@ -179,7 +179,7 @@ def _send_coalesced_push(notification, *, count: int) -> bool:
     payload = _notification_payload_dict(notification)
     if count > 1:
         payload['body'] = _coalesce_summary_body(notification, count)
-        payload['title'] = (getattr(notification, 'title', None) or 'PINOVA').strip() or 'PINOVA'
+        payload['title'] = (getattr(notification, 'title', None) or 'FOTOCE').strip() or 'FOTOCE'
         md = _metadata(notification)
         md = {**md, 'coalesced_count': count}
         payload['metadata_json'] = json.dumps(md, ensure_ascii=False, separators=(',', ':'))

@@ -1,35 +1,35 @@
-# Sentry — observabilité PINOVA
+# Sentry — observabilité FOTOCE
 
 ## Projets Sentry (3 apps)
 
 | App | Package | Projet Sentry | Release CI |
 |-----|---------|---------------|------------|
-| Web | `@sentry/vue` | `pinova-web` | `pinova-web@${GITHUB_SHA}` |
-| Mobile | `@sentry/react-native` | `pinova-mobile` | `pinova-mobile@${GITHUB_SHA}` |
-| Backend | `sentry-sdk[django]` | `pinova-backend` | `pinova-backend@${GITHUB_SHA}` |
+| Web | `@sentry/vue` | `fotoce-web` | `fotoce-web@${GITHUB_SHA}` |
+| Mobile | `@sentry/react-native` | `fotoce-mobile` | `fotoce-mobile@${GITHUB_SHA}` |
+| Backend | `sentry-sdk[django]` | `fotoce-backend` | `fotoce-backend@${GITHUB_SHA}` |
 
 ## Variables d'environnement
 
 ### Web (Vite / Vercel)
 ```env
 VITE_SENTRY_DSN=https://...@sentry.io/...
-VITE_SENTRY_RELEASE=pinova-web@<git-sha>
+VITE_SENTRY_RELEASE=fotoce-web@<git-sha>
 SENTRY_AUTH_TOKEN=...          # CI uniquement
-SENTRY_ORG=pinova
-SENTRY_PROJECT_WEB=pinova-web
+SENTRY_ORG=fotoce
+SENTRY_PROJECT_WEB=fotoce-web
 ```
 
 ### Mobile (EAS / Expo)
 ```env
 EXPO_PUBLIC_SENTRY_DSN=https://...@sentry.io/...
-EXPO_PUBLIC_SENTRY_RELEASE=pinova-mobile@<git-sha>
+EXPO_PUBLIC_SENTRY_RELEASE=fotoce-mobile@<git-sha>
 ```
 
 ### Backend (Render / Railway)
 ```env
 SENTRY_DSN=https://...@sentry.io/...
 SENTRY_ENVIRONMENT=production
-SENTRY_RELEASE=pinova-backend@<git-sha>   # ou RENDER_GIT_COMMIT auto
+SENTRY_RELEASE=fotoce-backend@<git-sha>   # ou RENDER_GIT_COMMIT auto
 SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
@@ -85,7 +85,7 @@ Le middleware `SentryApiTimingMiddleware` émet aussi un event `warning` pour ch
 1. Sentry → **Releases** → lier repo GitHub (Settings → Integrations → GitHub)
 2. Activer **Suspect Commits** et **Release Health**
 3. Dashboard custom :
-   - Crash-free sessions par release (`pinova-web@*`, `pinova-mobile@*`, `pinova-backend@*`)
+   - Crash-free sessions par release (`fotoce-web@*`, `fotoce-mobile@*`, `fotoce-backend@*`)
    - Apdex / p95 latency API
    - Volume `fedapay.webhook` failures
 
@@ -99,5 +99,5 @@ SENTRY_DSN=... python manage.py check
 VITE_SENTRY_DSN=... pnpm vite build
 
 # Test scrub
-cd pinova-backend && python manage.py test pinova_backend.tests_sentry
+cd fotoce-backend && python manage.py test fotoce_backend.tests_sentry
 ```

@@ -52,8 +52,8 @@ from .models import (
 from .subscription_utils import _enforce_subscription_state
 from .subscription_seats import SUBSCRIPTION_FAMILY_MAX_INVITEES, SUBSCRIPTION_TEAM_MAX_INVITEES
 from .blocking import blocked_mutual_user_ids, users_are_mutually_blocked
-from pinova_backend.media_serving.cache import build_versioned_media_url
-from pinova_backend.security.ratelimit_helpers import ratelimit_post
+from fotoce_backend.media_serving.cache import build_versioned_media_url
+from fotoce_backend.security.ratelimit_helpers import ratelimit_post
 
 from .serializers import (
     ProfileSerializer,
@@ -66,7 +66,7 @@ from .mail_delivery import (
     EMAIL_DELIVERY_ERROR_CODE,
     EMAIL_DELIVERY_USER_MESSAGE,
     EmailDeliveryUnavailable,
-    send_pinova_mail,
+    send_fotoce_mail,
 )
 from allauth.account.models import EmailAddress
 from .currency_utils import (
@@ -193,11 +193,11 @@ def _is_allowed_mobile_google_redirect_uri(raw_uri: str) -> bool:
 
 class MobileGoogleSessionStartView(GoogleLogin):
     """
-    Échange le code OAuth Google côté backend, puis crée un code Pinova court.
+    Échange le code OAuth Google côté backend, puis crée un code Fotoce court.
 
     Le navigateur web ne renvoie jamais le token Google au deep link mobile :
     l'application reçoit seulement ce code à usage unique et l'échange contre
-    les JWT Pinova via MobileGoogleSessionExchangeView.
+    les JWT Fotoce via MobileGoogleSessionExchangeView.
     """
 
     permission_classes = [permissions.AllowAny]
@@ -248,7 +248,7 @@ class MobileGoogleSessionExchangeView(APIView):
     def post(self, request, *args, **kwargs):
         raw_code = str(request.data.get('code') or '').strip()
         mobile_state = _mobile_state(request.data.get('mobile_state'))
-        device_binding_id = _mobile_device_binding(request.META.get('HTTP_X_PINOVA_DEVICE_BINDING'))
+        device_binding_id = _mobile_device_binding(request.META.get('HTTP_X_FOTOCE_DEVICE_BINDING'))
         if not raw_code:
             return Response({'detail': 'code is required'}, status=status.HTTP_400_BAD_REQUEST)
         if not mobile_state:
@@ -433,7 +433,7 @@ def _normalized_seat_bundle(raw) -> str:
 
 
 def _fedapay_checkout_customer_names(user):
-    """Prénom / nom pour les reçus FedaPay : priorité au nom affiché du profil, sans suffixe forcé « Pinova »."""
+    """Prénom / nom pour les reçus FedaPay : priorité au nom affiché du profil, sans suffixe forcé « Fotoce »."""
     profile = getattr(user, 'profile', None)
     display = (getattr(profile, 'display_name', None) or '').strip()
     if display:
@@ -450,8 +450,8 @@ def _fedapay_checkout_customer_names(user):
     fn = (getattr(user, 'first_name', None) or '').strip()
     ln = (getattr(user, 'last_name', None) or '').strip()
     combined = f'{fn} {ln}'.strip()
-    if combined and re.match(r'^pinova(\s|-|_|$)', combined, flags=re.I):
-        rest = re.sub(r'^pinova[\s_-]*', '', combined, count=1, flags=re.I).strip()
+    if combined and re.match(r'^fotoce(\s|-|_|$)', combined, flags=re.I):
+        rest = re.sub(r'^fotoce[\s_-]*', '', combined, count=1, flags=re.I).strip()
         if rest:
             parts = rest.split(None, 1)
             return parts[0][:100], ((parts[1] if len(parts) > 1 else '-')[:100])
@@ -462,7 +462,7 @@ def _fedapay_checkout_customer_names(user):
 
 def _fedapay_checkout_description(plan: str, billing_cycle: str, seat_bundle: str) -> str:
     """Libellé transaction / reçu, formulation lisible côté client (évite tout en camelCase dans la description)."""
-    plan_labels = {Profile.PLAN_PLUS: 'Pinova Plus', Profile.PLAN_PRO: 'Pinova Pro'}
+    plan_labels = {Profile.PLAN_PLUS: 'Fotoce Plus', Profile.PLAN_PRO: 'Fotoce Pro'}
     cycle_labels = {'monthly': 'facturation mensuelle', 'yearly': 'facturation annuelle'}
     bundle = _normalized_seat_bundle(seat_bundle)
     bundle_chunks = []
@@ -470,7 +470,7 @@ def _fedapay_checkout_description(plan: str, billing_cycle: str, seat_bundle: st
         bundle_chunks.append('offre famille')
     elif bundle == SUBSCRIPTION_BUNDLE_TEAM:
         bundle_chunks.append('offre équipe')
-    bits = ['Abonnement', plan_labels.get(plan, 'Pinova ' + plan.title())]
+    bits = ['Abonnement', plan_labels.get(plan, 'Fotoce ' + plan.title())]
     bits.append(cycle_labels.get(billing_cycle, billing_cycle))
     bits.extend(bundle_chunks)
     return ' · '.join(bits)
@@ -484,8 +484,8 @@ def _plus_trial_duration_days() -> int:
 
 
 def _annual_discount_percent_display() -> int:
-    from .models import PinovaSubscriptionConfig
-    return int(PinovaSubscriptionConfig.load().annual_discount_percent)
+    from .models import FotoceSubscriptionConfig
+    return int(FotoceSubscriptionConfig.load().annual_discount_percent)
 
 
 def _extract_invoice_url_from_fedapay(normalized):
@@ -590,7 +590,7 @@ class VerifyOTPView(APIView):
             normalize_otp_email,
             register_verify_failure,
         )
-        from pins.api_locale import localize_api_user_message
+        from fotos.api_locale import localize_api_user_message
 
         email = normalize_otp_email(request.data.get('email'))
         otp_code = str(request.data.get('otp') or '').strip()
@@ -620,7 +620,7 @@ class VerifyOTPView(APIView):
             payload['error'] = localize_api_user_message(payload['error'], request)
             status_code = (
                 status.HTTP_429_TOO_MANY_REQUESTS
-                if payload.get('code') == 'pinova_otp_locked'
+                if payload.get('code') == 'fotoce_otp_locked'
                 else status.HTTP_400_BAD_REQUEST
             )
             return Response(payload, status=status_code)
@@ -632,7 +632,7 @@ class VerifyOTPView(APIView):
             payload['error'] = localize_api_user_message(payload['error'], request)
             status_code = (
                 status.HTTP_429_TOO_MANY_REQUESTS
-                if payload.get('code') == 'pinova_otp_locked'
+                if payload.get('code') == 'fotoce_otp_locked'
                 else status.HTTP_400_BAD_REQUEST
             )
             return Response(payload, status=status_code)
@@ -644,7 +644,7 @@ class VerifyOTPView(APIView):
             payload['error'] = localize_api_user_message(payload['error'], request)
             status_code = (
                 status.HTTP_429_TOO_MANY_REQUESTS
-                if payload.get('code') == 'pinova_otp_locked'
+                if payload.get('code') == 'fotoce_otp_locked'
                 else status.HTTP_400_BAD_REQUEST
             )
             return Response(payload, status=status_code)
@@ -662,7 +662,7 @@ class VerifyOTPView(APIView):
             recipient=user,
             notification_type='welcome',
             title_fr='Compte valide',
-            message_fr=f"Bienvenue sur PINOVA, {user.username} ! Votre compte est maintenant validé.",
+            message_fr=f"Bienvenue sur FOTOCE, {user.username} ! Votre compte est maintenant validé.",
             action_url='/',
             metadata={'stage': 'account_verified'},
         )
@@ -706,7 +706,7 @@ class ResendOTPView(APIView):
             resend_cooldown_remaining,
             resend_hourly_count,
         )
-        from pins.api_locale import localize_api_user_message
+        from fotos.api_locale import localize_api_user_message
 
         email = normalize_otp_email(request.data.get('email'))
         if not email:
@@ -754,8 +754,8 @@ class ResendOTPView(APIView):
             )
             otp.generate_otp()
             try:
-                send_pinova_mail(
-                    'Nouveau code de validation PINOVA',
+                send_fotoce_mail(
+                    'Nouveau code de validation FOTOCE',
                     f'Votre nouveau code de validation est : {otp.otp_code}. Il expire dans 10 minutes.',
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
@@ -865,8 +865,8 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='report')
     def report_profile(self, request, user__username=None):
-        from pins.models import ContentReport
-        from pins.report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
+        from fotos.models import ContentReport
+        from fotos.report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
 
         profile = self.get_object()
         if profile.user_id == request.user.id:
@@ -1197,7 +1197,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             .annotate(
                 followers_total=models.Count('profile__followers', distinct=True),
                 preferred_topic_pins=models.Count(
-                    'pins',
+                    'fotos',
                     filter=models.Q(pins__topic__name__in=preferred_topics),
                     distinct=True,
                 ),
@@ -1222,12 +1222,12 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class PasswordRulesView(APIView):
-    """Règles mot de passe Pinova pour affichage UX côté client."""
+    """Règles mot de passe Fotoce pour affichage UX côté client."""
 
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        from pins.api_locale import api_locale_from_request
+        from fotos.api_locale import api_locale_from_request
         from accounts.password_policy import get_password_rules_payload
 
         lang = api_locale_from_request(request)
@@ -1257,10 +1257,10 @@ class UserMeView(APIView):
 
     def get(self, request):
         _resolve_user_currency(request)
-        from pins.scheduled_publish_utils import publish_user_due_scheduled_pins
+        from fotos.scheduled_publish_utils import publish_user_due_scheduled_pins
 
         publish_user_due_scheduled_pins(request.user, limit=50)
-        from pins.me_hydration import build_me_hydration_bundle
+        from fotos.me_hydration import build_me_hydration_bundle
 
         data = UserSerializer(
             request.user, context={'request': request, 'omit_full_board_list': True},
@@ -1345,7 +1345,7 @@ class UserMeView(APIView):
         mutable_data.pop('partner_ads_enabled', None)
 
         if 'hide_sensitive_pins' in mutable_data:
-            from pins.visibility import profile_is_verified_adult as _profile_verified_adult
+            from fotos.visibility import profile_is_verified_adult as _profile_verified_adult
 
             if _profile_verified_adult(profile):
                 mutable_data['hide_sensitive_pins'] = (
@@ -1398,7 +1398,7 @@ class UserMeView(APIView):
                 onboarding_completed=onboarding_completed,
             )
             _resolve_user_currency(request)
-            from pins.me_hydration import build_me_hydration_bundle
+            from fotos.me_hydration import build_me_hydration_bundle
 
             payload = UserSerializer(
                 user, context={'request': request, 'omit_full_board_list': True},
@@ -1408,7 +1408,7 @@ class UserMeView(APIView):
             from referrals.services import build_me_referral_payload, try_apply_onboarding_referral
 
             if 'referral_code' in request.data:
-                device_hdr = (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip() or None
+                device_hdr = (request.META.get('HTTP_X_FOTOCE_DEVICE_BINDING') or '').strip() or None
                 payload['referral_onboarding'] = try_apply_onboarding_referral(
                     user,
                     referral_code_optional=str(request.data.get('referral_code') or ''),
@@ -2157,7 +2157,7 @@ class SubscriptionWebhookView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get_throttles(self):
-        from pinova_backend.security.webhook_throttling import WebhookIPThrottle
+        from fotoce_backend.security.webhook_throttling import WebhookIPThrottle
 
         return [WebhookIPThrottle()]
 

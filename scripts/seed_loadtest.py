@@ -1,4 +1,4 @@
-"""Seed minimal pour load test home_feed (utilisateur + abonnements + pins publics)."""
+"""Seed minimal pour load test home_feed (utilisateur + abonnements + fotos publics)."""
 from __future__ import annotations
 
 import os
@@ -6,17 +6,17 @@ import sys
 
 import django
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pinova_backend.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fotoce_backend.settings')
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 django.setup()
 
 from django.contrib.auth.models import User  # noqa: E402
 
 from accounts.models import Profile  # noqa: E402
-from pins.models import Pin  # noqa: E402
+from fotos.models import Foto  # noqa: E402
 
 LOADTEST_USER = os.environ.get('LOADTEST_USER', 'loadtest')
-LOADTEST_EMAIL = os.environ.get('LOADTEST_EMAIL', 'loadtest@pinova.local')
+LOADTEST_EMAIL = os.environ.get('LOADTEST_EMAIL', 'loadtest@fotoce.local')
 LOADTEST_PASSWORD = os.environ.get('LOADTEST_PASSWORD', 'password123')
 AUTHOR_COUNT = int(os.environ.get('LOADTEST_AUTHOR_COUNT', '40'))
 PINS_PER_AUTHOR = int(os.environ.get('LOADTEST_PINS_PER_AUTHOR', '15'))
@@ -41,7 +41,7 @@ def main() -> None:
     for i in range(AUTHOR_COUNT):
         author, _ = User.objects.get_or_create(
             username=f'loadauthor{i}',
-            defaults={'email': f'loadauthor{i}@pinova.local'},
+            defaults={'email': f'loadauthor{i}@fotoce.local'},
         )
         if not author.has_usable_password():
             author.set_password(LOADTEST_PASSWORD)
@@ -52,36 +52,36 @@ def main() -> None:
         following_ids.append(author.id)
         for j in range(PINS_PER_AUTHOR):
             slug = f'load-{i}-{j}'
-            Pin.objects.get_or_create(
+            Foto.objects.get_or_create(
                 author=author,
                 slug=slug,
                 defaults={
-                    'title': f'Load pin {i}-{j}',
-                    'visibility': Pin.VISIBILITY_PUBLIC,
+                    'title': f'Load foto {i}-{j}',
+                    'visibility': Foto.VISIBILITY_PUBLIC,
                 },
             )
 
     # Pins discover (auteurs non suivis)
     stranger, _ = User.objects.get_or_create(
         username='loadstranger',
-        defaults={'email': 'loadstranger@pinova.local'},
+        defaults={'email': 'loadstranger@fotoce.local'},
     )
     stranger.profile.private_profile = False
     stranger.profile.save(update_fields=['private_profile'])
     for j in range(PINS_PER_AUTHOR):
         slug = f'discover-{j}'
-        Pin.objects.get_or_create(
+        Foto.objects.get_or_create(
             author=stranger,
             slug=slug,
             defaults={
                 'title': f'Discover load {j}',
-                'visibility': Pin.VISIBILITY_PUBLIC,
+                'visibility': Foto.VISIBILITY_PUBLIC,
             },
         )
 
     print(
         f'OK loadtest seed — viewer={LOADTEST_USER} '
-        f'following={len(following_ids)} authors × {PINS_PER_AUTHOR} pins + discover',
+        f'following={len(following_ids)} authors × {PINS_PER_AUTHOR} fotos + discover',
     )
 
 

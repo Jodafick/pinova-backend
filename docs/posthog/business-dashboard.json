@@ -1,18 +1,18 @@
 {
-  "name": "PINOVA — Business",
+  "name": "FOTOCE — Business",
   "description": "Funnels acquisition / monétisation / viralité, cohortes J1-J7-J30, revenue FedaPay, KPIs activation & ARPU.",
-  "tags": ["business", "pinova"],
+  "tags": ["business", "fotoce"],
   "insights": [
     {
       "key": "funnel_acquisition",
-      "name": "Acquisition — landing → register → onboarding → first pin",
+      "name": "Acquisition — landing → register → onboarding → first foto",
       "kind": "FunnelsQuery",
       "filters": {
         "events": [
           { "id": "landing_viewed", "type": "events", "order": 0 },
           { "id": "register_started", "type": "events", "order": 1 },
           { "id": "onboarding_completed", "type": "events", "order": 2 },
-          { "id": "first_pin_published", "type": "events", "order": 3 }
+          { "id": "first_foto_published", "type": "events", "order": 3 }
         ],
         "funnel_window_interval": 14,
         "funnel_window_interval_unit": "day",
@@ -133,12 +133,12 @@
     },
     {
       "key": "kpi_activation_24h",
-      "name": "KPI — Activation first pin < 24 h",
+      "name": "KPI — Activation first foto < 24 h",
       "kind": "FunnelsQuery",
       "filters": {
         "events": [
           { "id": "register_completed", "type": "events", "order": 0 },
-          { "id": "first_pin_published", "type": "events", "order": 1 }
+          { "id": "first_foto_published", "type": "events", "order": 1 }
         ],
         "funnel_window_interval": 1,
         "funnel_window_interval_unit": "day"

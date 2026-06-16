@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from notifications.models import Notification
-from pins.models import Comment, Pin
+from fotos.models import Comment, Foto
 from monetization.models import TipTransaction, TipWithdrawal
 
 
@@ -48,22 +48,22 @@ def _profile_payload(user: User) -> dict[str, Any]:
 
 
 def _pins_payload(user: User) -> list[dict[str, Any]]:
-    rows = Pin.objects.filter(author=user).select_related('topic').order_by('-created_at')
+    rows = Foto.objects.filter(author=user).select_related('topic').order_by('-created_at')
     out: list[dict[str, Any]] = []
-    for pin in rows:
+    for foto in rows:
         out.append(
             {
-                'id': pin.id,
-                'slug': pin.slug,
-                'title': pin.title,
-                'description': pin.description,
-                'topic': pin.topic_name if hasattr(pin, 'topic_name') else (pin.topic.name if pin.topic_id else None),
-                'visibility': pin.visibility,
-                'is_story': pin.is_story,
+                'id': foto.id,
+                'slug': foto.slug,
+                'title': foto.title,
+                'description': foto.description,
+                'topic': foto.topic_name if hasattr(pin, 'topic_name') else (pin.topic.name if foto.topic_id else None),
+                'visibility': foto.visibility,
+                'is_story': foto.is_story,
                 'created_at': _iso(pin.created_at),
                 'updated_at': _iso(getattr(pin, 'updated_at', None)),
                 'public_tags': list(pin.hashtags.values_list('name', flat=True)),
-                'link': pin.link,
+                'link': foto.link,
             },
         )
     return out
@@ -74,7 +74,7 @@ def _comments_payload(user: User) -> list[dict[str, Any]]:
     return [
         {
             'id': row.id,
-            'pin_slug': row.pin.slug if row.pin_id else None,
+            'foto_slug': row.pin.slug if row.foto_id else None,
             'text': row.text,
             'gif_url': row.gif_url,
             'parent_id': row.parent_id,
@@ -95,7 +95,7 @@ def _notifications_payload(user: User) -> list[dict[str, Any]]:
             'message': row.message,
             'action_url': row.action_url,
             'metadata': row.metadata,
-            'pin_slug': row.pin_slug,
+            'foto_slug': row.foto_slug,
             'is_read': row.is_read,
             'created_at': _iso(row.created_at),
         }
@@ -178,7 +178,7 @@ def build_user_export_bundle(user: User) -> dict[str, Any]:
         'exported_at': timezone.now().isoformat(),
         'format_version': 1,
         'profile': _profile_payload(user),
-        'pins': _pins_payload(user),
+        'fotos': _pins_payload(user),
         'comments': _comments_payload(user),
         'notifications': _notifications_payload(user),
         'subscriptions': _subscriptions_payload(user),
@@ -191,10 +191,10 @@ def build_export_zip_bytes(user: User) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(
-            'pinova-export.json',
+            'fotoce-export.json',
             json.dumps(bundle, ensure_ascii=False, indent=2, default=str),
         )
-        for key in ('profile', 'pins', 'comments', 'notifications', 'subscriptions', 'tips'):
+        for key in ('profile', 'fotos', 'comments', 'notifications', 'subscriptions', 'tips'):
             zf.writestr(
                 f'{key}.json',
                 json.dumps(bundle[key], ensure_ascii=False, indent=2, default=str),

@@ -9,7 +9,7 @@ import time
 import requests
 from django.conf import settings
 
-from pinova_backend.security.resilience import (
+from fotoce_backend.security.resilience import (
     CircuitBreaker,
     CircuitOpenError,
     ExternalRetryableError,
@@ -154,9 +154,9 @@ def create_fedapay_checkout(
         'currency': {'iso': currency_iso},
         'callback_url': callback,
         'customer': {
-            'email': request.user.email or f'{request.user.username}@pinova.local',
+            'email': request.user.email or f'{request.user.username}@fotoce.local',
             'firstname': request.user.username[:50],
-            'lastname': 'Pinova',
+            'lastname': 'Fotoce',
         },
     }
     try:

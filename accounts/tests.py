@@ -16,8 +16,8 @@ def mobile_oauth_code_hash(raw_code: str) -> str:
 class MobileGoogleSessionExchangeTests(APITestCase):
     def setUp(self):
         self.url = reverse('mobile_google_session_exchange')
-        self.raw_code = 'pinova-mobile-oauth-code'
-        self.mobile_state = 'pinova-mobile-oauth-state'
+        self.raw_code = 'fotoce-mobile-oauth-code'
+        self.mobile_state = 'fotoce-mobile-oauth-state'
         self.device_binding_id = 'pb_device_123'
         self.payload = {'access': 'jwt-access', 'refresh': 'jwt-refresh'}
         self.login_code = MobileOAuthLoginCode.objects.create(
@@ -33,7 +33,7 @@ class MobileGoogleSessionExchangeTests(APITestCase):
             self.url,
             {'code': self.raw_code, 'mobile_state': self.mobile_state},
             format='json',
-            HTTP_X_PINOVA_DEVICE_BINDING=self.device_binding_id,
+            HTTP_X_FOTOCE_DEVICE_BINDING=self.device_binding_id,
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -59,7 +59,7 @@ class MobileGoogleSessionExchangeTests(APITestCase):
             self.url,
             {'code': self.raw_code, 'mobile_state': self.mobile_state},
             format='json',
-            HTTP_X_PINOVA_DEVICE_BINDING='pb_attacker_device',
+            HTTP_X_FOTOCE_DEVICE_BINDING='pb_attacker_device',
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -72,7 +72,7 @@ class MobileGoogleSessionExchangeTests(APITestCase):
             self.url,
             {'code': self.raw_code, 'mobile_state': 'attacker-state'},
             format='json',
-            HTTP_X_PINOVA_DEVICE_BINDING=self.device_binding_id,
+            HTTP_X_FOTOCE_DEVICE_BINDING=self.device_binding_id,
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

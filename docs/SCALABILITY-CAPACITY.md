@@ -1,4 +1,4 @@
-# Scalabilité PINOVA — capacité par palier
+# Scalabilité FOTOCE — capacité par palier
 
 **Date :** 2026-06-06  
 **Infra cible :** Render (web + worker), Redis managed, PostgreSQL (Render / Neon), Typesense Cloud optionnel  
@@ -47,9 +47,9 @@ Mix traffic observé (web + mobile) :
 
 ### Capacité
 
-- **home-feed** : 13 requêtes SQL/page (test `pins.tests_feed_perf`) ; cache Redis page-1 → ~2 ms hit
+- **home-feed** : 13 requêtes SQL/page (test `fotos.tests_feed_perf`) ; cache Redis page-1 → ~2 ms hit
 - **header-search** : 8–12 SQL sans reco ; Typesense optionnel
-- **Redis obligatoire prod** : checks `pinova.E003`–`E006` (`manage.py check --deploy`)
+- **Redis obligatoire prod** : checks `fotoce.E003`–`E006` (`manage.py check --deploy`)
 
 ### Point de rupture estimé
 
@@ -74,7 +74,7 @@ Mix traffic observé (web + mobile) :
 
 1. Cache `home_feed_page1_key` — TTL 60 s (déjà implémenté)
 2. Typesense pour search — réduit charge Postgres de ~70 % sur `header-search`
-3. `REDIS_URL` + `CHANNEL_LAYERS` Redis — **bloquant deploy** (`pinova.E004`)
+3. `REDIS_URL` + `CHANNEL_LAYERS` Redis — **bloquant deploy** (`fotoce.E004`)
 4. Médias CDN (Cloudflare / S3 signed URLs) — hors scope API
 
 ### Capacité estimée
@@ -102,7 +102,7 @@ Mix traffic observé (web + mobile) :
 
 ### Goulots identifiés
 
-1. **PostgreSQL write** — création pin, likes → sharding ou queue write
+1. **PostgreSQL write** — création foto, likes → sharding ou queue write
 2. **Feed following COUNT** — pagination entrelacée → cursor-based pagination P1
 3. **Typesense sync lag** — Celery async ; recherche fallback Postgres si TS down (< 500 ms p95 validé)
 4. **WebSocket** — Redis channel layer ; limite connexions par IP (`WS_LEADERBOARD_CONN_LIMIT`)
@@ -111,7 +111,7 @@ Mix traffic observé (web + mobile) :
 
 | Scénario | Comportement | Test |
 |----------|--------------|------|
-| Pin créé | `sync_pin_typesense.delay()` — lag 100 ms–5 s | `TypesenseFallbackTests.test_typesense_sync_lag_*` |
+| Foto créé | `sync_foto_typesense.delay()` — lag 100 ms–5 s | `TypesenseFallbackTests.test_typesense_sync_lag_*` |
 | Typesense down | Fallback `search_pins` → pg_trgm | `test_search_pins_falls_back_when_typesense_down` |
 | Charge 50 rps search | p95 Postgres fallback < 500 ms | `load_test_typesense_fallback.py` |
 
@@ -119,23 +119,23 @@ Mix traffic observé (web + mobile) :
 
 ## 5. REDIS_URL — check deploy production
 
-Checks Django (`pinova_backend/core/checks.py`, tag `deploy`) :
+Checks Django (`fotoce_backend/core/checks.py`, tag `deploy`) :
 
 | ID | Condition | Message |
 |----|-----------|---------|
-| `pinova.E003` | InMemoryChannelLayer + prod | Redis requis WS multi-worker |
-| `pinova.E004` | REDIS_URL absent + prod | Idem |
-| `pinova.E005` | LocMem cache + prod | Throttle non partagé |
-| `pinova.E006` | REDIS_URL absent + prod | Cache partagé requis |
+| `fotoce.E003` | InMemoryChannelLayer + prod | Redis requis WS multi-worker |
+| `fotoce.E004` | REDIS_URL absent + prod | Idem |
+| `fotoce.E005` | LocMem cache + prod | Throttle non partagé |
+| `fotoce.E006` | REDIS_URL absent + prod | Cache partagé requis |
 
 Validation :
 
 ```bash
 DEBUG=0 python manage.py check --deploy
-# → Error pinova.E004 si REDIS_URL absent
+# → Error fotoce.E004 si REDIS_URL absent
 ```
 
-Tests : `pinova_backend/tests/tests_ws_deploy.py`
+Tests : `fotoce_backend/tests/tests_ws_deploy.py`
 
 ---
 
@@ -160,8 +160,8 @@ Relancer :
 Production (durées complètes) :
 
 ```powershell
-$env:AUTH_TOKEN = python pinova-backend/scripts/loadtest_token.py
-k6 run -e BASE_URL=https://api.pinova.app -e AUTH_TOKEN=$env:AUTH_TOKEN `
+$env:AUTH_TOKEN = python fotoce-backend/scripts/loadtest_token.py
+k6 run -e BASE_URL=https://api.fotoce.app -e AUTH_TOKEN=$env:AUTH_TOKEN `
   --summary-export=docs/evidence/k6-home-feed-summary.json `
   scripts/loadtest/home_feed.k6.js
 ```
@@ -172,7 +172,7 @@ k6 run -e BASE_URL=https://api.pinova.app -e AUTH_TOKEN=$env:AUTH_TOKEN `
 
 | Canal | URL | Auth prod |
 |-------|-----|-----------|
-| WebSocket | `/api/notifications/ws` | Header `Authorization: Bearer <jwt>` ou subprotocol `pinova.bearer.<jwt>` |
+| WebSocket | `/api/notifications/ws` | Header `Authorization: Bearer <jwt>` ou subprotocol `fotoce.bearer.<jwt>` |
 | Polling fallback | `GET /api/notifications/events/?since_id=` | Bearer JWT |
 
 Script : `ws-smoke.js` — valide connexion + poll HTTP.

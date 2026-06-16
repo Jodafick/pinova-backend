@@ -2,7 +2,7 @@
 
 ALLOWED_MILESTONES = frozenset(
     {
-        'first_pin_published',
+        'first_foto_published',
         'first_follow_obtained',
         'first_story_published',
         'first_comment_posted',

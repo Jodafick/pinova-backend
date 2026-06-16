@@ -10,7 +10,7 @@ from django.core.mail import send_mail
 from django.utils import timezone
 
 from notifications.notification_i18n import create_localized_notification
-from pins.models import Pin
+from fotos.models import Foto
 
 from .discovery_streak import is_streak_at_risk
 from .models import Profile
@@ -31,7 +31,7 @@ def count_following_new_pins(user: User, *, days: int = 7) -> int:
     if not following_ids:
         return 0
     since = timezone.now() - timedelta(days=days)
-    return Pin.objects.filter(author_id__in=following_ids, created_at__gte=since).count()
+    return Foto.objects.filter(author_id__in=following_ids, created_at__gte=since).count()
 
 
 def reset_retention_email_flags(profile: Profile) -> None:
@@ -113,8 +113,8 @@ def send_j7_reactivation_email(user: User) -> bool:
     if not email:
         return False
 
-    pin_count = count_following_new_pins(user, days=7)
-    if pin_count <= 0:
+    foto_count = count_following_new_pins(user, days=7)
+    if foto_count <= 0:
         return False
 
     lang = _user_lang(profile)
@@ -122,23 +122,23 @@ def send_j7_reactivation_email(user: User) -> bool:
     explore_url = f'{base}/'
 
     if lang.startswith('fr'):
-        subject = 'Pinova — tes créateurs ont publié de nouveaux pins'
+        subject = 'Fotoce — tes créateurs ont publié de nouvelles Fotos'
         body = (
             f'Bonjour {profile.display_name or user.username},\n\n'
-            f'Les créateurs que tu suis ont publié {pin_count} nouveau(x) pin(s) cette semaine.\n'
+            f'Les créateurs que tu suis ont publié {foto_count} nouvelle(s) Foto(s) cette semaine.\n'
             f'Reviens découvrir : {explore_url}\n\n'
-            f'— L’équipe Pinova'
+            f'— L’équipe Fotoce'
         )
     else:
-        subject = 'Pinova — creators you follow posted new pins'
+        subject = 'Fotoce — creators you follow posted new Fotos'
         body = (
             f'Hi {profile.display_name or user.username},\n\n'
-            f'Creators you follow posted {pin_count} new pin(s) this week.\n'
+            f'Creators you follow posted {foto_count} new Foto(s) this week.\n'
             f'Come back to explore: {explore_url}\n\n'
-            f'— The Pinova team'
+            f'— The Fotoce team'
         )
 
-    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'noreply@pinova.app'
+    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'noreply@fotoce.app'
     send_mail(subject, body, from_email, [email], fail_silently=False)
     profile.retention_j7_email_sent_at = timezone.now()
     profile.save(update_fields=['retention_j7_email_sent_at'])
@@ -153,34 +153,34 @@ def send_j30_monthly_email(user: User) -> bool:
     if not email:
         return False
 
-    pin_count = count_following_new_pins(user, days=30)
+    foto_count = count_following_new_pins(user, days=30)
     lang = _user_lang(profile)
     base = str(getattr(settings, 'FRONTEND_URL', '') or '').rstrip('/') or 'http://localhost:5174'
     contest_url = f'{base}/contest/live'
     referral_url = f'{base}/referrals/invite'
 
     if lang.startswith('fr'):
-        subject = 'Pinova — ton mois en résumé'
+        subject = 'Fotoce — ton mois en résumé'
         body = (
             f'Bonjour {profile.display_name or user.username},\n\n'
-            f'Ce mois-ci, tes créateurs ont publié {pin_count} pin(s).\n\n'
+            f'Ce mois-ci, tes créateurs ont publié {foto_count} Foto(s).\n\n'
             f'Participe au concours en cours : {contest_url}\n'
             f'Invite des amis et gagne des récompenses : {referral_url}\n\n'
-            f'On a hâte de te revoir sur Pinova !\n\n'
-            f'— L’équipe Pinova'
+            f'On a hâte de te revoir sur Fotoce !\n\n'
+            f'— L’équipe Fotoce'
         )
     else:
-        subject = 'Pinova — your monthly recap'
+        subject = 'Fotoce — your monthly recap'
         body = (
             f'Hi {profile.display_name or user.username},\n\n'
-            f'This month, creators you follow posted {pin_count} pin(s).\n\n'
+            f'This month, creators you follow posted {foto_count} Foto(s).\n\n'
             f'Join the live contest: {contest_url}\n'
             f'Invite friends and earn rewards: {referral_url}\n\n'
-            f'We hope to see you back on Pinova!\n\n'
-            f'— The Pinova team'
+            f'We hope to see you back on Fotoce!\n\n'
+            f'— The Fotoce team'
         )
 
-    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'noreply@pinova.app'
+    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'noreply@fotoce.app'
     send_mail(subject, body, from_email, [email], fail_silently=False)
     profile.retention_j30_email_sent_at = timezone.now()
     profile.save(update_fields=['retention_j30_email_sent_at'])

@@ -28,7 +28,7 @@ from .models import (
 CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 CODE_LENGTH = 8
 
-# Plafond journalier (par couple parrain / filleul) pour les micro-points « engagement » issus du concours pins.
+# Plafond journalier (par couple parrain / filleul) pour les micro-points « engagement » issus du concours fotos.
 ENGAGEMENT_DAILY_CAP_PER_REFEREE_PAIR = 3.0
 
 # Fenêtre « compte tout neuf » pour n’attribuer un parrain OAuth qu’à la création réelle (évite login ultérieur avec intent).
@@ -560,7 +560,7 @@ def assign_referrer_from_registration_context(user: User, request, sociallogin=N
         return
     device = ''
     if request:
-        device = (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip()[:128]
+        device = (request.META.get('HTTP_X_FOTOCE_DEVICE_BINDING') or '').strip()[:128]
     code = _extract_referral_code_from_request(request)
     consume_referral_for_new_user(user, explicit_code=code or None, request=request, device_binding_header=device or None)
 
@@ -625,9 +625,9 @@ def award_engagement_from_referee_to_referrer(
     referee,
     contest,
     trust_score: float,
-    pin_id: int | None = None,
+    foto_id: int | None = None,
 ) -> None:
-    """Micro-points pour activité d’un filleul (interaction concours pins valide sur autrui)."""
+    """Micro-points pour activité d’un filleul (interaction concours fotos valide sur autrui)."""
     from django.core.cache import cache
 
     if not contest:
@@ -660,7 +660,7 @@ def award_engagement_from_referee_to_referrer(
         score_delta=delta,
         trust_score=float(trust_score),
         contest=contest,
-        metadata={'pin_id': pin_id} if pin_id else {},
+        metadata={'foto_id': foto_id} if foto_id else {},
     )
     _bump_referrer_score(contest=contest, referrer=attr.referrer, delta=delta)
     cache.set(key, prev + delta, timeout=86400)
@@ -787,7 +787,7 @@ def _grant_retention_progress_bonus_if_eligible(attr: ReferralAttribution) -> fl
     return total_delta
 
 
-def on_first_pin_created(user: User) -> None:
+def on_first_foto_created(user: User) -> None:
     attr = ReferralAttribution.objects.filter(referee=user, status=ReferralAttribution.STATUS_ACTIVE).first()
     if not attr:
         return
@@ -830,7 +830,7 @@ def build_me_referral_payload(user: User, request) -> dict[str, Any]:
 
     identity = ensure_user_referral_code(user)
     base = getattr(dj_settings, 'FRONTEND_URL', 'http://localhost:5174').rstrip('/')
-    scheme = getattr(dj_settings, 'REFERRAL_DEEP_LINK_SCHEME', 'pinova')
+    scheme = getattr(dj_settings, 'REFERRAL_DEEP_LINK_SCHEME', 'fotoce')
     attr = ReferralAttribution.objects.filter(referee=user).select_related('referrer').first()
     received = None
     if attr:

@@ -4,7 +4,7 @@
   "expected_kpis": {
     "total_events": 100,
     "register_completed": 35,
-    "first_pin_24h": 21,
+    "first_foto_24h": 21,
     "activation_rate_24h_pct": 60.0,
     "guest_conversions": 7,
     "guest_conversion_rate_pct": 20.0,

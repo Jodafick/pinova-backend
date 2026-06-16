@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('pins', '0001_initial'),
+        ('fotos', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -30,7 +30,7 @@ class Migration(migrations.Migration):
                 ('start_at', models.DateTimeField(db_index=True)),
                 ('end_at', models.DateTimeField(db_index=True)),
                 ('max_winners', models.PositiveSmallIntegerField(default=3)),
-                ('leaderboard_display_pins', models.PositiveSmallIntegerField(default=10, help_text='Pins shown on the live leaderboard (one row per creator, best pin). Caps the public pins API.', validators=[django.core.validators.MinValueValidator(1), django.core.validators.MaxValueValidator(500)])),
+                ('leaderboard_display_pins', models.PositiveSmallIntegerField(default=10, help_text='Pins shown on the live leaderboard (one row per creator, best foto). Caps the public fotos API.', validators=[django.core.validators.MinValueValidator(1), django.core.validators.MaxValueValidator(500)])),
                 ('distribution_mode', models.CharField(choices=[('fixed', 'Fixed'), ('custom', 'Custom'), ('percentage', 'Percentage')], default='percentage', max_length=20)),
                 ('total_prize_pool', models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=14)),
                 ('winner_1_amount', models.DecimalField(blank=True, decimal_places=2, max_digits=14, null=True)),
@@ -54,18 +54,18 @@ class Migration(migrations.Migration):
                 ('trust_score_threshold', models.FloatField(default=0.4)),
                 ('referral_defer_rewards', models.BooleanField(default=True, help_text='Si activé : aucun point parrain tant que le filleul ne passe pas les garde-fous (âge compte, actions, trust).')),
                 ('referral_min_account_age_hours', models.PositiveIntegerField(default=12, help_text='Âge minimum du compte filleul (h) avant éligibilité aux points parrain.')),
-                ('referral_min_engagement_actions', models.PositiveIntegerField(default=1, help_text='Nombre minimum d’interactions concours pins valides (filleul) pour débloquer la récompense.')),
+                ('referral_min_engagement_actions', models.PositiveIntegerField(default=1, help_text='Nombre minimum d’interactions concours fotos valides (filleul) pour débloquer la récompense.')),
                 ('referral_reward_delay_hours', models.PositiveIntegerField(default=1, help_text='Délai minimum après première activation email du filleul avant éligibilité aux points.')),
                 ('referral_min_days_before_reward', models.PositiveIntegerField(default=2, help_text='Jours minimum après activation du parrainage avant points (0 = désactivé).')),
                 ('referral_max_signups_per_ip_per_24h', models.PositiveIntegerField(default=40, help_text='Plafond inscriptions avec contexte IP identique sur 24 h (anti mass signup).')),
                 ('referral_max_signups_per_device_per_24h', models.PositiveIntegerField(default=20, help_text='Plafond inscriptions avec même empreinte device sur 24 h.')),
                 ('referral_max_referrals_per_referrer_per_24h', models.PositiveIntegerField(default=40, help_text='Plafond nouveaux filleuls attribués au même parrain sur 24 h.')),
                 ('referral_referee_trust_threshold', models.FloatField(default=0.25, help_text='Trust minimum du filleul (0–1) pour créditer le parrain.')),
-                ('referral_min_pins_published', models.PositiveIntegerField(default=0, help_text='Nombre minimum de pins publics publiés par le filleul (0 = désactivé).')),
+                ('referral_min_pins_published', models.PositiveIntegerField(default=0, help_text='Nombre minimum de fotos publics publiés par le filleul (0 = désactivé).')),
                 ('notify_top_100', models.BooleanField(default=True)),
                 ('notify_top_10', models.BooleanField(default=True)),
                 ('notify_winner', models.BooleanField(default=True)),
-                ('notify_leaderboard_rank_changes', models.BooleanField(default=True, help_text='Notify creators when their displayed contest rank (best pin) changes; uses anti-spam throttling.')),
+                ('notify_leaderboard_rank_changes', models.BooleanField(default=True, help_text='Notify creators when their displayed contest rank (best foto) changes; uses anti-spam throttling.')),
                 ('notify_rank_change_threshold', models.PositiveIntegerField(default=5)),
                 ('leaderboard_refresh_interval', models.PositiveIntegerField(default=3, help_text='seconds')),
                 ('websocket_broadcast_threshold', models.FloatField(default=0.2)),
@@ -121,7 +121,7 @@ class Migration(migrations.Migration):
                 ('score_delta', models.FloatField(default=0.0)),
                 ('created_at', models.DateTimeField(db_index=True, default=django.utils.timezone.now)),
                 ('actor', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_events', to=settings.AUTH_USER_MODEL)),
-                ('pin', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_events', to='pins.pin')),
+                ('pin', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_events', to='fotos.pin')),
                 ('contest', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='events', to='contests.contestsettings')),
             ],
             options={
@@ -149,7 +149,7 @@ class Migration(migrations.Migration):
             name='LeaderboardSnapshot',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('snapshot_type', models.CharField(choices=[('pin', 'Pin'), ('creator', 'Creator')], max_length=12)),
+                ('snapshot_type', models.CharField(choices=[('pin', 'Foto'), ('creator', 'Creator')], max_length=12)),
                 ('rank', models.PositiveIntegerField()),
                 ('entity_id', models.PositiveIntegerField()),
                 ('score', models.FloatField(default=0.0)),
@@ -176,8 +176,8 @@ class Migration(migrations.Migration):
                 ('total_comments', models.PositiveIntegerField(default=0)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('contest', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='pin_scores', to='contests.contestsettings')),
-                ('creator', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_pin_scores', to=settings.AUTH_USER_MODEL)),
-                ('pin', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_scores', to='pins.pin')),
+                ('creator', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_foto_scores', to=settings.AUTH_USER_MODEL)),
+                ('pin', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='contest_scores', to='fotos.pin')),
             ],
             options={
                 'ordering': ['rank', '-adjusted_score'],

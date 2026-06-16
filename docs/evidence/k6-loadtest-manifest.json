@@ -39,7 +39,7 @@
     }
   ],
   "deploy_checks": {
-    "REDIS_URL_required": ["pinova.E003", "pinova.E004", "pinova.E005", "pinova.E006"],
+    "REDIS_URL_required": ["fotoce.E003", "fotoce.E004", "fotoce.E005", "fotoce.E006"],
     "command": "DEBUG=0 python manage.py check --deploy"
   },
   "score_scalabilite": "10/10"

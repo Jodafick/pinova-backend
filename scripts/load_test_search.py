@@ -3,7 +3,7 @@
 Load test recherche header-search — objectif : 50 req/s, p95 < 300 ms.
 
 Usage :
-  python scripts/load_test_search.py --url http://127.0.0.1:8000/api/pins/header-search/ --q tattoo --rps 50 --duration 10
+  python scripts/load_test_search.py --url http://127.0.0.1:8000/api/fotos/header-search/ --q tattoo --rps 50 --duration 10
 
 Prérequis : serveur Django/API accessible (gunicorn ou runserver).
 """
@@ -87,8 +87,8 @@ def run_load_test(base_url: str, query: str, rps: int, duration: int, timeout: f
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Load test header-search Pinova')
-    parser.add_argument('--url', default='http://127.0.0.1:8000/api/pins/header-search/')
+    parser = argparse.ArgumentParser(description='Load test header-search Fotoce')
+    parser.add_argument('--url', default='http://127.0.0.1:8000/api/fotos/header-search/')
     parser.add_argument('--q', default='tattoo')
     parser.add_argument('--rps', type=int, default=50)
     parser.add_argument('--duration', type=int, default=10)

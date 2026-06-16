@@ -6,7 +6,7 @@ from django.db import transaction
 from rest_framework import status
 from rest_framework.response import Response
 
-from pinova_backend.observability.analytics import (
+from fotoce_backend.observability.analytics import (
     capture_boost_purchased,
     capture_campaign_launched,
     capture_checkout_success,
@@ -200,10 +200,10 @@ def _handle_tip_webhook(payload, tx_id, status_value, wh_amount):
 
 
 def _handle_boost_webhook(payload, tx_id, status_value, wh_amount):
-    from .models import PinBoost, PinPromoCampaign
+    from .models import FotoBoost, FotoPromoCampaign
 
-    promo = PinPromoCampaign.objects.filter(fedapay_transaction_id=tx_id).select_related('package').first()
-    boost = PinBoost.objects.filter(fedapay_transaction_id=tx_id).select_related('package').first()
+    promo = FotoPromoCampaign.objects.filter(fedapay_transaction_id=tx_id).select_related('package').first()
+    boost = FotoBoost.objects.filter(fedapay_transaction_id=tx_id).select_related('package').first()
     if not promo and not boost:
         return None
 
@@ -250,7 +250,7 @@ def _handle_boost_webhook(payload, tx_id, status_value, wh_amount):
                 transaction_id=tx_id,
             )
         elif boost:
-            capture_boost_purchased(user_id=owner_id, amount=amount, pin_id=boost.pin_id)
+            capture_boost_purchased(user_id=owner_id, amount=amount, foto_id=boost.foto_id)
             capture_checkout_success(
                 user_id=owner_id,
                 flow='boost',

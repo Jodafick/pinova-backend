@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.contrib.auth.models import User
 
-from contests.models import ContestSettings, PinContestScore
+from contests.models import ContestSettings, FotoContestScore
 from notifications.delivery import DELIVERY_WS_AND_PUSH, DELIVERY_WS_ONLY
 from notifications.notification_i18n import create_localized_notification
 
@@ -12,7 +12,7 @@ def notify_contest_new_month(*, recipient: User, contest_key: str) -> None:
         recipient=recipient,
         notification_type='system',
         title_fr='Nouveau concours mensuel',
-        message_fr=f'Le concours {contest_key} a commencé. Publiez vos meilleurs pins !',
+        message_fr=f'Le concours {contest_key} a commencé. Publiez vos meilleurs fotos !',
         action_url='/contest/live',
         metadata={
             'kind': 'contest_new_month',
@@ -36,7 +36,7 @@ def notify_contest_participants_new_month(contest: ContestSettings, *, limit: in
     if not prev:
         return
     creator_ids = list(
-        PinContestScore.objects.filter(contest=prev)
+        FotoContestScore.objects.filter(contest=prev)
         .values_list('creator_id', flat=True)
         .distinct()[: max(1, limit)]
     )
@@ -59,7 +59,7 @@ def notify_contest_winner(
         notification_type='system',
         title_fr=title,
         message_fr=(
-            f'Félicitations ! Votre pin « {pin_title[:80]} » termine #{rank} '
+            f'Félicitations ! Votre foto « {pin_title[:80]} » termine #{rank} '
             f'sur le concours {contest_key}.'
         ),
         action_url='/contest/live',
@@ -100,9 +100,9 @@ def notify_contest_final_rank(
     )
 
 
-def notify_pin_contest_month_closed(contest: ContestSettings, winners: list[dict], *, limit: int = 800) -> None:
+def notify_foto_contest_month_closed(contest: ContestSettings, winners: list[dict], *, limit: int = 800) -> None:
     """
-    Fin de mois pins : podium + classement final pour les participants (best-effort).
+    Fin de mois fotos : podium + classement final pour les participants (best-effort).
     """
     winner_creator_ids = {int(w['creator_id']) for w in winners if w.get('creator_id')}
 
@@ -113,14 +113,14 @@ def notify_pin_contest_month_closed(contest: ContestSettings, winners: list[dict
         user = User.objects.filter(pk=uid, is_active=True).first()
         if not user:
             continue
-        pin_id = w.get('pin_id')
-        pin_title = 'votre pin'
-        if pin_id:
-            from pins.models import Pin
+        foto_id = w.get('foto_id')
+        pin_title = 'votre foto'
+        if foto_id:
+            from fotos.models import Foto
 
-            pin = Pin.objects.filter(pk=pin_id).only('title').first()
-            if pin and pin.title:
-                pin_title = pin.title
+            foto = Foto.objects.filter(pk=foto_id).only('title').first()
+            if foto and foto.title:
+                pin_title = foto.title
         notify_contest_winner(
             recipient=user,
             contest_key=contest.contest_key,
@@ -129,9 +129,9 @@ def notify_pin_contest_month_closed(contest: ContestSettings, winners: list[dict
         )
 
     ordered = list(
-        PinContestScore.objects.filter(contest=contest, pin__is_story=False)
+        FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
         .select_related('creator')
-        .order_by('-adjusted_score', 'rank', 'pin_id')
+        .order_by('-adjusted_score', 'rank', 'foto_id')
     )
     seen: set[int] = set()
     display_rank = 0

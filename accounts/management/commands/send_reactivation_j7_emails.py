@@ -1,4 +1,4 @@
-"""Email J+7 inactif — créateurs suivis ont publié X pins."""
+"""Email J+7 inactif — créateurs suivis ont publié X fotos."""
 from django.core.management.base import BaseCommand
 
 from accounts.retention_services import run_j7_reactivation_emails

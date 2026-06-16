@@ -1,4 +1,4 @@
-# Generated manually for PinPromoCampaign
+# Generated manually for FotoPromoCampaign
 
 import django.db.models.deletion
 from django.conf import settings
@@ -10,12 +10,12 @@ class Migration(migrations.Migration):
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('monetization', '0003_internal_tips'),
-        ('pins', '0004_machinetranslationcache'),
+        ('fotos', '0004_machinetranslationcache'),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='PinPromoCampaign',
+            name='FotoPromoCampaign',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('headline', models.CharField(blank=True, default='', max_length=120)),
@@ -42,18 +42,18 @@ class Migration(migrations.Migration):
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('owner', models.ForeignKey(
                     on_delete=django.db.models.deletion.CASCADE,
-                    related_name='pin_promo_campaigns',
+                    related_name='foto_promo_campaigns',
                     to=settings.AUTH_USER_MODEL,
                 )),
                 ('package', models.ForeignKey(
                     on_delete=django.db.models.deletion.PROTECT,
-                    related_name='pin_promo_campaigns',
+                    related_name='foto_promo_campaigns',
                     to='monetization.boostpackage',
                 )),
                 ('pin', models.ForeignKey(
                     on_delete=django.db.models.deletion.CASCADE,
                     related_name='promo_campaigns',
-                    to='pins.pin',
+                    to='fotos.pin',
                 )),
             ],
             options={

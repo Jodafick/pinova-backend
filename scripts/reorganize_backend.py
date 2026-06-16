@@ -1,11 +1,11 @@
-"""One-shot script to reorganize pinova_backend module layout."""
+"""One-shot script to reorganize fotoce_backend module layout."""
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PKG = ROOT / "pinova_backend"
+PKG = ROOT / "fotoce_backend"
 
 MOVES: dict[str, str] = {
     "cache_config.py": "config/cache.py",
@@ -35,44 +35,44 @@ MOVES: dict[str, str] = {
 }
 
 IMPORT_REPLACEMENTS: list[tuple[str, str]] = [
-    ("pinova_backend.config.cache", "pinova_backend.config.cache"),
-    ("pinova_backend.core.exceptions", "pinova_backend.core.exceptions"),
-    ("pinova_backend.core.request_context", "pinova_backend.core.request_context"),
-    ("pinova_backend.core.checks", "pinova_backend.core.checks"),
-    ("pinova_backend.middleware.security", "pinova_backend.middleware.security"),
-    ("pinova_backend.middleware.media", "pinova_backend.middleware.media"),
-    ("pinova_backend.middleware.sentry", "pinova_backend.middleware.sentry"),
+    ("fotoce_backend.config.cache", "fotoce_backend.config.cache"),
+    ("fotoce_backend.core.exceptions", "fotoce_backend.core.exceptions"),
+    ("fotoce_backend.core.request_context", "fotoce_backend.core.request_context"),
+    ("fotoce_backend.core.checks", "fotoce_backend.core.checks"),
+    ("fotoce_backend.middleware.security", "fotoce_backend.middleware.security"),
+    ("fotoce_backend.middleware.media", "fotoce_backend.middleware.media"),
+    ("fotoce_backend.middleware.sentry", "fotoce_backend.middleware.sentry"),
     (
-        "pinova_backend.middleware.unread_notifications",
-        "pinova_backend.middleware.unread_notifications",
+        "fotoce_backend.middleware.unread_notifications",
+        "fotoce_backend.middleware.unread_notifications",
     ),
-    ("pinova_backend.media_serving.access", "pinova_backend.media_serving.access"),
-    ("pinova_backend.media_serving.cache", "pinova_backend.media_serving.cache"),
-    ("pinova_backend.media_serving.views", "pinova_backend.media_serving.views"),
-    ("pinova_backend.media_serving.storage", "pinova_backend.media_serving.storage"),
-    ("pinova_backend.health.views", "pinova_backend.health.views"),
-    ("pinova_backend.websocket.auth", "pinova_backend.websocket.auth"),
-    ("pinova_backend.websocket.heartbeat", "pinova_backend.websocket.heartbeat"),
-    ("pinova_backend.websocket.ratelimit", "pinova_backend.websocket.ratelimit"),
-    ("pinova_backend.observability.logging", "pinova_backend.observability.logging"),
-    ("pinova_backend.observability.sentry", "pinova_backend.observability.sentry"),
-    ("pinova_backend.observability.otel", "pinova_backend.observability.otel"),
-    ("pinova_backend.observability.analytics", "pinova_backend.observability.analytics"),
-    ("pinova_backend.security.throttling", "pinova_backend.security.throttling"),
-    ("pinova_backend.security.ratelimit_helpers", "pinova_backend.security.ratelimit_helpers"),
-    ("pinova_backend.security.permissions_audit", "pinova_backend.security.permissions_audit"),
-    ("pinova_backend.security.resilience", "pinova_backend.security.resilience"),
+    ("fotoce_backend.media_serving.access", "fotoce_backend.media_serving.access"),
+    ("fotoce_backend.media_serving.cache", "fotoce_backend.media_serving.cache"),
+    ("fotoce_backend.media_serving.views", "fotoce_backend.media_serving.views"),
+    ("fotoce_backend.media_serving.storage", "fotoce_backend.media_serving.storage"),
+    ("fotoce_backend.health.views", "fotoce_backend.health.views"),
+    ("fotoce_backend.websocket.auth", "fotoce_backend.websocket.auth"),
+    ("fotoce_backend.websocket.heartbeat", "fotoce_backend.websocket.heartbeat"),
+    ("fotoce_backend.websocket.ratelimit", "fotoce_backend.websocket.ratelimit"),
+    ("fotoce_backend.observability.logging", "fotoce_backend.observability.logging"),
+    ("fotoce_backend.observability.sentry", "fotoce_backend.observability.sentry"),
+    ("fotoce_backend.observability.otel", "fotoce_backend.observability.otel"),
+    ("fotoce_backend.observability.analytics", "fotoce_backend.observability.analytics"),
+    ("fotoce_backend.security.throttling", "fotoce_backend.security.throttling"),
+    ("fotoce_backend.security.ratelimit_helpers", "fotoce_backend.security.ratelimit_helpers"),
+    ("fotoce_backend.security.permissions_audit", "fotoce_backend.security.permissions_audit"),
+    ("fotoce_backend.security.resilience", "fotoce_backend.security.resilience"),
 ]
 
 RELATIVE_FIXES: list[tuple[str, str]] = [
-    ("from pinova_backend.config.cache import", "from pinova_backend.config.cache import"),
-    ("from pinova_backend.core import checks", "from pinova_backend.core import checks"),
-    ("from pinova_backend.observability.sentry import", "from pinova_backend.observability.sentry import"),
-    ("from pinova_backend.observability.otel import", "from pinova_backend.observability.otel import"),
-    ("from pinova_backend.media_serving.access import", "from pinova_backend.media_serving.access import"),
-    ("from pinova_backend.media_serving.views import", "from pinova_backend.media_serving.views import"),
-    ("from pinova_backend.health.views import", "from pinova_backend.health.views import"),
-    ("from pinova_backend.websocket.auth import", "from pinova_backend.websocket.auth import"),
+    ("from fotoce_backend.config.cache import", "from fotoce_backend.config.cache import"),
+    ("from fotoce_backend.core import checks", "from fotoce_backend.core import checks"),
+    ("from fotoce_backend.observability.sentry import", "from fotoce_backend.observability.sentry import"),
+    ("from fotoce_backend.observability.otel import", "from fotoce_backend.observability.otel import"),
+    ("from fotoce_backend.media_serving.access import", "from fotoce_backend.media_serving.access import"),
+    ("from fotoce_backend.media_serving.views import", "from fotoce_backend.media_serving.views import"),
+    ("from fotoce_backend.health.views import", "from fotoce_backend.health.views import"),
+    ("from fotoce_backend.websocket.auth import", "from fotoce_backend.websocket.auth import"),
 ]
 
 

@@ -150,7 +150,7 @@ cython_debug/
 # OS
 .DS_Store
 
-# Media uploads (MEDIA_ROOT at project root — distinct from pinova_backend/media_serving/ package)
+# Media uploads (MEDIA_ROOT at project root — distinct from fotoce_backend/media_serving/ package)
 /media/
 staticfiles/
 .seed_image_cache/

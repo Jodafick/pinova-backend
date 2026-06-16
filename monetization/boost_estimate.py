@@ -1,11 +1,11 @@
-"""Heuristique d'estimation de portée pour un boost pin."""
+"""Heuristique d'estimation de portée pour un boost foto."""
 from __future__ import annotations
 
 from datetime import timedelta
 
 from django.utils import timezone
 
-from pins.models import PinViewEvent
+from fotos.models import FotoViewEvent
 
 # Multiplicateurs par durée de pack (heures) — ordre de grandeur, pas une garantie.
 _DURATION_MULTIPLIERS: dict[int, float] = {
@@ -17,15 +17,15 @@ _DURATION_MULTIPLIERS: dict[int, float] = {
 
 def _baseline_views(pin, days: int = 7) -> int:
     since = timezone.now() - timedelta(days=days)
-    return PinViewEvent.objects.filter(pin=pin, created_at__gte=since).count()
+    return FotoViewEvent.objects.filter(pin=pin, created_at__gte=since).count()
 
 
 def estimate_boost_reach(pin, duration_hours: int) -> dict:
     """
     Retourne une fourchette estimée de vues additionnelles pendant le boost.
-    Basé sur les vues récentes du pin + multiplicateur durée.
+    Basé sur les vues récentes du foto + multiplicateur durée.
     """
-    baseline = _baseline_views(pin)
+    baseline = _baseline_views(foto)
     mult = _DURATION_MULTIPLIERS.get(int(duration_hours))
     if mult is None:
         mult = max(1.8, min(8.0, float(duration_hours) / 18.0))

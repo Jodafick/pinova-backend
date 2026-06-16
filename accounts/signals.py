@@ -5,7 +5,7 @@ from django.dispatch import receiver
 
 from notifications.models import Notification
 from notifications.notification_i18n import create_localized_notification
-from pins.storage_media import unlink_field_file
+from fotos.storage_media import unlink_field_file
 
 from .models import Profile, UserBlock
 
@@ -32,7 +32,7 @@ def notify_social_signup(sender, request, sociallogin, **kwargs):
         recipient=user,
         sender=None,
         notification_type='welcome',
-        title_fr='Bienvenue sur PINOVA',
+        title_fr='Bienvenue sur FOTOCE',
         message_fr=f"Compte créé avec {provider_label}. Bienvenue {user.username} !",
         action_url='/',
         metadata={

@@ -188,19 +188,19 @@ class SubscriptionSeatInviteCreateView(APIView):
         if bundle_kind == SUBSCRIPTION_BUNDLE_TEAM:
             notif_title = 'Invitation abonnement Équipe'
             notif_message = (
-                f'{owner.username} vous invite dans son abonnement Pinova Équipe '
+                f'{owner.username} vous invite dans son abonnement Fotoce Équipe '
                 f'(plusieurs sièges sur une même facturation).'
             )
         elif bundle_kind == SUBSCRIPTION_BUNDLE_FAMILY:
             notif_title = 'Invitation abonnement Famille'
             notif_message = (
-                f'{owner.username} vous invite dans son abonnement Pinova Famille '
+                f'{owner.username} vous invite dans son abonnement Fotoce Famille '
                 f'(plusieurs sièges sur une même facturation).'
             )
         else:
             notif_title = 'Invitation abonnement groupe'
             notif_message = (
-                f'{owner.username} vous invite dans son abonnement Pinova famille ou équipe.'
+                f'{owner.username} vous invite dans son abonnement Fotoce famille ou équipe.'
             )
 
         create_localized_notification(

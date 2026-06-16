@@ -1,5 +1,5 @@
 """
-Finalisation mensuelle du concours referral (aligné sur ContestSettings / rollover pins).
+Finalisation mensuelle du concours referral (aligné sur ContestSettings / rollover fotos).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ MIN_REFERRAL_LEADERBOARD_SCORE = 100.0
 
 def finalize_referral_month_for_contest(contest: ContestSettings) -> ReferralContestResult | None:
     """
-    Archive le classement referral du mois `contest` (appelé quand le mois pins est finalisé / verrouillé).
+    Archive le classement referral du mois `contest` (appelé quand le mois fotos est finalisé / verrouillé).
     Idempotent.
     """
     if getattr(contest, 'end_at', None) and contest.end_at > timezone.now():

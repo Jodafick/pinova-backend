@@ -680,7 +680,7 @@
             "entity": "127.0.0.1"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/auth/token/refresh/",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/auth/token/refresh/",
             "sessionTargetType": "page",
             "protocol": "h2",
             "rendererStartTime": 15535.79899999965,
@@ -696,7 +696,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/me/?lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/me/?lang=en",
             "sessionTargetType": "page",
             "protocol": "h2",
             "rendererStartTime": 15593.237999999896,
@@ -746,7 +746,7 @@
             "entity": "Google Fonts"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/auth/token/refresh/",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/auth/token/refresh/",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 15529.281000000425,
@@ -831,7 +831,7 @@
             "entity": "127.0.0.1"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/me/?lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/me/?lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 15582.13599999994,
@@ -1001,7 +1001,7 @@
             "entity": "127.0.0.1"
           },
           {
-            "url": "http://127.0.0.1:4173/assets/PinGrid.vue_vue_type_script_setup_true_lang-BjjwnqDJ.js",
+            "url": "http://127.0.0.1:4173/assets/FotoGrid.vue_vue_type_script_setup_true_lang-BjjwnqDJ.js",
             "sessionTargetType": "page",
             "protocol": "http/1.1",
             "rendererStartTime": 15606.898000000045,
@@ -1069,7 +1069,7 @@
             "entity": "127.0.0.1"
           },
           {
-            "url": "http://127.0.0.1:4173/assets/PinDetailOverlayHost.vue_vue_type_script_setup_true_lang-BkW3_ktJ.js",
+            "url": "http://127.0.0.1:4173/assets/FotoDetailOverlayHost.vue_vue_type_script_setup_true_lang-BkW3_ktJ.js",
             "sessionTargetType": "page",
             "protocol": "http/1.1",
             "rendererStartTime": 15614.325000000186,
@@ -1154,7 +1154,7 @@
             "entity": "127.0.0.1"
           },
           {
-            "url": "http://127.0.0.1:4173/assets/PinDetailOverlayHost-CCZkLIp1.css",
+            "url": "http://127.0.0.1:4173/assets/FotoDetailOverlayHost-CCZkLIp1.css",
             "sessionTargetType": "page",
             "protocol": "http/1.1",
             "rendererStartTime": 15621.411999999546,
@@ -1256,7 +1256,7 @@
             "entity": "Google CDN"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/pins/home-feed/?page=1&lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/home-feed/?page=1&lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 16652.95600000024,
@@ -1273,7 +1273,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/pins/home-feed/?page=1&lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/home-feed/?page=1&lang=en",
             "sessionTargetType": "page",
             "protocol": "h2",
             "rendererStartTime": 16667.980000000447,
@@ -1289,7 +1289,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/me/?lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/me/?lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 16686.39099999983,
@@ -1306,7 +1306,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/auth/token/refresh/",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/auth/token/refresh/",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 16697.62999999989,
@@ -1323,7 +1323,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/pins/recommendations/?page=1&lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/recommendations/?page=1&lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 17321.19299999997,
@@ -1340,7 +1340,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/pins/recommendations/?page=1&lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/recommendations/?page=1&lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 17336.088000000454,
@@ -1356,7 +1356,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/auth/token/refresh/",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/auth/token/refresh/",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 17957.338999999687,
@@ -1373,7 +1373,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/pins/?page=1&lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/?page=1&lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 18219.74700000044,
@@ -1390,7 +1390,7 @@
             "entity": "onrender.com"
           },
           {
-            "url": "https://pinova-backend-8mlq.onrender.com/api/pins/?page=1&lang=en",
+            "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/?page=1&lang=en",
             "sessionTargetType": "page",
             "protocol": "h3",
             "rendererStartTime": 18228.44799999986,
@@ -1488,11 +1488,11 @@
             },
             {
               "type": "preflight",
-              "url": "https://pinova-backend-8mlq.onrender.com/api/auth/token/refresh/"
+              "url": "https://fotoce-backend-8mlq.onrender.com/api/auth/token/refresh/"
             },
             {
               "type": "preflight",
-              "url": "https://pinova-backend-8mlq.onrender.com/api/me/?lang=en"
+              "url": "https://fotoce-backend-8mlq.onrender.com/api/me/?lang=en"
             },
             {
               "type": "parser",
@@ -1506,15 +1506,15 @@
             },
             {
               "type": "preflight",
-              "url": "https://pinova-backend-8mlq.onrender.com/api/pins/home-feed/?page=1&lang=en"
+              "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/home-feed/?page=1&lang=en"
             },
             {
               "type": "preflight",
-              "url": "https://pinova-backend-8mlq.onrender.com/api/pins/recommendations/?page=1&lang=en"
+              "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/recommendations/?page=1&lang=en"
             },
             {
               "type": "preflight",
-              "url": "https://pinova-backend-8mlq.onrender.com/api/pins/?page=1&lang=en"
+              "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/?page=1&lang=en"
             }
           ]
         }
@@ -1558,7 +1558,7 @@
             "rtt": 206.05
           },
           {
-            "origin": "https://pinova-backend-8mlq.onrender.com",
+            "origin": "https://fotoce-backend-8mlq.onrender.com",
             "rtt": 6.365189999999998
           },
           {
@@ -1601,7 +1601,7 @@
         ],
         "items": [
           {
-            "origin": "https://pinova-backend-8mlq.onrender.com",
+            "origin": "https://fotoce-backend-8mlq.onrender.com",
             "serverResponseTime": 383.29381
           },
           {
@@ -2457,7 +2457,7 @@
             "unusedBytes": 380
           },
           {
-            "name": "http://127.0.0.1:4173/assets/PinGrid.vue_vue_type_script_setup_true_lang-BjjwnqDJ.js",
+            "name": "http://127.0.0.1:4173/assets/FotoGrid.vue_vue_type_script_setup_true_lang-BjjwnqDJ.js",
             "resourceBytes": 18811,
             "encodedBytes": 6635,
             "unusedBytes": 5326
@@ -2481,7 +2481,7 @@
             "unusedBytes": 596
           },
           {
-            "name": "http://127.0.0.1:4173/assets/PinDetailOverlayHost.vue_vue_type_script_setup_true_lang-BkW3_ktJ.js",
+            "name": "http://127.0.0.1:4173/assets/FotoDetailOverlayHost.vue_vue_type_script_setup_true_lang-BkW3_ktJ.js",
             "resourceBytes": 81741,
             "encodedBytes": 21757,
             "unusedBytes": 62538
@@ -2588,7 +2588,7 @@
             "totalBytes": 50895
           },
           {
-            "url": "http://127.0.0.1:4173/assets/PinDetailOverlayHost.vue_vue_type_script_setup_true_lang-BkW3_ktJ.js",
+            "url": "http://127.0.0.1:4173/assets/FotoDetailOverlayHost.vue_vue_type_script_setup_true_lang-BkW3_ktJ.js",
             "totalBytes": 22111
           },
           {
@@ -3027,7 +3027,7 @@
               "type": "node",
               "lhId": "page-8-DIV",
               "path": "1,HTML,1,BODY,0,DIV,1,DIV,1,HEADER,0,DIV",
-              "selector": "div#app > div.pinova-chrome-stack > header.app-global-header-shell > div.flex",
+              "selector": "div#app > div.fotoce-chrome-stack > header.app-global-header-shell > div.flex",
               "boundingRect": {
                 "top": 6,
                 "bottom": 52,
@@ -3572,7 +3572,7 @@
                       "transferSize": 177388,
                       "children": {
                         "19940.67": {
-                          "url": "https://pinova-backend-8mlq.onrender.com/api/me/?lang=en",
+                          "url": "https://fotoce-backend-8mlq.onrender.com/api/me/?lang=en",
                           "navStartToEndTime": 17225,
                           "transferSize": 443,
                           "children": {}
@@ -3674,7 +3674,7 @@
                   }
                 },
                 {
-                  "origin": "https://pinova-backend-8mlq.onrender.com/",
+                  "origin": "https://fotoce-backend-8mlq.onrender.com/",
                   "source": {
                     "type": "node",
                     "lhId": "page-6-LINK",
@@ -3688,7 +3688,7 @@
                       "width": 0,
                       "height": 0
                     },
-                    "snippet": "<link rel=\"preconnect\" href=\"https://pinova-backend-8mlq.onrender.com\" crossorigin=\"\">",
+                    "snippet": "<link rel=\"preconnect\" href=\"https://fotoce-backend-8mlq.onrender.com\" crossorigin=\"\">",
                     "nodeLabel": "head > link"
                   },
                   "subItems": {
@@ -3823,27 +3823,27 @@
               "type": "subitems",
               "items": [
                 {
-                  "url": "https://pinova-backend-8mlq.onrender.com/api/auth/token/refresh/",
+                  "url": "https://fotoce-backend-8mlq.onrender.com/api/auth/token/refresh/",
                   "mainThreadTime": 1.5950000025331974,
                   "transferSize": 1360
                 },
                 {
-                  "url": "https://pinova-backend-8mlq.onrender.com/api/me/?lang=en",
+                  "url": "https://fotoce-backend-8mlq.onrender.com/api/me/?lang=en",
                   "mainThreadTime": 0.6190000008791685,
                   "transferSize": 886
                 },
                 {
-                  "url": "https://pinova-backend-8mlq.onrender.com/api/pins/?page=1&lang=en",
+                  "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/?page=1&lang=en",
                   "mainThreadTime": 0.3770000012591481,
                   "transferSize": 8332
                 },
                 {
-                  "url": "https://pinova-backend-8mlq.onrender.com/api/pins/recommendations/?page=1&lang=en",
+                  "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/recommendations/?page=1&lang=en",
                   "mainThreadTime": 0.28499999921768904,
                   "transferSize": 437
                 },
                 {
-                  "url": "https://pinova-backend-8mlq.onrender.com/api/pins/home-feed/?page=1&lang=en",
+                  "url": "https://fotoce-backend-8mlq.onrender.com/api/fotos/home-feed/?page=1&lang=en",
                   "mainThreadTime": 0.22000000067055225,
                   "transferSize": 437
                 }
@@ -4359,7 +4359,7 @@
     {
       "name": "onrender.com",
       "origins": [
-        "https://pinova-backend-8mlq.onrender.com"
+        "https://fotoce-backend-8mlq.onrender.com"
       ],
       "isUnrecognized": true
     },

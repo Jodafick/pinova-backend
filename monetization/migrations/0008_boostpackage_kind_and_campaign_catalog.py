@@ -50,7 +50,7 @@ class Migration(migrations.Migration):
             model_name='boostpackage',
             name='package_kind',
             field=models.CharField(
-                choices=[('boost', 'Boost pin'), ('campaign', 'Campagne pub'), ('both', 'Boost et campagne')],
+                choices=[('boost', 'Boost foto'), ('campaign', 'Campagne pub'), ('both', 'Boost et campagne')],
                 db_index=True,
                 default='both',
                 help_text='Restreint l’usage du pack (boost, campagne pub, ou les deux).',

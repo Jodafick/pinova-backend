@@ -7,21 +7,21 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from pins.models import Pin
+from fotos.models import Foto
 
 from .fedapay_client import create_fedapay_checkout, fedapay_headers, payments_sandbox_allowed
-from .models import BoostPackage, PartnerCampaign, PinBoost, PinPromoCampaign
+from .models import BoostPackage, PartnerCampaign, FotoBoost, FotoPromoCampaign
 from .serializers import (
     BoostPackageSerializer,
     PartnerCampaignSerializer,
     PartnerCampaignWriteSerializer,
-    PinBoostHistorySerializer,
-    PinPromoCampaignSerializer,
-    PinPromoCampaignWriteSerializer,
+    FotoBoostHistorySerializer,
+    FotoPromoCampaignSerializer,
+    FotoPromoCampaignWriteSerializer,
 )
 from .boost_catalog import PACKAGE_KIND_BOOST, PACKAGE_KIND_CAMPAIGN, active_packages_for_kind, package_allows_kind
 from .boost_estimate import estimate_boost_reach
-from .services import activate_pin_boost, activate_pin_promo_campaign, network_ad_config_payload, pick_contextual_ad
+from .services import activate_foto_boost, activate_foto_promo_campaign, network_ad_config_payload, pick_contextual_ad
 from .social_proof import enrich_boost_packages
 from .targeting import targeting_options_payload
 
@@ -101,9 +101,9 @@ class BoostPackageListView(APIView):
 class BoostReachEstimateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def get(self, request, pin_slug: str):
-        pin = get_object_or_404(Pin, slug=pin_slug)
-        if pin.author_id != request.user.id:
+    def get(self, request, foto_slug: str):
+        foto = get_object_or_404(Foto, slug=foto_slug)
+        if foto.author_id != request.user.id:
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         package_slug = (request.query_params.get('package') or request.query_params.get('package_slug') or '').strip()
         package = BoostPackage.objects.filter(slug=package_slug, is_active=True).first()
@@ -119,29 +119,29 @@ class BoostReachEstimateView(APIView):
         return Response(payload)
 
 
-class PinBoostCheckoutView(APIView):
+class FotoBoostCheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request, pin_slug: str):
-        pin = get_object_or_404(Pin, slug=pin_slug)
-        if pin.author_id != request.user.id:
+    def post(self, request, foto_slug: str):
+        foto = get_object_or_404(Foto, slug=foto_slug)
+        if foto.author_id != request.user.id:
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
         package_slug = (request.data.get('package') or request.data.get('package_slug') or '').strip()
         package = BoostPackage.objects.filter(slug=package_slug, is_active=True).first()
         if not package or not package_allows_kind(package, PACKAGE_KIND_BOOST):
             return Response({'error': 'Invalid package'}, status=status.HTTP_400_BAD_REQUEST)
 
-        boost = PinBoost.objects.create(
-            pin=pin,
+        boost = FotoBoost.objects.create(
+            foto=pin,
             owner=request.user,
             package=package,
-            status=PinBoost.STATUS_PENDING,
+            status=FotoBoost.STATUS_PENDING,
         )
 
         secret = fedapay_headers()
         if not secret:
             if payments_sandbox_allowed():
-                activate_pin_boost(boost)
+                activate_foto_boost(boost)
                 return Response({
                     'status': 'active',
                     'boost_id': boost.id,
@@ -154,13 +154,13 @@ class PinBoostCheckoutView(APIView):
 
         checkout = create_fedapay_checkout(
             request=request,
-            description=f'Pinova boost · {package.label} · pin {boost.pin.slug}',
+            description=f'Fotoce boost · {package.label} · Foto {boost.pin.slug}',
             amount=int(package.amount),
             currency_iso=package.currency_iso,
             callback_url=os.environ.get('FEDAPAY_BOOST_CALLBACK_URL') or checkout_return_url('boost', request=request),
         )
         if checkout.get('error'):
-            boost.status = PinBoost.STATUS_CANCELED
+            boost.status = FotoBoost.STATUS_CANCELED
             boost.save(update_fields=['status', 'updated_at'])
             return Response(checkout, status=status.HTTP_502_BAD_GATEWAY)
         boost.fedapay_transaction_id = checkout['transaction_id']
@@ -173,16 +173,16 @@ class PinBoostCheckoutView(APIView):
         })
 
 
-class MyPinBoostsView(APIView):
+class MyFotoBoostsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         rows = (
-            PinBoost.objects.filter(owner=request.user)
+            FotoBoost.objects.filter(owner=request.user)
             .select_related('pin', 'package')
             .order_by('-created_at')[:50]
         )
-        ser = PinBoostHistorySerializer(rows, many=True)
+        ser = FotoBoostHistorySerializer(rows, many=True)
         return Response({'results': ser.data})
 
 
@@ -213,7 +213,7 @@ class CampaignTargetingOptionsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from pins.models import Topic
+        from fotos.models import Topic
 
         topics = [
             {'slug': t.name.strip().lower(), 'name': t.name}
@@ -222,20 +222,20 @@ class CampaignTargetingOptionsView(APIView):
         return Response(targeting_options_payload(topics))
 
 
-class PinPromoCampaignListCreateView(APIView):
+class FotoPromoCampaignListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         rows = (
-            PinPromoCampaign.objects.filter(owner=request.user)
+            FotoPromoCampaign.objects.filter(owner=request.user)
             .select_related('pin', 'package')
             .order_by('-created_at')[:100]
         )
-        ser = PinPromoCampaignSerializer(rows, many=True, context={'request': request})
+        ser = FotoPromoCampaignSerializer(rows, many=True, context={'request': request})
         return Response({'results': ser.data})
 
     def post(self, request):
-        ser = PinPromoCampaignWriteSerializer(data=request.data, context={'request': request})
+        ser = FotoPromoCampaignWriteSerializer(data=request.data, context={'request': request})
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
         campaign = ser.save()
@@ -243,30 +243,30 @@ class PinPromoCampaignListCreateView(APIView):
         secret = fedapay_headers()
         if not secret:
             if payments_sandbox_allowed():
-                activate_pin_promo_campaign(campaign)
-                out = PinPromoCampaignSerializer(campaign, context={'request': request})
+                activate_foto_promo_campaign(campaign)
+                out = FotoPromoCampaignSerializer(campaign, context={'request': request})
                 return Response({**out.data, 'status': 'active', 'sandbox': True}, status=status.HTTP_201_CREATED)
             return Response({'error': 'Payments not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         promo_label = (campaign.headline or '').strip() or (
-            f'pin {campaign.pin.slug}' if campaign.pin_id else 'campagne'
+            f'pin {campaign.pin.slug}' if campaign.foto_id else 'campagne'
         )
         from accounts.auth_tokens import checkout_return_url
 
         checkout = create_fedapay_checkout(
             request=request,
-            description=f'Pinova promo · {package.label} · {promo_label}',
+            description=f'Fotoce promo · {package.label} · {promo_label}',
             amount=int(package.amount),
             currency_iso=package.currency_iso,
             callback_url=os.environ.get('FEDAPAY_PROMO_CALLBACK_URL') or checkout_return_url('campaign', request=request),
         )
         if checkout.get('error'):
-            campaign.status = PinPromoCampaign.STATUS_CANCELED
+            campaign.status = FotoPromoCampaign.STATUS_CANCELED
             campaign.save(update_fields=['status', 'updated_at'])
             return Response(checkout, status=status.HTTP_502_BAD_GATEWAY)
         campaign.fedapay_transaction_id = checkout['transaction_id']
         campaign.save(update_fields=['fedapay_transaction_id', 'updated_at'])
-        out = PinPromoCampaignSerializer(campaign, context={'request': request})
+        out = FotoPromoCampaignSerializer(campaign, context={'request': request})
         return Response({
             **out.data,
             'status': 'pending',
@@ -275,39 +275,39 @@ class PinPromoCampaignListCreateView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
-class PinPromoCampaignDetailView(APIView):
+class FotoPromoCampaignDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def patch(self, request, campaign_id: int):
-        campaign = get_object_or_404(PinPromoCampaign, pk=campaign_id, owner=request.user)
+        campaign = get_object_or_404(FotoPromoCampaign, pk=campaign_id, owner=request.user)
         if 'status' in request.data:
             new_status = str(request.data.get('status') or '').strip()
-            if new_status in (PinPromoCampaign.STATUS_PAUSED, PinPromoCampaign.STATUS_ACTIVE):
+            if new_status in (FotoPromoCampaign.STATUS_PAUSED, FotoPromoCampaign.STATUS_ACTIVE):
                 campaign.status = new_status
                 campaign.save(update_fields=['status', 'updated_at'])
-        ser = PinPromoCampaignSerializer(campaign, context={'request': request})
+        ser = FotoPromoCampaignSerializer(campaign, context={'request': request})
         return Response(ser.data)
 
 
-class PinPromoCampaignClickView(APIView):
+class FotoPromoCampaignClickView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, campaign_id: int):
         from django.db.models import F
 
-        campaign = PinPromoCampaign.objects.select_related('pin').filter(
+        campaign = FotoPromoCampaign.objects.select_related('pin').filter(
             pk=campaign_id,
-            status=PinPromoCampaign.STATUS_ACTIVE,
+            status=FotoPromoCampaign.STATUS_ACTIVE,
         ).first()
         if not campaign:
             return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
         updates = {'clicks': F('clicks') + 1}
-        if campaign.pin_id:
+        if campaign.foto_id:
             updates['pin_views'] = F('pin_views') + 1
-        PinPromoCampaign.objects.filter(pk=campaign_id).update(**updates)
+        FotoPromoCampaign.objects.filter(pk=campaign_id).update(**updates)
         cta_url = (campaign.cta_url or '').strip()
-        pin_slug = campaign.pin.slug if campaign.pin_id else ''
-        return Response({'ok': True, 'pin_slug': pin_slug, 'cta_url': cta_url})
+        foto_slug = campaign.pin.slug if campaign.foto_id else ''
+        return Response({'ok': True, 'foto_slug': foto_slug, 'cta_url': cta_url})
 
 
 def approve_boost_payment(
@@ -319,8 +319,8 @@ def approve_boost_payment(
     """Appelé depuis le webhook FedaPay global."""
     from monetization.fedapay_webhook import amounts_match, webhook_amount
 
-    promo = PinPromoCampaign.objects.filter(fedapay_transaction_id=transaction_id).select_related('package').first()
-    boost = PinBoost.objects.filter(fedapay_transaction_id=transaction_id).select_related('package').first()
+    promo = FotoPromoCampaign.objects.filter(fedapay_transaction_id=transaction_id).select_related('package').first()
+    boost = FotoBoost.objects.filter(fedapay_transaction_id=transaction_id).select_related('package').first()
     target = promo or boost
     if not target:
         return 'ignored'
@@ -328,7 +328,7 @@ def approve_boost_payment(
     if not skip_amount_check and not amounts_match(target.package.amount, wh_amount):
         return 'amount_mismatch'
     if promo:
-        activate_pin_promo_campaign(promo)
+        activate_foto_promo_campaign(promo)
         return 'approved'
-    activate_pin_boost(boost)
+    activate_foto_boost(boost)
     return 'approved'

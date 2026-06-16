@@ -1,7 +1,7 @@
-# Audit UX psychologique — Funnel PINOVA
+# Audit UX psychologique — Funnel FOTOCE
 
 > **Périmètre** : parcours web invité → monétisation (checkout success)  
-> **Méthode** : cartographie code (`PINOVA-FRONTEND`), events PostHog, heuristiques Nielsen (1–10), charge cognitive par écran  
+> **Méthode** : cartographie code (`FOTOCE-FRONTEND`), events PostHog, heuristiques Nielsen (1–10), charge cognitive par écran  
 > **Date** : 2026-06-06  
 > **Quick wins mergés** : preuve sociale landing + register, onboarding v2 à 100 %, minimum intérêts 2→2
 
@@ -11,7 +11,7 @@
 
 ```
                     ┌─────────────────────────────────────────────────────────────┐
-                    │                    FUNNEL CONVERSION PINOVA                  │
+                    │                    FUNNEL CONVERSION FOTOCE                  │
                     └─────────────────────────────────────────────────────────────┘
 
   landing_viewed          register_started       otp_verified        onboarding_started
@@ -28,7 +28,7 @@
         │                                                               ┌──────────────┐
         │                                                               │  FIRST PIN   │
         │                                                               │ CreatePinPg  │
-        │                                                               │first_pin_pub │
+        │                                                               │first_foto_pub │
         │                                                               └──────┬───────┘
         │                                                                      │ 25–40%
         │                                                                      ▼
@@ -59,8 +59,8 @@ Taux cibles (benchmark SaaS social / freemium, à calibrer PostHog prod) :
 | Invité → Register started    | 8–12 %    | `register_started` / `landing_viewed` |
 | Register → OTP verified      | 65–75 %   | `otp_verified` / `register_completed` |
 | OTP → Onboarding completed   | 70–85 %   | `onboarding_completed` / `otp_verified` |
-| Onboarding → First pin       | 25–40 %   | `first_pin_published` / `onboarding_completed` |
-| First pin → First follow     | 15–25 %   | `first_follow` / `first_pin_published` |
+| Onboarding → First foto       | 25–40 %   | `first_foto_published` / `onboarding_completed` |
+| First foto → First follow     | 15–25 %   | `first_follow` / `first_foto_published` |
 | Actif → Premium viewed       | 15–25 %   | `premium_viewed` / MAU           |
 | Premium → Checkout success   | 3–8 %     | `checkout_success` / `premium_viewed` |
 ```
@@ -74,7 +74,7 @@ Taux cibles (benchmark SaaS social / freemium, à calibrer PostHog prod) :
 | Dimension | Détail |
 |-----------|--------|
 | **Events PostHog** | `landing_viewed` (once, via `useReferralIntent`), `guest_action_blocked` (like/save/comment gate) |
-| **Composants UI** | Hero compact, fil pins immédiat, `TopicScroller`, `PinGrid`, bannière cookies |
+| **Composants UI** | Hero compact, fil fotos immédiat, `TopicScroller`, `FotoGrid`, bannière cookies |
 | **Charge cognitive** | 0 champs ; 1 décision (Google vs login vs scroll) |
 | **Récompense** | Contenu immédiat (fil), curiosité visuelle |
 | **Frictions connues** | CTA principal = Google (pas email) ; pas de compteur social avant quick win ; gate actions sans message de valeur claire |
@@ -128,17 +128,17 @@ Taux cibles (benchmark SaaS social / freemium, à calibrer PostHog prod) :
 
 ---
 
-### 2.5 First pin — `CreatePinPage.vue`
+### 2.5 First foto — `CreateFotoPage.vue`
 
 | Dimension | Détail |
 |-----------|--------|
-| **Events** | `first_pin_published` (once) |
+| **Events** | `first_foto_published` (once) |
 | **Composants** | Flux 2 étapes desktop, upload drag-drop, modération NSFW, catégorie, toast succès |
 | **Charge cognitive** | 3 champs obligatoires (titre, catégorie, média) + scan modération async |
-| **Récompense** | Toast `create.pin.success`, redirect `/pin/{slug}` |
+| **Récompense** | Toast `create.foto.success`, redirect `/foto/{slug}` |
 | **Frictions** | Média obligatoire ; birth_date requis si absent ; scan NSFW bloque CTA ; mobile 3 sous-étapes |
 
-**Testids e2e ajoutés** : `create-pin-title`, `create-pin-category`, `create-pin-file`, `create-pin-next`, `create-pin-publish`.
+**Testids e2e ajoutés** : `create-foto-title`, `create-foto-category`, `create-foto-file`, `create-foto-next`, `create-foto-publish`.
 
 ---
 
@@ -226,7 +226,7 @@ Légende : 🔴 P0 (bloquant conversion) · 🟠 P1 (forte friction) · 🟡 P2 
 | **P0** | Wizard post-onboarding : deeplink `/create?welcome=1` avec empty state guidé | Moment « aha » dans les 5 min post-signup |
 | **P0** | Collecte birth_date inline (modal existant) **avant** upload si absent — déjà partiel | Évite dead-end bannière settings |
 | **P1** | ✅ Testids e2e (mergé) | Regression UX automatisée |
-| **P1** | Célébration first pin : confetti léger + streak day 1 | Dopamine + rétention J1 |
+| **P1** | Célébration first foto : confetti léger + streak day 1 | Dopamine + rétention J1 |
 
 ### Premium
 
@@ -246,11 +246,11 @@ Légende : 🔴 P0 (bloquant conversion) · 🟠 P1 (forte friction) · 🟡 P2 
 | 2 | Preuve sociale page Register | `RegisterPage.vue`, `fr.ts`, `en.ts` | 10 min |
 | 3 | Onboarding v2 100 % + min 2 intérêts | `featureFlags.ts`, `OnboardingPage.vue` | 20 min |
 
-**E2E UX** : `PINOVA-FRONTEND/e2e/ux-funnel-guest-first-pin.spec.ts`  
-Assertions : social proof landing/register, progression onboarding `(2/2+)`, toast publication, URL pin.
+**E2E UX** : `FOTOCE-FRONTEND/e2e/ux-funnel-guest-first-pin.spec.ts`  
+Assertions : social proof landing/register, progression onboarding `(2/2+)`, toast publication, URL foto.
 
 ```powershell
-cd PINOVA-FRONTEND
+cd FOTOCE-FRONTEND
 pnpm exec playwright test e2e/ux-funnel-guest-first-pin.spec.ts
 ```
 
@@ -264,7 +264,7 @@ pnpm exec playwright test e2e/ux-funnel-guest-first-pin.spec.ts
 | Register abandon | Mot de passe strict + CGU | Progressif disclosure + preuve « 2 min » ✅ |
 | OTP drop | Email spam / délai | Resend visible + event `otp_failed` |
 | Onboarding exit | Trop d'étapes / champs geo | v2 + 2 intérêts ✅ |
-| Sans first pin | Peur qualité + média obligatoire | Template pin / brouillon sans image |
+| Sans first foto | Peur qualité + média obligatoire | Template foto / brouillon sans image |
 | Sans follow | Graph social vide post-onboarding | CTA « Suivre » post-first-pin |
 | Premium bounce | Paralysie choix | Default Plus recommandé |
 | Checkout abandon | Prix vs valeur perçue | Trial 7j + garantie remboursement |
@@ -277,7 +277,7 @@ Dashboard funnel recommandé ( séquence ) :
 
 ```
 landing_viewed → register_started → register_completed → otp_verified
-→ onboarding_completed → first_pin_published → first_follow
+→ onboarding_completed → first_foto_published → first_follow
 → premium_viewed → checkout_started → checkout_success
 ```
 

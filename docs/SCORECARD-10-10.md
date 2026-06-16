@@ -1,7 +1,7 @@
-# Scorecard 10/10 — validation globale PINOVA
+# Scorecard 10/10 — validation globale FOTOCE
 
 **Date** : 6 juin 2026  
-**Référence** : série 30 prompts (`PINOVA-30-PROMPTS-10-10.pdf`)  
+**Référence** : série 30 prompts (`FOTOCE-30-PROMPTS-10-10.pdf`)  
 **Validation** : Prompt 30 — pentest interne + checklist prod
 
 Notation : **10/10** = critères mesurables atteints avec preuves automatisées ou documentées.
@@ -18,7 +18,7 @@ Notation : **10/10** = critères mesurables atteints avec preuves automatisées 
 | Analytics | **10/10** | 17–19, 28 | PostHog EU, dashboard business, `BUSINESS-METRICS.md` |
 | UX psychologique | **10/10** | 20–23 | Onboarding, streak, guest conversion e2e |
 | UI / Design system | **10/10** | 24–25 | `DESIGN-SYSTEM.md`, `A11Y-AUDIT.md` |
-| Dette technique | **10/10** | 26 | `@pinova/shared`, CI monorepo |
+| Dette technique | **10/10** | 26 | `@fotoce/shared`, CI monorepo |
 | Scalabilité | **10/10** | 8, 16, 27 | Typesense + Celery sync, Redis channel layer |
 | Business | **10/10** | 28 | Funnels PostHog, revenue webhook FedaPay |
 | Juridique | **10/10** | 29 | RGPD export ZIP, cookies, mineurs, `legal_defaults.py` |
@@ -52,7 +52,7 @@ Notation : **10/10** = critères mesurables atteints avec preuves automatisées 
 |----------|-------|----------|
 | home_feed k6 | 200 rps / 5 min, err < 0.1 % | `scripts/loadtest/home_feed.k6.js` |
 | Search p95 | < 300 ms (script existant) | `scripts/load_test_search.py` |
-| Feed DB queries | Budget tests | `pins/tests_feed_perf.py` |
+| Feed DB queries | Budget tests | `fotos/tests_feed_perf.py` |
 | Web perf | Lighthouse > 90 | `docs/PERF-WEB.md` |
 | Mobile perf | Budgets documentés | `docs/PERF-MOBILE.md` |
 
@@ -74,13 +74,13 @@ Notation : **10/10** = critères mesurables atteints avec preuves automatisées 
 
 | Livrable | Chemin |
 |----------|--------|
-| PostHog clients (web/mobile/EU) | `packages/pinova-shared/src/analytics/` |
-| Revenue webhook | `pinova_backend/analytics.py` → `revenue_recorded` |
+| PostHog clients (web/mobile/EU) | `packages/fotoce-shared/src/analytics/` |
+| Revenue webhook | `fotoce_backend/analytics.py` → `revenue_recorded` |
 | Dashboard business | `docs/posthog/business-dashboard.json` |
 | Interprétation KPIs | `docs/BUSINESS-METRICS.md` |
 | Consentement analytics | Bannière cookies + `POST /api/account/consent/` |
 
-**Dashboard** : PostHog → « PINOVA — Business » (script setup)
+**Dashboard** : PostHog → « FOTOCE — Business » (script setup)
 
 ---
 
@@ -109,9 +109,9 @@ Notation : **10/10** = critères mesurables atteints avec preuves automatisées 
 
 | Livrable | Preuve |
 |----------|--------|
-| `@pinova/shared` | `packages/pinova-shared/` — 17 tests vitest |
+| `@fotoce/shared` | `packages/fotoce-shared/` — 17 tests vitest |
 | CI shared | `.github/workflows/ci.yml` |
-| Wrappers web/mobile minces | `PINOVA-FRONTEND`, `Pinova-Mobile` |
+| Wrappers web/mobile minces | `FOTOCE-FRONTEND`, `Fotoce-Mobile` |
 
 ```bash
 pnpm build:shared && pnpm test:shared
@@ -123,8 +123,8 @@ pnpm build:shared && pnpm test:shared
 
 | Composant | Preuve |
 |-----------|--------|
-| Typesense + fallback Postgres | `pins/search/` |
-| Celery index sync | `pins/tasks.py`, signals |
+| Typesense + fallback Postgres | `fotos/search/` |
+| Celery index sync | `fotos/tasks.py`, signals |
 | Redis channel layer | `settings.py` CHANNEL_LAYERS |
 | Load test search | `scripts/load_test_search.py` |
 
@@ -136,7 +136,7 @@ pnpm build:shared && pnpm test:shared
 |-----|-----------------|
 | Funnels acquisition / monétisation / viralité | PostHog events + dashboard |
 | ARPU | `revenue_recorded` + `$revenue` webhook only |
-| Activation 24 h | `first_pin_published` funnel |
+| Activation 24 h | `first_foto_published` funnel |
 | Boost attach rate | HogQL documenté |
 
 **Doc** : [`BUSINESS-METRICS.md`](./BUSINESS-METRICS.md)
@@ -151,7 +151,7 @@ pnpm build:shared && pnpm test:shared
 | Cookies consent | Bannière web + `POST /api/account/consent/` |
 | Mineurs < 13 / 13–17 | `accounts/age_policy.py` + tests |
 | Suppression 30 j + e-mail | `AccountDeletionRequestView` + tests |
-| Privacy policy | `pins/legal_defaults.py` (6 juin 2026) |
+| Privacy policy | `fotos/legal_defaults.py` (6 juin 2026) |
 
 **Tests** : `accounts/tests_gdpr.py` (8 tests)  
 **E2E** : `e2e/gdpr-account.spec.ts` (4/4 flux réels, sans mocks métier — proxy Vite e2e)

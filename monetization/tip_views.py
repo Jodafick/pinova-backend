@@ -9,8 +9,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import Profile
-from pins.models import Pin
-from pinova_backend.security.throttling import AuthenticatedUserRateThrottle
+from fotos.models import Foto
+from fotoce_backend.security.throttling import AuthenticatedUserRateThrottle
 
 from .fedapay_client import create_fedapay_checkout, fedapay_headers, payments_sandbox_allowed
 from .models import TipTransaction
@@ -73,7 +73,7 @@ class TipWalletView(APIView):
                         'commission_amount': t.commission_amount,
                         'donor_username': t.donor.username,
                         'message': t.message,
-                        'pin_slug': t.pin.slug if t.pin_id else None,
+                        'foto_slug': t.pin.slug if t.foto_id else None,
                         'created_at': t.created_at.isoformat(),
                     }
                     for t in recent_tips
@@ -136,12 +136,12 @@ class TipCheckoutView(APIView):
         cfg = tip_config()
         commission, amount_net = split_tip_amount(amount_gross, cfg.commission_percent)
 
-        pin = None
-        pin_slug = (request.data.get('pin_slug') or '').strip()
-        if pin_slug:
-            pin = Pin.objects.filter(slug=pin_slug, author=recipient).first()
-            if not pin:
-                return Response({'error': 'Pin not found for this creator'}, status=status.HTTP_404_NOT_FOUND)
+        foto = None
+        foto_slug = (request.data.get('foto_slug') or '').strip()
+        if foto_slug:
+            foto = Foto.objects.filter(slug=foto_slug, author=recipient).first()
+            if not foto:
+                return Response({'error': 'Foto not found for this creator'}, status=status.HTTP_404_NOT_FOUND)
 
         message = str(request.data.get('message') or '').strip()[:280]
 
@@ -149,7 +149,7 @@ class TipCheckoutView(APIView):
         tip = TipTransaction.objects.create(
             donor=request.user,
             recipient=recipient,
-            pin=pin,
+            foto=pin,
             amount_gross=amount_gross,
             commission_amount=commission,
             amount_net=amount_net,
@@ -181,7 +181,7 @@ class TipCheckoutView(APIView):
         callback = checkout_return_url('tip', request=request)
         checkout = create_fedapay_checkout(
             request=request,
-            description=f'Pourboire @{recipient.username} via Pinova',
+            description=f'Pourboire @{recipient.username} via Fotoce',
             amount=amount_gross,
             currency_iso=cfg.currency_iso,
             callback_url=callback,

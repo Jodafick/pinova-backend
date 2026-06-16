@@ -1,11 +1,11 @@
 {
-  "note": "Genere par: python pinova-backend/scripts/setup_posthog_business_dashboard.py",
+  "note": "Genere par: python fotoce-backend/scripts/setup_posthog_business_dashboard.py",
   "deployed_at": null,
   "posthog_host": "https://eu.posthog.com",
   "project_id": "REMPLACER",
   "dashboard": {
     "id": null,
-    "name": "PINOVA — Business",
+    "name": "FOTOCE — Business",
     "url": "https://eu.posthog.com/project/REMPLACER/dashboard/REMPLACER"
   },
   "events_validation": {

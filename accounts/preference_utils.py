@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from django.db.models import Q
 
-from pins.models import Topic
+from fotos.models import Topic
 
 from .reference_data import normalize_interest_slugs
 

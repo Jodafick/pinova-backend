@@ -1,5 +1,5 @@
 """
-Calcul et structure des lignes de monétisation (primes podium) pour les concours pins et referral.
+Calcul et structure des lignes de monétisation (primes podium) pour les concours fotos et referral.
 
 Les montants reposent sur `ContestSettings`: mode fixed / percentage / custom, `total_prize_pool`,
 `winner_*_amount`, `distribution_weights_json`.
@@ -85,8 +85,8 @@ def compute_rank_prize_amounts(contest: ContestSettings) -> dict[int, Decimal]:
     return {rank: amounts_pct[rank - 1] for rank in range(1, slots + 1)}
 
 
-def build_pin_contest_payout_payload(contest: ContestSettings, winners: list[dict[str, Any]]):
-    """Retourne (payout_json, instances `ContestWinnerPayout` à persister pour le concours pins)."""
+def build_foto_contest_payout_payload(contest: ContestSettings, winners: list[dict[str, Any]]):
+    """Retourne (payout_json, instances `ContestWinnerPayout` à persister pour le concours fotos)."""
     rank_amounts = compute_rank_prize_amounts(contest)
     now_iso = timezone.now().isoformat()
     lines: list[dict[str, Any]] = []
@@ -95,8 +95,8 @@ def build_pin_contest_payout_payload(contest: ContestSettings, winners: list[dic
     for w in winners:
         rank = int(w['rank'])
         uid = int(w['creator_id'])
-        pin_id_raw = w.get('pin_id')
-        pin_id = int(pin_id_raw) if pin_id_raw is not None else None
+        foto_id_raw = w.get('foto_id')
+        foto_id = int(foto_id_raw) if foto_id_raw is not None else None
         gross = rank_amounts.get(rank, ZERO)
 
         line = {
@@ -105,7 +105,7 @@ def build_pin_contest_payout_payload(contest: ContestSettings, winners: list[dic
             'currency': DEFAULT_CURRENCY,
             'distribution_mode': contest.distribution_mode,
             'beneficiary_user_id': uid,
-            'pin_id': pin_id,
+            'foto_id': foto_id,
             'computed_at': now_iso,
         }
         lines.append(line)
@@ -115,7 +115,7 @@ def build_pin_contest_payout_payload(contest: ContestSettings, winners: list[dic
                 source=ContestWinnerPayout.SOURCE_PINS,
                 winner_rank=rank,
                 beneficiary_id=uid,
-                pin_id=pin_id,
+                foto_id=foto_id,
                 gross_amount=gross,
                 currency=DEFAULT_CURRENCY,
                 payment_status=ContestWinnerPayout.STATUS_PENDING,
@@ -125,7 +125,7 @@ def build_pin_contest_payout_payload(contest: ContestSettings, winners: list[dic
 
 
 def build_referral_contest_payout_payload(contest: ContestSettings, winners: list[dict[str, Any]]):
-    """Même logique financière ; bénéficiaire = referrer, sans pin."""
+    """Même logique financière ; bénéficiaire = referrer, sans foto."""
     rank_amounts = compute_rank_prize_amounts(contest)
     now_iso = timezone.now().isoformat()
     lines: list[dict[str, Any]] = []
@@ -151,7 +151,7 @@ def build_referral_contest_payout_payload(contest: ContestSettings, winners: lis
                 source=ContestWinnerPayout.SOURCE_REFERRAL,
                 winner_rank=rank,
                 beneficiary_id=uid,
-                pin_id=None,
+                foto_id=None,
                 gross_amount=gross,
                 currency=DEFAULT_CURRENCY,
                 payment_status=ContestWinnerPayout.STATUS_PENDING,

@@ -5,7 +5,7 @@ from .models import ExpoPushToken, Notification, PushSubscription
 class NotificationAdmin(admin.ModelAdmin):
     list_display = ('recipient', 'sender', 'notification_type', 'is_read', 'created_at')
     list_filter = ('notification_type', 'is_read', 'created_at')
-    search_fields = ('message', 'title', 'recipient__username', 'sender__username', 'pin_slug')
+    search_fields = ('message', 'title', 'recipient__username', 'sender__username', 'foto_slug')
     raw_id_fields = ('recipient', 'sender')
 
 

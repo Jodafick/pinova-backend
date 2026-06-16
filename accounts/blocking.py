@@ -28,7 +28,7 @@ def users_are_mutually_blocked(a: User, b: User) -> bool:
 
 
 def filter_pins_exclude_blocked(queryset, request):
-    """Filtre un queryset de pins : auteurs bloqués masqués sauf mes propres pins."""
+    """Filtre un queryset de fotos : auteurs bloqués masqués sauf mes propres fotos."""
     user = getattr(request, 'user', None)
     if not user or not user.is_authenticated:
         return queryset

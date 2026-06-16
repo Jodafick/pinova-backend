@@ -1,5 +1,5 @@
 """
-Politique mot de passe Pinova — validateur unique, messages clairs FR/EN.
+Politique mot de passe Fotoce — validateur unique, messages clairs FR/EN.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
 PASSWORD_MIN_LENGTH = 8
-PASSWORD_VALID_EXAMPLE = 'Pinova2026'
+PASSWORD_VALID_EXAMPLE = 'Fotoce2026'
 
 # Une règle = un identifiant stable + un message par langue (FR canonique côté API).
 PASSWORD_RULES: tuple[dict[str, Any], ...] = (
@@ -62,8 +62,8 @@ TRIVIAL_PASSWORDS = frozenset(
         'admin123',
         'letmein1',
         'welcome1',
-        'pinova',
-        'pinova123',
+        'fotoce',
+        'fotoce123',
         'changeme',
         'changeme1',
         'iloveyou',
@@ -139,7 +139,7 @@ def _is_trivial_password(
     return False
 
 
-def evaluate_pinova_password(
+def evaluate_fotoce_password(
     password: str,
     *,
     email: str | None = None,
@@ -160,7 +160,7 @@ def evaluate_pinova_password(
     return failed
 
 
-def validate_pinova_password(
+def validate_fotoce_password(
     password: str,
     *,
     user=None,
@@ -172,7 +172,7 @@ def validate_pinova_password(
         email = email or getattr(user, 'email', None)
         username = username or getattr(user, 'username', None)
 
-    failed = evaluate_pinova_password(password, email=email, username=username)
+    failed = evaluate_fotoce_password(password, email=email, username=username)
     if not failed:
         return
 
@@ -200,11 +200,11 @@ def format_password_validation_errors(exc: ValidationError, lang: str | None = N
     return [str(exc)]
 
 
-class PinovaPasswordValidator:
+class FotocePasswordValidator:
     """Validateur Django unique — remplace les validateurs par défaut."""
 
     def validate(self, password, user=None):
-        validate_pinova_password(password, user=user)
+        validate_fotoce_password(password, user=user)
 
     def get_help_text(self):
-        return _('Votre mot de passe doit respecter la politique Pinova (8 caractères, lettre + chiffre).')
+        return _('Votre mot de passe doit respecter la politique Fotoce (8 caractères, lettre + chiffre).')

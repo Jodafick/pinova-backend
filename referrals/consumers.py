@@ -5,8 +5,8 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 from contests.services import get_active_contest_settings
-from pinova_backend.websocket.heartbeat import HeartbeatMixin
-from pinova_backend.websocket.ratelimit import allow_ws_connection
+from fotoce_backend.websocket.heartbeat import HeartbeatMixin
+from fotoce_backend.websocket.ratelimit import allow_ws_connection
 
 from .models import ReferralLeaderboardEvent
 

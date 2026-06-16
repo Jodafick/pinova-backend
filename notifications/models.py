@@ -13,7 +13,7 @@ class Notification(models.Model):
         ('system', 'System'),
         ('digest', 'Digest'),
         ('board_invite', 'Board invite'),
-        ('scheduled_publish', 'Scheduled pin published'),
+        ('scheduled_publish', 'Scheduled foto published'),
     )
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_notifications', null=True, blank=True)
@@ -22,8 +22,8 @@ class Notification(models.Model):
     message = models.CharField(max_length=255)
     action_url = models.CharField(max_length=255, blank=True, default='')
     metadata = models.JSONField(default=dict, blank=True)
-    pin_id = models.IntegerField(null=True, blank=True)
-    pin_slug = models.SlugField(max_length=255, null=True, blank=True)
+    foto_id = models.IntegerField(null=True, blank=True)
+    foto_slug = models.SlugField(max_length=255, null=True, blank=True)
     comment_id = models.IntegerField(null=True, blank=True)
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

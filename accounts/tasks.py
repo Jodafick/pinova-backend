@@ -5,7 +5,7 @@ from celery import shared_task
 from django.core.management import call_command
 from django.utils import timezone
 
-from pinova_backend.celery import PinovaTask
+from fotoce_backend.celery import FotoceTask
 
 
 def _run_management(command: str, **options) -> dict:
@@ -13,40 +13,40 @@ def _run_management(command: str, **options) -> dict:
     return {'command': command, 'finished_at': timezone.now().isoformat(), **options}
 
 
-@shared_task(bind=True, base=PinovaTask, name='accounts.enforce_subscriptions_due')
+@shared_task(bind=True, base=FotoceTask, name='accounts.enforce_subscriptions_due')
 def enforce_subscriptions_due(self) -> dict:
     """Applique le plan programmé ou Free pour les abonnements échus."""
     return _run_management('enforce_subscriptions_due')
 
 
-@shared_task(bind=True, base=PinovaTask, name='accounts.purge_scheduled_account_deletions')
+@shared_task(bind=True, base=FotoceTask, name='accounts.purge_scheduled_account_deletions')
 def purge_scheduled_account_deletions(self) -> dict:
     """Supprime les comptes dont account_scheduled_deletion_at est dépassé."""
     return _run_management('purge_scheduled_account_deletions')
 
 
-@shared_task(bind=True, base=PinovaTask, name='accounts.discovery_streak_reminder')
+@shared_task(bind=True, base=FotoceTask, name='accounts.discovery_streak_reminder')
 def discovery_streak_reminder(self, limit: int = 5000) -> dict:
     """Push J+1 si streak discovery à risque."""
     limit = max(1, min(int(limit), 20_000))
     return _run_management('send_discovery_streak_reminders', limit=limit)
 
 
-@shared_task(bind=True, base=PinovaTask, name='accounts.reactivation_j7_email')
+@shared_task(bind=True, base=FotoceTask, name='accounts.reactivation_j7_email')
 def reactivation_j7_email(self, limit: int = 2000) -> dict:
-    """Email J+7 inactif — nouveaux pins des créateurs suivis."""
+    """Email J+7 inactif — nouveaux fotos des créateurs suivis."""
     limit = max(1, min(int(limit), 10_000))
     return _run_management('send_reactivation_j7_emails', limit=limit)
 
 
-@shared_task(bind=True, base=PinovaTask, name='accounts.reactivation_j30_email')
+@shared_task(bind=True, base=FotoceTask, name='accounts.reactivation_j30_email')
 def reactivation_j30_email(self, limit: int = 2000) -> dict:
     """Email J+30 inactif — résumé mois + CTA concours/referral."""
     limit = max(1, min(int(limit), 10_000))
     return _run_management('send_reactivation_j30_emails', limit=limit)
 
 
-@shared_task(bind=True, base=PinovaTask, name='accounts.export_user_data')
+@shared_task(bind=True, base=FotoceTask, name='accounts.export_user_data')
 def export_user_data(self, job_id: int) -> dict:
     """Génère l'archive ZIP RGPD et envoie l'e-mail de téléchargement."""
     from django.contrib.auth.models import User

@@ -12,7 +12,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.mail_delivery import EmailDeliveryUnavailable, send_pinova_mail
+from accounts.mail_delivery import EmailDeliveryUnavailable, send_fotoce_mail
 from accounts.models import DataExportJob, Profile, UserConsent
 
 logger = logging.getLogger(__name__)
@@ -28,15 +28,15 @@ def _export_download_url(token) -> str:
 def _send_export_ready_email(user, job: DataExportJob) -> None:
     download_url = _export_download_url(job.download_token)
     try:
-        send_pinova_mail(
-            'PINOVA — votre export de données est prêt',
+        send_fotoce_mail(
+            'FOTOCE — votre export de données est prêt',
             (
                 'Bonjour,\n\n'
-                'Votre archive ZIP (profil, pins, commentaires, notifications, abonnements, tips) '
+                'Votre archive ZIP (profil, Fotos, commentaires, notifications, abonnements, tips) '
                 f'est disponible pendant {EXPORT_LINK_TTL_HOURS} heures :\n\n'
                 f'{download_url}\n\n'
                 'Si vous n’êtes pas à l’origine de cette demande, contactez le support.\n\n'
-                '— L’équipe PINOVA'
+                '— L’équipe FOTOCE'
             ),
             settings.DEFAULT_FROM_EMAIL,
             [user.email],
@@ -52,16 +52,16 @@ def _send_deletion_scheduled_email(user, scheduled_at, export_requested: bool) -
         else 'Vous pouvez demander un export depuis Paramètres avant la date de purge.\n\n'
     )
     try:
-        send_pinova_mail(
-            'PINOVA — confirmation de suppression de compte',
+        send_fotoce_mail(
+            'FOTOCE — confirmation de suppression de compte',
             (
                 'Bonjour,\n\n'
-                'Nous confirmons la programmation de la suppression définitive de votre compte PINOVA.\n'
+                'Nous confirmons la programmation de la suppression définitive de votre compte FOTOCE.\n'
                 f'Date de purge prévue : {scheduled_at.strftime("%Y-%m-%d %H:%M UTC")} '
                 '(délai de grâce de 30 jours).\n\n'
                 f'{export_line}'
                 'Pour annuler, reconnectez-vous et utilisez « Annuler la suppression » dans Paramètres.\n\n'
-                '— L’équipe PINOVA'
+                '— L’équipe FOTOCE'
             ),
             settings.DEFAULT_FROM_EMAIL,
             [user.email],
@@ -142,7 +142,7 @@ class AccountExportDownloadView(APIView):
         return FileResponse(
             open(full, 'rb'),
             as_attachment=True,
-            filename=f'pinova-export-{job.user_id}.zip',
+            filename=f'fotoce-export-{job.user_id}.zip',
             content_type='application/zip',
         )
 

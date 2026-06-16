@@ -1,6 +1,6 @@
 """
 Tests des endpoints dj-rest-auth sous /api/auth/ (login, reset mot de passe, refresh).
-Alignés avec le client mobile / web (JWT, PinovaLoginSerializer).
+Alignés avec le client mobile / web (JWT, FotoceLoginSerializer).
 """
 from django.contrib.auth.models import User
 from django.core import mail
@@ -9,7 +9,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from accounts.serializers import PinovaLoginSerializer
+from accounts.serializers import FotoceLoginSerializer
 
 try:
     from allauth.account.models import EmailAddress
@@ -58,7 +58,7 @@ class AuthLoginApiTests(APITestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('email', r.data)
-        self.assertEqual(r.data['email'][0], PinovaLoginSerializer.CODE_UNKNOWN_EMAIL)
+        self.assertEqual(r.data['email'][0], FotoceLoginSerializer.CODE_UNKNOWN_EMAIL)
 
     def test_login_wrong_password_field_error(self):
         r = self.client.post(
@@ -68,12 +68,12 @@ class AuthLoginApiTests(APITestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('password', r.data)
-        self.assertEqual(r.data['password'][0], PinovaLoginSerializer.CODE_WRONG_PASSWORD)
+        self.assertEqual(r.data['password'][0], FotoceLoginSerializer.CODE_WRONG_PASSWORD)
 
 
 @override_settings(
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
-    DEFAULT_FROM_EMAIL='pinova-tests@localhost',
+    DEFAULT_FROM_EMAIL='fotoce-tests@localhost',
 )
 class AuthPasswordResetApiTests(APITestCase):
     """POST /api/auth/password/reset/ — ne doit pas renvoyer 500 si l’e-mail est configuré."""
@@ -177,7 +177,7 @@ class AuthLogoutAllApiTests(APITestCase):
         self.login_url = '/api/auth/login/'
         self.refresh_url = '/api/auth/token/refresh/'
         self.logout_all_url = '/api/auth/logout-all/'
-        self.password = 'Pinova2026!'
+        self.password = 'Fotoce2026!'
         self.user = User.objects.create_user(
             username='logoutall',
             email='logoutall@example.com',

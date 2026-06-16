@@ -5,8 +5,8 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import AccessToken
 
-from pinova_backend.websocket.auth import extract_ws_bearer_token, pick_accepted_subprotocol
-from pinova_backend.websocket.heartbeat import HeartbeatMixin
+from fotoce_backend.websocket.auth import extract_ws_bearer_token, pick_accepted_subprotocol
+from fotoce_backend.websocket.heartbeat import HeartbeatMixin
 
 from .realtime import notifications_group_name
 

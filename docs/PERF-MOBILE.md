@@ -1,6 +1,6 @@
-# Performance mobile Pinova (PROMPT 13)
+# Performance mobile Fotoce (PROMPT 13)
 
-Cold start, lazy screens et politique cache images pour **Pinova-Mobile** (Expo / React Native).
+Cold start, lazy screens et politique cache images pour **Fotoce-Mobile** (Expo / React Native).
 
 ## Résumé
 
@@ -31,7 +31,7 @@ lazyScreens.tsx             → 30+ écrans secondaires (Suspense + ScreenCenter
 
 ### Lazy (`src/navigation/lazyScreens.tsx`)
 
-Profile, Search, CreatePin, Settings, Contest, Billing, PinDetail, Onboarding, auth secondaire (OTP, forgot password…), etc.
+Profile, Search, CreatePin, Settings, Contest, Billing, FotoDetail, Onboarding, auth secondaire (OTP, forgot password…), etc.
 
 Fallback Suspense : `ScreenCenterSkeleton` (plus léger que le `BootSplash` animé).
 
@@ -54,14 +54,14 @@ Module : `src/performance/startupMarks.ts`
 En dev, un résumé s’affiche dans la console Metro :
 
 ```
-[Pinova startup] TTI≈1420ms (cible <2000ms) ✓
+[Fotoce startup] TTI≈1420ms (cible <2000ms) ✓
 ```
 
 ### Procédure benchmark (Android milieu de gamme)
 
 1. Build release : `eas build --profile preview` ou dev client production-like
 2. Fermer l’app (swipe away), relancer à froid
-3. Lire les logs Metro / `adb logcat | grep Pinova startup`
+3. Lire les logs Metro / `adb logcat | grep Fotoce startup`
 4. Répéter 5× ; médiane TTI < 2000 ms
 
 Alternative : intégrer plus tard [`expo-startup-performance`](https://docs.expo.dev/) si besoin de métriques natives Hermes.
@@ -77,16 +77,16 @@ Hook : `src/hooks/useDataSaver.ts`
 
 Composants alignés :
 
-- `CachedImage.tsx` — grille pins (`PinCard`)
+- `CachedImage.tsx` — grille fotos (`FotoCard`)
 - `FeedStoriesStrip.tsx` — anneaux stories
-- `prefetchPinMedia.ts` — prefetch conditionnel dans `PinsFeedList`
+- `prefetchPinMedia.ts` — prefetch conditionnel dans `FotosFeedList`
 
-Clé AsyncStorage partagée avec le web : `pinova_low_data_override` (`auto` | `on` | `off`).
+Clé AsyncStorage partagée avec le web : `fotoce_low_data_override` (`auto` | `on` | `off`).
 
 ## Commandes
 
 ```bash
-cd Pinova-Mobile
+cd Fotoce-Mobile
 yarn typecheck
 yarn start
 ```

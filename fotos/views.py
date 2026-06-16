@@ -1,0 +1,2715 @@
+from rest_framework import mixins, viewsets, status, permissions, serializers
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count, Q, Case, When, Value, IntegerField, Max, OuterRef, Subquery, Exists, F
+from django.contrib.auth.models import User
+from django.utils import timezone
+from django.core.cache import cache
+from django.db import IntegrityError, transaction
+from datetime import timedelta
+from asgiref.sync import async_to_sync
+from googletrans import Translator
+from pathlib import Path
+from io import StringIO
+import csv
+from urllib.parse import urlencode
+from django.conf import settings
+from django.http import HttpResponse
+from django.core.files.storage import default_storage
+from PIL import Image
+from accounts.models import Profile
+from accounts.blocking import filter_pins_exclude_blocked, blocked_mutual_user_ids
+from accounts.preference_utils import (
+    merge_profile_interests_into_topic_scores,
+    profile_interest_topic_ids,
+)
+from accounts.subscription_utils import _enforce_subscription_state
+from accounts.user_invite_lookup import resolve_user_for_invite_identifier
+from fotoce_backend.media_serving.cache import append_version_using_media_path, build_versioned_media_url
+from fotoce_backend.security.throttling import client_ip_from_request
+import re
+import uuid
+from collections import OrderedDict
+from .models import (
+    Foto,
+    Topic,
+    Comment,
+    Like,
+    Save,
+    Hashtag,
+    PrivatePinTag,
+    Board,
+    CommentLike,
+    FotoViewEvent,
+    SearchInteraction,
+    UserInteraction,
+    FotoBoard,
+    ContentReport,
+    BoardCollaborationInvite,
+    LegalDocument,
+)
+from .legal_page_i18n import build_legal_api_response
+from .faq_api import build_faq_overview_response
+from .search_utils import broad_foto_q, fuzzy_score
+from .search.service import discover_pins_filter, pin_matches_query, search_boards, search_pins, search_users
+from .recommendation_engine import rank_recommendations_for_user, update_foto_ai_metadata, update_user_embedding
+from .serializers import (
+    FotoSerializer,
+    StandaloneStoryCreateSerializer,
+    CommentSerializer,
+    BoardSerializer,
+    BoardDetailSerializer,
+    BoardCollaborationInviteSerializer,
+    extract_hashtags,
+)
+from .comment_media import compress_comment_media_upload
+from .visibility import (
+    foto_is_visible_for_request,
+    needs_review_pins_query_filter,
+    sensitive_pins_query_filter,
+    viewer_is_verified_adult,
+)
+from .visual_moderation import apply_server_visual_moderation_to_pin
+from .comment_access import user_can_comment_on_pin, viewer_sees_comment_content
+from .moderation import (
+    sanitize_comment_plain_text,
+    validate_comment_text,
+    validate_foto_text,
+    apply_comment_rate_limit,
+    apply_foto_creation_rate_limits,
+    comment_body_fingerprint,
+    pin_body_fingerprint,
+    enforce_identical_content_flood,
+    increment_foto_reports,
+    increment_comment_reports,
+    apply_foto_report_thresholds,
+    apply_comment_report_thresholds,
+)
+from .translation import translate_text_to, detect_original_language
+from .topic_i18n import resolve_topic_language, ensure_topic_translation
+from .pagination import FotoFeedPagination, BoardListPagination
+from notifications.models import Notification
+from notifications.notification_i18n import create_localized_notification
+from contests.services import track_contest_interaction
+from contests.models import ContestInteractionEvent
+from .creator_analytics import creator_totals_for_user, paginated_creator_top_pins
+from .creator_audience import VALID_ACTIONS, creator_engagement_breakdown
+from .weekly_stats import (
+    weekly_creator_pins_page,
+    pin_thumbnail_absolute_url,
+    creator_period_engagement_totals,
+    creator_period_engagement_between,
+    count_foto_view_events_between,
+)
+from .creator_hub import paginated_recent_pins, paginated_comment_inbox
+from .feed_queryset import (
+    FEED_VIEW_ACTIONS,
+    feed_serializer_context,
+    optimize_foto_feed_queryset,
+)
+from .home_feed import (
+    compute_interleave_slots,
+    fetch_pins_for_slots,
+    home_feed_total_count,
+)
+from .feed_cache import (
+    CREATOR_STATS_TTL,
+    DISCOVER_PAGE1_TTL,
+    HOME_FEED_PAGE1_TTL,
+    apply_cache_header,
+    creator_stats_cache_key,
+    discover_page1_key,
+    get_cached_payload,
+    home_feed_page1_key,
+    set_cached_payload,
+    skip_feed_cache,
+)
+from .report_constants import REPORT_DETAILS_MAX_LEN, normalize_report_category
+
+# Borne mémoire pour tri par score sujet (header_search, stories) — pas utilisé par home_feed.
+TOPIC_SCORE_RANK_CAP = 2500
+
+
+def _parse_report_request(request, *, min_details_len: int = 10):
+    """Catégorie + texte ; accepte encore `reason` (legacy) si `details` est vide. Retourne None si invalide."""
+    category = normalize_report_category(request.data.get('category'))
+    details = str(request.data.get('details') or '').strip()[:REPORT_DETAILS_MAX_LEN]
+    if not details:
+        details = str(request.data.get('reason') or '').strip()[:REPORT_DETAILS_MAX_LEN]
+    if len(details) < min_details_len:
+        return None
+    return category, details
+
+
+def _foto_download_absolute_url(request, foto, requested_quality, apply_watermark=False):
+    """Génère (ou lit le cache) un JPEG export ; filigrane discret pour Plus/Pro."""
+    if not foto.image:
+        raise ValueError('Foto has no image')
+    if requested_quality == 'standard' and not apply_watermark:
+        return build_versioned_media_url(request, foto.image)
+
+    variants_dir = Path(settings.MEDIA_ROOT) / 'pin_download_variants'
+    variants_dir.mkdir(parents=True, exist_ok=True)
+    wm_key = 'wm' if apply_watermark else 'plain'
+    filename = f'{pin.id}_{requested_quality}_{wm_key}.jpg'
+    out_path = variants_dir / filename
+    src_path = Path(pin.image.path)
+    max_side = {'standard': 2048, 'hd': 1920, '4k': 3840}[requested_quality]
+
+    needs_write = True
+    try:
+        if out_path.exists():
+            needs_write = out_path.stat().st_mtime < src_path.stat().st_mtime
+    except OSError:
+        needs_write = True
+
+    if needs_write:
+        from .watermark import apply_watermark_rgb
+
+        front = str(getattr(settings, 'FRONTEND_URL', '') or '').rstrip('/') or 'http://localhost:5174'
+        with Image.open(src_path) as im:
+            im_rgb = im.convert('RGB')
+            w, h = im_rgb.size
+            longest = max(w, h)
+            if longest > max_side:
+                scale = max_side / float(longest)
+                nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+                im_rgb = im_rgb.resize((nw, nh), Image.Resampling.LANCZOS)
+            if apply_watermark:
+                lines = [f'@{pin.author.username}', f'{front}/profile/{pin.author.username}']
+                im_rgb = apply_watermark_rgb(im_rgb, lines)
+            im_rgb.save(out_path, 'JPEG', quality=92, optimize=True)
+
+    media = settings.MEDIA_URL or '/media/'
+    if not str(media).endswith('/'):
+        media = f'{media}/'
+    rel_url = f'{media}pin_download_variants/{filename}'
+    base = request.build_absolute_uri(rel_url)
+    return append_version_using_media_path(base, relative_under_media=f'pin_download_variants/{filename}')
+
+
+class CommentPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+
+class ReplyPagination(PageNumberPagination):
+    page_size = 5
+    page_size_query_param = 'page_size'
+    max_page_size = 30
+
+
+class FotoViewSet(viewsets.ModelViewSet):
+    queryset = Foto.objects.all()
+    serializer_class = FotoSerializer
+    lookup_field = 'slug'
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = FotoFeedPagination
+
+    # Actions @action(..., permission_classes=[AllowAny]) — get_permissions() doit les inclure
+    # (sinon seuls list/retrieve sont publics et discover/topics renvoient 401 invité).
+    _PUBLIC_ACTIONS = frozenset({
+        'list',
+        'retrieve',
+        'discover',
+        'topics',
+        'header_search',
+        'explore_boards',
+        'comments',
+        'comment_replies',
+        'provenance',
+    })
+
+    def get_permissions(self):
+        if self.action in self._PUBLIC_ACTIONS:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def _resolve_target_lang(self, request):
+        explicit = request.data.get('target_lang') or request.query_params.get('target_lang')
+        if explicit:
+            return str(explicit).strip().lower()
+        if request.user.is_authenticated:
+            return (request.user.profile.preferred_language or 'fr').lower()
+        return 'fr'
+
+    def _ordered_by_topic_score(self, queryset, topic_scores, cap=TOPIC_SCORE_RANK_CAP):
+        cap = max(100, min(int(cap), 5000))
+        base_qs = queryset.order_by('media_sensitive_blur', '-created_at')[:cap]
+        if not topic_scores:
+            return list(base_qs)
+        items = list(base_qs)
+        items.sort(
+            key=lambda foto: (
+                topic_scores.get(self._foto_topic_name(foto), 0),
+                -(1 if foto.media_sensitive_blur else 0),
+                foto.created_at.timestamp(),
+            ),
+            reverse=True,
+        )
+        return items
+
+    def _order_discover_queryset(self, queryset, topic_scores):
+        """Tri discover en SQL (évite matérialisation RAM pour home_feed)."""
+        if not topic_scores:
+            return queryset.order_by('media_sensitive_blur', '-created_at')
+        whens = [
+            When(topic__name=topic_name, then=Value(score))
+            for topic_name, score in topic_scores.items()
+            if topic_name
+        ]
+        if not whens:
+            return queryset.order_by('media_sensitive_blur', '-created_at')
+        return queryset.annotate(
+            _topic_score=Case(*whens, default=Value(0), output_field=IntegerField())
+        ).order_by('-_topic_score', 'media_sensitive_blur', '-created_at')
+
+    def _foto_topic_name(self, foto):
+        return foto.topic.name if getattr(pin, 'topic_id', None) and foto.topic else ''
+
+    def _apply_topic_filter(self, queryset, topic_filter):
+        topic_filter = (topic_filter or '').strip()
+        if not topic_filter:
+            return queryset
+        return queryset.filter(Q(topic__slug=topic_filter) | Q(topic__name=topic_filter))
+
+    def _build_topic_scores(self, user):
+        scores = {}
+        if not user or not user.is_authenticated:
+            return scores
+        recent_likes = (
+            Like.objects.filter(user=user)
+            .select_related('pin', 'pin__topic')
+            .order_by('-created_at')[:200]
+        )
+        recent_saves = (
+            Save.objects.filter(user=user)
+            .select_related('pin', 'pin__topic')
+            .order_by('-created_at')[:200]
+        )
+        recent_views = (
+            FotoViewEvent.objects.filter(user=user)
+            .select_related('pin', 'pin__topic')
+            .order_by('-created_at')[:300]
+        )
+        for item in recent_likes:
+            topic = self._foto_topic_name(item.pin)
+            if topic:
+                scores[topic] = scores.get(topic, 0) + 4
+        for item in recent_saves:
+            topic = self._foto_topic_name(item.pin)
+            if topic:
+                scores[topic] = scores.get(topic, 0) + 4
+        for item in recent_views:
+            topic = self._foto_topic_name(item.pin)
+            if topic:
+                scores[topic] = scores.get(topic, 0) + 1
+        recent_queries = SearchInteraction.objects.filter(user=user).order_by('-created_at')[:100]
+        for query in recent_queries:
+            q = (query.query or '').strip()
+            if not q:
+                continue
+            for topic in Foto.objects.filter(topic__name__icontains=q).values_list('topic__name', flat=True).distinct()[:20]:
+                scores[topic] = scores.get(topic, 0) + 2
+        merge_profile_interests_into_topic_scores(scores, user)
+        return scores
+
+    def _scheduled_publish_ok_q(self):
+        now = timezone.now()
+        return Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
+
+    def _story_feed_q(self):
+        """Stories éphémères expirées masquées sauf pour l'auteur. Pins story classiques toujours visibles."""
+        user = self.request.user if self.request.user.is_authenticated else None
+        now = timezone.now()
+        q = (
+            Q(is_story=False)
+            | Q(is_story=True, story_ephemeral=False)
+            | Q(is_story=True, story_ephemeral=True, story_expires_at__gt=now)
+        )
+        if user:
+            q |= Q(is_story=True, author=user)
+        return q
+
+    def _story_main_feed_placement_q(self):
+        """Les stories des autres n'apparaissent pas dans le fil masonry (uniquement bande Stories)."""
+        user = self.request.user if self.request.user.is_authenticated else None
+        q = Q(is_story=False)
+        if user:
+            # Stories « classiques » (non éphémères) restent visibles pour l'auteur dans le fil.
+            q |= Q(author=user) & (Q(is_story=False) | Q(story_ephemeral=False))
+        return q
+
+    def _upload_idempotency_key(self, request):
+        value = str(
+            request.headers.get('Idempotency-Key')
+            or request.META.get('HTTP_IDEMPOTENCY_KEY')
+            or ''
+        ).strip()
+        if not value or len(value) > 128:
+            return ''
+        return value
+
+    def _idempotent_upload_response(self, request):
+        key = self._upload_idempotency_key(request)
+        if not key or not request.user.is_authenticated:
+            return None
+        foto = Foto.objects.filter(author=request.user, upload_idempotency_key=key).first()
+        if not foto:
+            return None
+        return Response(FotoSerializer(pin, context={'request': request}).data, status=status.HTTP_200_OK)
+
+    def get_queryset(self):
+        ephemeral_hide_feed_actions = frozenset({
+            'list',
+            'discover',
+            'header_search',
+            'recommendations',
+            'following',
+            'home_feed',
+        })
+
+        def exclude_ephemeral_story_only(qs):
+            if getattr(self, 'action', None) in ephemeral_hide_feed_actions:
+                return qs.exclude(Q(is_story=True, story_ephemeral=True))
+            return qs
+
+        saved_by_me = (self.request.query_params.get('saved_by_me') or '').strip().lower() in ('1', 'true', 'yes')
+        if saved_by_me and not self.request.user.is_authenticated:
+            return Foto.objects.none()
+
+        queryset = (
+            Foto.objects.select_related('author', 'author__profile', 'topic')
+            .all()
+            .order_by('media_sensitive_blur', '-created_at')
+        )
+        if getattr(self, 'action', None) not in FEED_VIEW_ACTIONS:
+            queryset = queryset.prefetch_related('hashtags', 'boards', 'variant_assets')
+        profile_author = (self.request.query_params.get('author') or '').strip()
+        if saved_by_me:
+            profile_author = ''
+        if profile_author:
+            queryset = queryset.filter(author__username=profile_author)
+            # Sur une vue profil (author=...), ne jamais renvoyer un contenu bloqué par modération,
+            # y compris pour le propriétaire du profil.
+            queryset = queryset.exclude(moderation_hidden=True)
+        topic = self.request.query_params.get('topic')
+        queryset = self._apply_topic_filter(queryset, topic)
+        sched = self._scheduled_publish_ok_q()
+        story_q = self._story_feed_q()
+        placement_q = self._story_main_feed_placement_q()
+        # Ne pas exclure les stories des autres dans retrieve/save/like/etc., sinon 404 sur ces fotos.
+        story_placement_actions = frozenset({
+            'list', 'discover', 'header_search', 'recommendations', 'following', 'home_feed',
+        })
+        apply_story_placement = (
+            getattr(self, 'action', None) in story_placement_actions
+            and not profile_author
+            and not saved_by_me
+        )
+
+        if not self.request.user.is_authenticated:
+            core = (
+                Q(visibility=Foto.VISIBILITY_PUBLIC, author__profile__private_profile=False)
+                & sched
+                & story_q
+                & Q(moderation_hidden=False)
+                & needs_review_pins_query_filter(self.request)
+            )
+            if apply_story_placement:
+                core &= placement_q
+            core &= sensitive_pins_query_filter(self.request)
+            return exclude_ephemeral_story_only(queryset.filter(core))
+
+        my_profile = self.request.user.profile
+        visibility_q = (
+            Q(visibility=Foto.VISIBILITY_PUBLIC, author__profile__private_profile=False)
+            | Q(author=self.request.user)
+            | Q(visibility=Foto.VISIBILITY_FOLLOWERS, author__profile__followers=my_profile)
+            | Q(author__profile__private_profile=True, author__profile__followers=my_profile)
+        )
+        core = visibility_q & story_q & (sched | Q(author=self.request.user))
+        if apply_story_placement:
+            core &= placement_q
+        queryset = queryset.filter(core).distinct()
+        queryset = queryset.filter(sensitive_pins_query_filter(self.request))
+        queryset = queryset.filter(needs_review_pins_query_filter(self.request))
+        queryset = queryset.exclude(moderation_hidden=True)
+        queryset = filter_pins_exclude_blocked(queryset, self.request)
+        if self.request.user.is_authenticated:
+            queryset = queryset.annotate(
+                _viewer_has_reported_pin=Exists(
+                    ContentReport.objects.filter(
+                        reporter_id=self.request.user.id,
+                        foto_id=OuterRef('pk'),
+                    )
+                )
+            )
+        if saved_by_me:
+            user = self.request.user
+            queryset = queryset.filter(id__in=Save.objects.filter(user=user).values('foto_id'))
+            saved_at_sub = (
+                Save.objects.filter(foto_id=OuterRef('pk'), user=user)
+                .order_by('-created_at')
+                .values('created_at')[:1]
+            )
+            queryset = queryset.annotate(_saved_at=Subquery(saved_at_sub)).order_by('-_saved_at')
+        return exclude_ephemeral_story_only(queryset)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        if getattr(self, 'action', None) in FEED_VIEW_ACTIONS:
+            ctx.update(feed_serializer_context(self.request, ctx))
+        return ctx
+
+    def _optimize_feed_queryset(self, queryset):
+        return optimize_foto_feed_queryset(queryset, self.request)
+
+    def _optimize_feed_page_items(self, page_items):
+        if hasattr(page_items, 'prefetch_related'):
+            return self._optimize_feed_queryset(page_items)
+        if isinstance(page_items, list) and page_items:
+            first = page_items[0]
+            if getattr(first, '_is_liked', None) is not None or getattr(first, '_is_boosted', None) is not None:
+                return page_items
+            foto_ids = [p.pk for p in page_items]
+            qs = (
+                Foto.objects.filter(pk__in=foto_ids)
+                .select_related('author', 'author__profile', 'topic')
+            )
+            qs = self._optimize_feed_queryset(qs)
+            by_id = {p.pk: p for p in qs}
+            return [by_id[pk] for pk in foto_ids if pk in by_id]
+        return page_items
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        topic = (request.query_params.get('topic') or '').strip()
+        from monetization.services import apply_boost_to_foto_queryset
+
+        if getattr(self, 'action', None) == 'list' and not (request.query_params.get('author') or '').strip():
+            queryset = apply_boost_to_foto_queryset(queryset)
+        return self._feed_response_with_ads(request, queryset, topic=topic)
+
+    def create(self, request, *args, **kwargs):
+        existing = self._idempotent_upload_response(request)
+        if existing is not None:
+            return existing
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        foto = serializer.save(
+            author=self.request.user,
+            upload_idempotency_key=self._upload_idempotency_key(self.request),
+        )
+        foto.refresh_story_expiry()
+        foto.save(update_fields=['story_expires_at'])
+        update_foto_ai_metadata(foto)
+
+    def perform_update(self, serializer):
+        if serializer.instance.author_id != self.request.user.id:
+            raise PermissionDenied('Only the foto author can edit this foto.')
+        foto = serializer.save()
+        foto.refresh_story_expiry()
+        foto.save(update_fields=['story_expires_at'])
+        update_foto_ai_metadata(foto)
+
+    def perform_destroy(self, instance):
+        if instance.author_id != self.request.user.id:
+            raise PermissionDenied('Only the foto author can delete this foto.')
+        instance.delete()
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='save')
+    def toggle_save(self, request, slug=None):
+        foto = self.get_object()
+        save, created = Save.objects.get_or_create(user=request.user, foto=pin)
+
+        if not created:
+            save.delete()
+            UserInteraction.objects.create(
+                user=request.user,
+                foto=pin,
+                creator=pin.author,
+                event_type=UserInteraction.TYPE_SAVE,
+                metadata={'action': 'unsave'},
+            )
+            update_user_embedding(request.user)
+            return Response({'status': 'unsaved', 'saves_count': foto.saves_count})
+
+        if foto.author != request.user and foto.author.profile.notifications_saves:
+            create_localized_notification(
+                recipient=pin.author,
+                sender=request.user,
+                notification_type='save',
+                message_fr=f"{request.user.username} a enregistré votre foto : {pin.title}",
+                foto_id=pin.id,
+                foto_slug=pin.slug,
+                metadata={'is_story': foto.is_story},
+            )
+        UserInteraction.objects.create(
+            user=request.user,
+            foto=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_SAVE,
+            metadata={'action': 'save'},
+        )
+        track_contest_interaction(
+            foto=pin,
+            actor=request.user,
+            interaction_type='save',
+            metadata={'source': 'pin_save'},
+        )
+        update_user_embedding(request.user)
+
+        return Response({'status': 'saved', 'saves_count': foto.saves_count})
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def like(self, request, slug=None):
+        foto = self.get_object()
+        like, created = Like.objects.get_or_create(user=request.user, foto=pin)
+
+        if not created:
+            like.delete()
+            UserInteraction.objects.create(
+                user=request.user,
+                foto=pin,
+                creator=pin.author,
+                event_type=UserInteraction.TYPE_LIKE,
+                metadata={'action': 'unlike'},
+            )
+            update_user_embedding(request.user)
+            return Response({'status': 'unliked', 'likes_count': foto.likes_count})
+
+        if foto.author != request.user:
+            if foto.is_story:
+                msg = f"{request.user.username} a aimé votre story."
+            else:
+                msg = f"{request.user.username} a aimé votre foto : {pin.title}"
+            create_localized_notification(
+                recipient=pin.author,
+                sender=request.user,
+                notification_type='like',
+                message_fr=msg,
+                foto_id=pin.id,
+                foto_slug=pin.slug,
+                metadata={'is_story': foto.is_story},
+            )
+        UserInteraction.objects.create(
+            user=request.user,
+            foto=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_LIKE,
+            metadata={'action': 'like'},
+        )
+        track_contest_interaction(
+            foto=pin,
+            actor=request.user,
+            interaction_type='like',
+            metadata={'source': 'pin_like'},
+        )
+        update_user_embedding(request.user)
+
+        return Response({'status': 'liked', 'likes_count': foto.likes_count})
+
+    @action(
+        detail=True,
+        methods=['get'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='likes',
+    )
+    def likers(self, request, slug=None):
+        """Liste des comptes ayant liké — réservé à l'auteur du foto."""
+        foto = self.get_object()
+        if request.user.id != foto.author_id:
+            raise PermissionDenied('Only the foto author can see likes.')
+        qs = (
+            Like.objects.filter(foto_id=pin.id)
+            .select_related('user', 'user__profile')
+            .order_by('-created_at')[:150]
+        )
+        likers = []
+        for lk in qs:
+            user = lk.user
+            profile = getattr(user, 'profile', None)
+            av = getattr(profile, 'avatar', None) if profile else None
+            avatar_url = ''
+            if av and getattr(av, 'name', '') and request:
+                avatar_url = build_versioned_media_url(request, av)
+            likers.append(
+                {
+                    'username': user.username,
+                    'display_name': (
+                        ((profile.display_name or user.username).strip()) if profile else user.username
+                    ),
+                    'avatar_url': avatar_url,
+                    'avatar_color': getattr(profile, 'avatar_color', None) or 'bg-neutral-400',
+                    'liked_at': lk.created_at.isoformat(),
+                }
+            )
+        return Response({'count': foto.likes_count, 'likers': likers})
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='view')
+    def view_event(self, request, slug=None):
+        foto = self.get_object()
+        try:
+            dwell_seconds = int(request.data.get('dwell_seconds') or 0)
+        except (TypeError, ValueError):
+            dwell_seconds = 0
+        FotoViewEvent.objects.create(user=request.user, foto=pin)
+        UserInteraction.objects.create(
+            user=request.user,
+            foto=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_VIEW,
+            dwell_seconds=max(0, dwell_seconds),
+            metadata={'source': request.data.get('source') or ''},
+        )
+        track_contest_interaction(
+            foto=pin,
+            actor=request.user,
+            interaction_type='view',
+            dwell_seconds=max(0, dwell_seconds),
+            metadata={'source': request.data.get('source') or ''},
+        )
+        update_user_embedding(request.user)
+        return Response({'status': 'recorded'})
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='record-share')
+    def record_share(self, request, slug=None):
+        foto = self.get_object()
+        meta_source = str(request.data.get('source') or 'mobile')[:64]
+        with transaction.atomic():
+            Foto.objects.filter(pk=pin.pk).update(shares_count=F('shares_count') + 1)
+        foto.refresh_from_db(fields=['shares_count'])
+        UserInteraction.objects.create(
+            user=request.user,
+            foto=pin,
+            creator=pin.author,
+            event_type=UserInteraction.TYPE_SHARE,
+            metadata={'source': meta_source},
+        )
+        track_contest_interaction(
+            foto=pin,
+            actor=request.user,
+            interaction_type=ContestInteractionEvent.TYPE_SHARE,
+            metadata={'source': meta_source},
+        )
+        update_user_embedding(request.user)
+        return Response({'shares_count': foto.shares_count})
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='search-interactions')
+    def search_interactions(self, request):
+        query = (request.data.get('query') or '').strip()
+        if len(query) < 2:
+            return Response({'status': 'ignored'})
+        SearchInteraction.objects.create(user=request.user, query=query[:120])
+        return Response({'status': 'recorded'})
+
+    def _story_ring_groups_from_pins(self, ordered_pins, request):
+        """ordered_pins : ordre reco/global ; couverture = foto la plus récente ; lecture chronologique ancienne → récente."""
+        by_author = OrderedDict()
+        first_rank = {}
+        for rank, foto in enumerate(ordered_pins):
+            aid = foto.author_id
+            if aid not in by_author:
+                by_author[aid] = []
+                first_rank[aid] = rank
+            by_author[aid].append(foto)
+
+        ordered_aids = sorted(by_author.keys(), key=lambda x: first_rank[x])
+        groups = []
+        for aid in ordered_aids:
+            plist = by_author[aid]
+            chron = sorted(plist, key=lambda p: p.created_at)
+            cover = max(plist, key=lambda p: p.created_at)
+            author = chron[0].author
+            profile = author.profile
+            avatar_url = ''
+            av = getattr(profile, 'avatar', None)
+            if av and getattr(av, 'name', ''):
+                avatar_url = build_versioned_media_url(request, av)
+            cover_url = ''
+            if cover.image and getattr(cover.image, 'name', ''):
+                cover_url = build_versioned_media_url(request, cover.image)
+            elif getattr(cover, 'story_video', None) and cover.story_video and getattr(
+                cover.story_video, 'name', ''
+            ):
+                cover_url = build_versioned_media_url(request, cover.story_video)
+            groups.append({
+                'username': author.username,
+                'display_name': profile.display_name or author.username,
+                'avatar_url': avatar_url,
+                'avatar_color': profile.avatar_color or 'bg-neutral-400',
+                'cover_image_url': cover_url,
+                'fotos': FotoSerializer(chron, many=True, context={'request': request}).data,
+            })
+        return groups
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='active-stories')
+    def active_stories(self, request):
+        username = (request.query_params.get('username') or '').strip()
+        sched_ok = self._scheduled_publish_ok_q()
+        qs = (
+            Foto.objects.filter(is_story=True)
+            .filter(sched_ok)
+            .exclude(story_expires_at__isnull=True)
+            .exclude(story_expires_at__lte=timezone.now())
+            .select_related('author', 'author__profile', 'topic')
+            .prefetch_related('hashtags', 'boards', 'variant_assets')
+        )
+
+        if username:
+            owner = User.objects.filter(username=username).first()
+            if not owner:
+                return Response({'fotos': [], 'groups': []})
+            qs = qs.filter(author=owner).order_by('media_sensitive_blur', '-created_at')[:48]
+            visible = [pin for foto in qs if foto_is_visible_for_request(pin, request)]
+            visible = sorted(visible, key=lambda p: p.created_at)
+            serializer = FotoSerializer(visible, many=True, context={'request': request})
+            return Response({'fotos': serializer.data, 'groups': []})
+        pool = list(qs.order_by('media_sensitive_blur', '-created_at')[:150])
+        visible = [pin for foto in pool if foto_is_visible_for_request(pin, request)]
+        user = request.user
+        if (
+            user.is_authenticated
+            and getattr(user.profile, 'notifications_recommendations', False)
+            and visible
+        ):
+            topic_scores = self._build_topic_scores(user)
+            if topic_scores:
+                vis_qs = Foto.objects.filter(id__in=[p.id for p in visible]).select_related(
+                    'author',
+                    'author__profile',
+                    'topic',
+                )
+                visible = self._ordered_by_topic_score(vis_qs, topic_scores)
+        visible = visible[:80]
+        groups = self._story_ring_groups_from_pins(visible, request)
+        return Response({'fotos': [], 'groups': groups})
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='standalone-story',
+    )
+    def standalone_story(self, request):
+        """
+        Story Plus/Pro hors flux « foto » classique : image ou vidéo + légende.
+        `story_ephemeral` : purge DB + fichiers après `story_expires_at` (voir management command).
+        """
+        existing = self._idempotent_upload_response(request)
+        if existing is not None:
+            return existing
+        _enforce_subscription_state(request.user.profile)
+        request.user.profile.refresh_from_db()
+        prof = request.user.profile
+        if prof.subscription_plan not in {Profile.PLAN_PLUS, Profile.PLAN_PRO}:
+            return Response(
+                {'error': 'Story éphémère réservée aux abonnements Plus et Pro.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        ser = StandaloneStoryCreateSerializer(data=request.data, context={'request': request})
+        ser.is_valid(raise_exception=True)
+        validated = ser.validated_data
+        title_base = f'Story · {timezone.now().strftime("%d/%m/%Y %H:%M")}'
+        try:
+            validate_foto_text(title_base, validated.get('description', '') or '', [], [])
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        apply_foto_creation_rate_limits(request.user.id, True)
+        enforce_identical_content_flood(
+            request.user.id,
+            'pin',
+            pin_body_fingerprint(title_base, validated.get('description', '') or ''),
+        )
+
+        foto = Foto(
+            author=request.user,
+            title=title_base,
+            description=validated.get('description', '') or '',
+            link='',
+            visibility=Foto.VISIBILITY_PUBLIC,
+            is_story=True,
+            story_ephemeral=True,
+            topic=None,
+            media_sensitive_blur=validated.get('media_sensitive_blur', False),
+            upload_idempotency_key=self._upload_idempotency_key(request),
+        )
+        if validated.get('image'):
+            foto.image = validated['image']
+        if validated.get('story_video'):
+            foto.story_video = validated['story_video']
+        try:
+            with transaction.atomic():
+                foto.save()
+                foto.refresh_story_expiry()
+                foto.save(update_fields=['story_expires_at'])
+                apply_server_visual_moderation_to_pin(pin, prof)
+                foto.refresh_from_db()
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        from notifications.story_notifications import notify_followers_new_story
+
+        notify_followers_new_story(author=request.user, foto=pin)
+        return Response(FotoSerializer(pin, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get', 'post'], permission_classes=[permissions.AllowAny])
+    def comments(self, request, slug=None):
+        foto = self.get_object()
+
+        if request.method == 'POST':
+            if not request.user.is_authenticated:
+                return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+            if not user_can_comment_on_pin(pin, request.user):
+                return Response(
+                    {'error': 'Comments are closed or restricted on this foto'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            text = sanitize_comment_plain_text((request.data.get('text', '') or '').strip())
+            gif_url = request.data.get('gif')
+            media_file = request.FILES.get('media')
+            parent_id = request.data.get('parentId') or request.data.get('parent')
+            try:
+                validate_comment_text(text)
+                apply_comment_rate_limit(request.user.id, client_ip_from_request(request))
+                gif_key = gif_url if isinstance(gif_url, str) else ''
+                enforce_identical_content_flood(
+                    request.user.id,
+                    'comment',
+                    comment_body_fingerprint(text, gif_key),
+                )
+            except serializers.ValidationError as exc:
+                detail = exc.detail
+                if isinstance(detail, dict):
+                    body = detail
+                elif isinstance(detail, list):
+                    body = {'non_field_errors': detail}
+                else:
+                    body = {'non_field_errors': [str(detail)]}
+                return Response(body, status=status.HTTP_400_BAD_REQUEST)
+            if not text and not gif_url and not media_file:
+                return Response({'error': 'Comment text, gif or media is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if gif_url and not request.user.profile.can_use_comment_gifs:
+                return Response(
+                    {'error': 'GIF links in comments require Plus or Pro plan'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if media_file:
+                if not request.user.profile.can_use_comment_gifs:
+                    return Response(
+                        {'error': 'Images and GIFs in comments require Plus or Pro plan'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                if not str(getattr(media_file, 'content_type', '')).startswith('image/'):
+                    return Response({'error': 'Only image files are allowed'}, status=status.HTTP_400_BAD_REQUEST)
+                if media_file.size > 5 * 1024 * 1024:
+                    return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
+                media_file = compress_comment_media_upload(
+                    media_file,
+                    request=request,
+                    user_id=request.user.id,
+                )
+                if getattr(media_file, 'size', 0) > 5 * 1024 * 1024:
+                    return Response({'error': 'Media file must be <= 5MB'}, status=status.HTTP_400_BAD_REQUEST)
+            parent = None
+            if parent_id:
+                try:
+                    parent = Comment.objects.get(id=parent_id, foto=pin)
+                except Comment.DoesNotExist:
+                    return Response({'error': 'Parent comment not found'}, status=status.HTTP_404_NOT_FOUND)
+            comment = Comment.objects.create(
+                user=request.user,
+                foto=pin,
+                text=text,
+                gif_url=gif_url,
+                media=media_file,
+                parent=parent,
+                original_language=detect_original_language(text) if text else 'auto',
+            )
+            tags = extract_hashtags(text)
+            if tags:
+                hashtag_objs = []
+                for tag in tags:
+                    hashtag, _ = Hashtag.objects.get_or_create(name=tag)
+                    hashtag_objs.append(hashtag)
+                comment.hashtags.set(hashtag_objs)
+            mentions = sorted(set(re.findall(r'@([A-Za-z0-9_\.]{2,80})', text or '')))
+            if mentions:
+                comment.mentions = mentions
+                comment.save(update_fields=['mentions'])
+                mentioned_users = User.objects.filter(username__in=mentions)
+                for mentioned_user in mentioned_users:
+                    if mentioned_user != request.user:
+                        create_localized_notification(
+                            recipient=mentioned_user,
+                            sender=request.user,
+                            notification_type='comment',
+                            message_fr=f"{request.user.username} vous a mentionné dans un commentaire.",
+                            foto_id=pin.id,
+                            foto_slug=pin.slug,
+                            comment_id=comment.id,
+                            metadata={'is_story': foto.is_story},
+                        )
+
+            if parent and parent.user != request.user:
+                create_localized_notification(
+                    recipient=parent.user,
+                    sender=request.user,
+                    notification_type='comment',
+                    message_fr=f"{request.user.username} a répondu à votre commentaire sur {pin.title}.",
+                    foto_id=pin.id,
+                    foto_slug=pin.slug,
+                    comment_id=comment.id,
+                    metadata={'is_story': foto.is_story},
+                )
+
+            if foto.author != request.user and not (parent and parent.user == foto.author):
+                create_localized_notification(
+                    recipient=pin.author,
+                    sender=request.user,
+                    notification_type='comment',
+                    message_fr=f"{request.user.username} a commenté votre foto : {pin.title}",
+                    foto_id=pin.id,
+                    foto_slug=pin.slug,
+                    comment_id=comment.id,
+                    metadata={'is_story': foto.is_story},
+                )
+
+            serializer = CommentSerializer(comment, context={'request': request})
+            track_contest_interaction(
+                foto=pin,
+                actor=request.user,
+                interaction_type='comment',
+                comment_text=text,
+                metadata={'comment_id': comment.id, 'has_media': bool(media_file), 'has_gif': bool(gif_url)},
+            )
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        sort = (request.query_params.get('sort') or 'recent').lower()
+        highlight_raw = (request.query_params.get('highlight_comment_id') or '').strip()
+        highlighted_comment_id = int(highlight_raw) if highlight_raw.isdigit() else None
+        highlighted_parent_id = None
+        if highlighted_comment_id:
+            highlighted_comment = Comment.objects.filter(id=highlighted_comment_id, foto=pin).select_related('parent').first()
+            if highlighted_comment:
+                highlighted_parent_id = highlighted_comment.parent_id or highlighted_comment.id
+
+        comments = (
+            foto.comments.filter(parent__isnull=True)
+            .select_related('pin', 'user', 'user__profile')
+            .prefetch_related('replies', 'replies__user', 'replies__user__profile', 'hashtags')
+        )
+        if request.user.is_authenticated:
+            comments = comments.annotate(
+                _viewer_has_reported_comment=Exists(
+                    ContentReport.objects.filter(
+                        reporter=request.user,
+                        comment_id=OuterRef('pk'),
+                    )
+                )
+            )
+        if sort == 'relevant':
+            comments = comments.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
+        else:
+            comments = comments.order_by('-created_at')
+        if highlighted_parent_id:
+            comments = comments.annotate(
+                highlight_priority=Case(
+                    When(id=highlighted_parent_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by('highlight_priority', *comments.query.order_by)
+        paginator = CommentPagination()
+        page = paginator.paginate_queryset(comments, request)
+        serializer = CommentSerializer(
+            page,
+            many=True,
+            context={
+                'request': request,
+                'include_replies': True,
+                'replies_page_size': int(request.query_params.get('replies_page_size', 3) or 3),
+                'replies_sort': sort,
+                'highlighted_comment_id': highlighted_comment_id,
+            },
+        )
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path=r'comments/(?P<comment_id>\d+)/moderate',
+    )
+    def moderate_comment(self, request, slug=None, comment_id=None):
+        foto = self.get_object()
+        if foto.author_id != request.user.id:
+            return Response(
+                {'error': 'Only the foto owner can moderate comments'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        comment = Comment.objects.filter(id=comment_id, foto=pin).first()
+        if not comment:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        hidden = request.data.get('hidden')
+        if hidden is True:
+            comment.hidden_by_owner = True
+        elif hidden is False:
+            comment.hidden_by_owner = False
+        else:
+            return Response(
+                {'error': 'Provide hidden as true or false'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        comment.save(update_fields=['hidden_by_owner'])
+        serializer = CommentSerializer(
+            comment,
+            context={'request': request, 'include_replies': False},
+        )
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['delete'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path=r'comments/(?P<comment_id>\d+)',
+    )
+    def delete_comment(self, request, slug=None, comment_id=None):
+        foto = self.get_object()
+        comment = Comment.objects.filter(id=comment_id, foto=pin).first()
+        if not comment:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.id != comment.user_id and foto.author_id != request.user.id:
+            return Response(
+                {'error': 'Only the comment author or the foto owner can delete this comment'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        comment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='report')
+    def report_pin(self, request, slug=None):
+        foto = self.get_object()
+        if foto.author_id == request.user.id:
+            return Response({'error': 'Cannot report your own content'}, status=status.HTTP_400_BAD_REQUEST)
+        if ContentReport.objects.filter(reporter=request.user, foto=pin).exists():
+            return Response(
+                {'error': 'already_reported', 'report_count': foto.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
+        parsed = _parse_report_request(request)
+        if parsed is None:
+            return Response(
+                {'details': ['Merci d’ajouter une brève description (10 caractères minimum).']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        category, details = parsed
+        reason_preview = details[:500]
+        try:
+            ContentReport.objects.create(
+                reporter=request.user,
+                foto=pin,
+                category=category,
+                details=details,
+                reason=reason_preview,
+            )
+        except IntegrityError:
+            return Response(
+                {'error': 'already_reported', 'report_count': foto.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
+        increment_foto_reports(pin.id)
+        foto.refresh_from_db()
+        apply_foto_report_thresholds(foto)
+        foto.refresh_from_db()
+        return Response({
+            'status': 'ok',
+            'report_count': foto.report_count,
+            'needs_review': foto.needs_review,
+            'moderation_hidden': foto.moderation_hidden,
+        })
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path=r'comments/(?P<comment_id>\d+)/report',
+    )
+    def report_comment(self, request, comment_id=None):
+        comment = Comment.objects.select_related('pin').filter(id=comment_id).first()
+        if not comment:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not self.get_queryset().filter(id=comment.foto_id).exists():
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if comment.user_id == request.user.id:
+            return Response({'error': 'Cannot report your own comment'}, status=status.HTTP_400_BAD_REQUEST)
+        if ContentReport.objects.filter(reporter=request.user, comment=comment).exists():
+            return Response(
+                {'error': 'already_reported', 'report_count': comment.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
+        parsed = _parse_report_request(request)
+        if parsed is None:
+            return Response(
+                {'details': ['Merci d’ajouter une brève description (10 caractères minimum).']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        category, details = parsed
+        reason_preview = details[:500]
+        try:
+            ContentReport.objects.create(
+                reporter=request.user,
+                comment=comment,
+                category=category,
+                details=details,
+                reason=reason_preview,
+            )
+        except IntegrityError:
+            return Response(
+                {'error': 'already_reported', 'report_count': comment.report_count},
+                status=status.HTTP_409_CONFLICT,
+            )
+        increment_comment_reports(comment.id)
+        comment.refresh_from_db()
+        apply_comment_report_thresholds(comment)
+        comment.refresh_from_db()
+        return Response({
+            'status': 'ok',
+            'report_count': comment.report_count,
+            'needs_review': comment.needs_review,
+            'moderation_hidden': comment.moderation_hidden,
+        })
+
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[permissions.AllowAny],
+        url_path='comments/(?P<comment_id>[^/.]+)/replies',
+    )
+    def comment_replies(self, request, comment_id=None):
+        try:
+            parent_comment = Comment.objects.select_related('pin').get(id=comment_id)
+        except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Respect foto visibility when loading replies.
+        foto = parent_comment.pin
+        if not self.get_queryset().filter(id=pin.id).exists():
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        replies = (
+            parent_comment.replies.all()
+            .select_related('pin', 'user', 'user__profile')
+            .prefetch_related('hashtags')
+        )
+        sort = (request.query_params.get('sort') or 'recent').lower()
+        if sort == 'relevant':
+            replies = replies.annotate(likes_total=Count('comment_likes')).order_by('-likes_total', '-created_at')
+        else:
+            replies = replies.order_by('-created_at')
+
+        highlight_raw = (request.query_params.get('highlight_comment_id') or '').strip()
+        highlighted_comment_id = int(highlight_raw) if highlight_raw.isdigit() else None
+        if highlighted_comment_id:
+            replies = replies.annotate(
+                highlight_priority=Case(
+                    When(id=highlighted_comment_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by('highlight_priority', *replies.query.order_by)
+        paginator = ReplyPagination()
+        page = paginator.paginate_queryset(replies, request)
+        serializer = CommentSerializer(
+            page,
+            many=True,
+            context={'request': request, 'include_replies': False},
+        )
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(
+        detail=False,
+        methods=['post'],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path='comments/(?P<comment_id>[^/.]+)/like',
+    )
+    def like_comment(self, request, comment_id=None):
+        try:
+            comment = Comment.objects.select_related('pin', 'user').get(id=comment_id)
+        except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Respect foto visibility permissions.
+        if not self.get_queryset().filter(id=comment.foto_id).exists():
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        like, created = CommentLike.objects.get_or_create(user=request.user, comment=comment)
+        if not created:
+            like.delete()
+            return Response({'status': 'unliked', 'likes_count': comment.comment_likes.count()})
+
+        if comment.user != request.user:
+            create_localized_notification(
+                recipient=comment.user,
+                sender=request.user,
+                notification_type='like',
+                message_fr=f"{request.user.username} a aimé votre commentaire.",
+                foto_id=comment.foto_id,
+                foto_slug=comment.pin.slug,
+                comment_id=comment.id,
+                metadata={'is_story': comment.pin.is_story},
+            )
+
+        return Response({'status': 'liked', 'likes_count': comment.comment_likes.count()})
+
+    def _feed_response_with_ads(self, request, page_items, topic: str = ''):
+        from monetization.feed_response import build_feed_paginated_response
+
+        page_items = self._optimize_feed_page_items(page_items)
+        page = self.paginate_queryset(page_items)
+        if page is not None:
+            return build_feed_paginated_response(self, request, page, topic=topic)
+        serializer = self.get_serializer(page_items, many=True)
+        from monetization.services import interleave_partner_ads
+
+        results = interleave_partner_ads(request, list(serializer.data), topic=topic, page_number=1)
+        return Response(results)
+
+    def _feed_response_with_ads_paginated(
+        self,
+        request,
+        page_items,
+        *,
+        total_count: int,
+        topic: str = '',
+    ):
+        """Réponse feed déjà paginée (home_feed DB-native) — conserve l'injection pubs."""
+        from django.core.paginator import Paginator as DjangoPaginator
+        from monetization.feed_response import build_feed_paginated_response
+
+        page_items = self._optimize_feed_page_items(page_items)
+        paginator_cls = self.pagination_class
+        paginator = paginator_cls()
+        paginator.request = request
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        django_paginator = DjangoPaginator(range(max(total_count, 0)), page_size)
+        page_number = paginator.get_page_number(request, django_paginator)
+        page = django_paginator.page(page_number)
+        page.object_list = page_items
+        paginator.page = page
+        self._paginator = paginator
+        return build_feed_paginated_response(self, request, page_items, topic=topic)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def recommendations(self, request):
+        base_queryset = self.get_queryset().exclude(author=request.user)
+        if getattr(request.user.profile, 'notifications_recommendations', False):
+            recommendations = rank_recommendations_for_user(request.user, base_queryset)
+        else:
+            recommendations = base_queryset.order_by('media_sensitive_blur', '-created_at')
+        topic = (request.query_params.get('topic') or '').strip()
+        return self._feed_response_with_ads(request, recommendations, topic=topic)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def following(self, request):
+        rows = list(request.user.profile.following.values_list('pk', 'user_id'))
+        request._viewer_following_profile_ids = frozenset(r[0] for r in rows)
+        following_user_ids = [r[1] for r in rows]
+        queryset = (
+            self.get_queryset()
+            .filter(author_id__in=following_user_ids)
+            .exclude(author=request.user)
+            .order_by('media_sensitive_blur', '-created_at')
+        )
+        topic = (request.query_params.get('topic') or '').strip()
+        return self._feed_response_with_ads(request, queryset, topic=topic)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='discover')
+    def discover(self, request):
+        queryset = self.get_queryset()
+        if request.user.is_authenticated:
+            following_profiles = request.user.profile.following.all()
+            queryset = queryset.exclude(author__profile__in=following_profiles).exclude(author=request.user)
+        topic = (request.query_params.get('topic') or '').strip()
+        queryset = self._apply_topic_filter(queryset, topic)
+        q_disc = (request.query_params.get('q') or '').strip()
+        if q_disc:
+            queryset = discover_pins_filter(queryset, q_disc)
+        from monetization.services import apply_boost_to_foto_queryset
+
+        queryset = apply_boost_to_foto_queryset(queryset)
+
+        paginator = self.pagination_class()
+        paginator.request = request
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        django_paginator = paginator.django_paginator_class([], page_size)
+        page_number = int(paginator.get_page_number(request, django_paginator))
+        cacheable = page_number == 1 and not q_disc and not skip_feed_cache(request)
+        cache_key = None
+        if cacheable:
+            cache_key = discover_page1_key(request, topic=topic, page_size=page_size)
+            cached, hit = get_cached_payload(
+                cache_key,
+                cache_scope='discover_page1',
+                user_id=request.user.id if request.user.is_authenticated else None,
+            )
+            if hit:
+                return apply_cache_header(Response(cached), hit=True)
+
+        response = self._feed_response_with_ads(request, queryset, topic=topic)
+        if cacheable and cache_key and response.status_code == 200:
+            set_cached_payload(
+                cache_key,
+                response.data,
+                DISCOVER_PAGE1_TTL,
+                cache_scope='discover_page1',
+                user_id=request.user.id if request.user.is_authenticated else None,
+            )
+        return apply_cache_header(response, hit=False)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='header-search')
+    def header_search(self, request):
+        """Pins + profils (recherche floue) et branche « pour vous » (recommandations) pour le bandeau."""
+        limit_raw = (request.query_params.get('limit') or '8').strip()
+        try:
+            lim = max(1, min(int(limit_raw), 20))
+        except ValueError:
+            lim = 8
+        pin_limit = lim
+        user_limit = min(10, lim + 2)
+        rec_limit = min(8, lim)
+        board_limit = min(10, lim + 2)
+
+        q = (request.query_params.get('q') or '').strip()
+        base_fotos = self.get_queryset()
+        if request.user.is_authenticated:
+            base_fotos = base_fotos.exclude(author=request.user)
+
+        ctx = {'request': request}
+        foto_ids_in_results: set[int] = set()
+
+        pins_data = []
+        if len(q) >= 1:
+            exclude_author_id = request.user.pk if request.user.is_authenticated else None
+            pins_trim = search_pins(
+                base_fotos,
+                q,
+                limit=pin_limit,
+                exclude_author_id=exclude_author_id,
+            )
+            foto_ids_in_results = {p.id for p in pins_trim}
+            pins_data = self.get_serializer(pins_trim, many=True, context=ctx).data
+
+        users_data = []
+        if len(q) >= 1:
+            users_qs = (
+                User.objects.select_related('profile')
+                .filter(profile__discoverable_profile=True)
+            )
+            viewer = request.user if request.user.is_authenticated else None
+            if viewer and viewer.is_authenticated:
+                users_qs = users_qs.exclude(pk=viewer.pk)
+                forb = blocked_mutual_user_ids(viewer)
+                if forb:
+                    users_qs = users_qs.exclude(pk__in=forb)
+            for u in search_users(users_qs, q, limit=user_limit):
+                prof = u.profile
+                users_data.append(
+                    {
+                        'username': u.username,
+                        'display_name': (prof.display_name or u.username).strip() or u.username,
+                        'avatar_color': prof.avatar_color or 'bg-neutral-400',
+                        'avatar': build_versioned_media_url(request, prof.avatar)
+                        if prof.avatar and getattr(prof.avatar, 'name', '')
+                        else None,
+                    }
+                )
+
+        boards_qs = Board.objects.select_related('user').prefetch_related('collaborators')
+        if request.user.is_authenticated:
+            boards_qs = boards_qs.filter(
+                Q(is_private=False) | Q(user=request.user) | Q(collaborators=request.user)
+            )
+        else:
+            boards_qs = boards_qs.filter(is_private=False)
+        if q:
+            viewer_id = request.user.pk if request.user.is_authenticated else None
+            board_candidates = search_boards(
+                boards_qs,
+                q,
+                limit=board_limit,
+                viewer_id=viewer_id,
+            )
+        else:
+            pref_topic_ids = profile_interest_topic_ids(request.user) if request.user.is_authenticated else []
+            if pref_topic_ids:
+                board_candidates = list(
+                    boards_qs.annotate(
+                        pins_total=Count('fotos'),
+                        pref_overlap=Count(
+                            'foto_board_memberships',
+                            filter=Q(foto_board_memberships__foto__topic_id__in=pref_topic_ids),
+                            distinct=True,
+                        ),
+                    )
+                    .order_by('-pref_overlap', '-pins_total', '-created_at')[:board_limit]
+                )
+            else:
+                board_candidates = list(
+                    boards_qs.annotate(pins_total=Count('fotos')).order_by('-pins_total', '-created_at')[:board_limit]
+                )
+        boards_data = []
+        for b in board_candidates[:board_limit]:
+            payload = BoardSerializer(b, context=ctx).data
+            previews = payload.get('preview_images') or []
+            payload['cover_image_url'] = previews[0] if previews else ''
+            boards_data.append(payload)
+
+        rec_data = []
+        if request.user.is_authenticated and getattr(
+            request.user.profile, 'notifications_recommendations', False
+        ):
+            rec_base = self.get_queryset().exclude(author=request.user)
+            topic_scores = self._build_topic_scores(request.user)
+            ranked = self._ordered_by_topic_score(rec_base, topic_scores)
+            picked = []
+            for p in ranked:
+                if p.id in foto_ids_in_results:
+                    continue
+                if q:
+                    if not pin_matches_query(p, q):
+                        continue
+                picked.append(p)
+                if len(picked) >= rec_limit:
+                    break
+            rec_data = self.get_serializer(picked, many=True, context=ctx).data
+
+        return Response(
+            {
+                'fotos': pins_data,
+                'users': users_data,
+                'boards': boards_data,
+                'recommended_pins': rec_data,
+                'query': q,
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='explore-boards')
+    def explore_boards(self, request):
+        """Tableaux publics (découverte) paginés — même filtres que le bandeau header-search."""
+        page_raw = (request.query_params.get('page') or '1').strip()
+        ps_raw = (request.query_params.get('page_size') or '24').strip()
+        try:
+            page = max(1, int(page_raw))
+        except ValueError:
+            page = 1
+        try:
+            page_size = max(1, min(int(ps_raw), 48))
+        except ValueError:
+            page_size = 24
+
+        q = (request.query_params.get('q') or '').strip()
+        boards_qs = Board.objects.select_related('user').prefetch_related('collaborators')
+        if request.user.is_authenticated:
+            boards_qs = boards_qs.filter(
+                Q(is_private=False) | Q(user=request.user) | Q(collaborators=request.user)
+            ).distinct()
+        else:
+            boards_qs = boards_qs.filter(is_private=False)
+        if q:
+            viewer_id = request.user.pk if request.user.is_authenticated else None
+            board_candidates = search_boards(boards_qs, q, limit=400, viewer_id=viewer_id)
+            ordered_ids = [b.id for b in board_candidates]
+            order = Case(
+                *[When(pk=pk, then=Value(pos)) for pos, pk in enumerate(ordered_ids)],
+                output_field=IntegerField(),
+            )
+            qs = Board.objects.filter(pk__in=ordered_ids).select_related('user').prefetch_related('collaborators')
+            qs = qs.annotate(_sort_order=order).order_by('_sort_order', '-created_at')
+        else:
+            pref_topic_ids = profile_interest_topic_ids(request.user) if request.user.is_authenticated else []
+            if pref_topic_ids:
+                qs = (
+                    boards_qs.annotate(
+                        pins_total=Count('fotos'),
+                        pref_overlap=Count(
+                            'foto_board_memberships',
+                            filter=Q(foto_board_memberships__foto__topic_id__in=pref_topic_ids),
+                            distinct=True,
+                        ),
+                    )
+                    .order_by('-pref_overlap', '-pins_total', '-created_at')
+                )
+            else:
+                qs = (
+                    boards_qs.annotate(pins_total=Count('fotos'))
+                    .order_by('-pins_total', '-created_at')
+                )
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        chunk = list(qs[start : start + page_size])
+
+        ctx = {'request': request}
+        boards_data = []
+        for b in chunk:
+            payload = BoardSerializer(b, context=ctx).data
+            previews = payload.get('preview_images') or []
+            payload['cover_image_url'] = previews[0] if previews else ''
+            boards_data.append(payload)
+
+        def _page_url(p: int):
+            qd = {'page': p, 'page_size': page_size}
+            if q:
+                qd['q'] = q
+            return request.build_absolute_uri(f"{request.path}?{urlencode(qd)}")
+
+        next_url = _page_url(page + 1) if start + page_size < total else None
+        previous_url = _page_url(page - 1) if page > 1 else None
+
+        return Response(
+            {
+                'count': total,
+                'next': next_url,
+                'previous': previous_url,
+                'results': boards_data,
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='home-feed')
+    def home_feed(self, request):
+        topic = (request.query_params.get('topic') or '').strip()
+        reco_on = getattr(request.user.profile, 'notifications_recommendations', False)
+
+        paginator = self.pagination_class()
+        paginator.request = request
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        django_paginator = paginator.django_paginator_class([], page_size)
+        page_number = int(paginator.get_page_number(request, django_paginator))
+
+        cacheable = page_number == 1 and not skip_feed_cache(request)
+        cache_key = None
+        if cacheable:
+            cache_key = home_feed_page1_key(
+                request.user.id,
+                topic=topic,
+                page_size=page_size,
+                reco_on=reco_on,
+            )
+            cached, hit = get_cached_payload(
+                cache_key,
+                cache_scope='home_feed_page1',
+                user_id=request.user.id,
+            )
+            if hit:
+                return apply_cache_header(Response(cached), hit=True)
+
+        following_rows = list(request.user.profile.following.values_list('pk', 'user_id'))
+        request._viewer_following_profile_ids = frozenset(r[0] for r in following_rows)
+        following_user_ids = [r[1] for r in following_rows]
+        base_qs = self.get_queryset()
+        following_queryset = (
+            base_qs.filter(author_id__in=following_user_ids)
+            .exclude(author=request.user)
+            .order_by('media_sensitive_blur', '-created_at')
+        )
+        discover_queryset = (
+            base_qs.exclude(author_id__in=following_user_ids)
+            .exclude(author=request.user)
+        )
+        if topic:
+            following_queryset = self._apply_topic_filter(following_queryset, topic)
+            discover_queryset = self._apply_topic_filter(discover_queryset, topic)
+
+        topic_scores = self._build_topic_scores(request.user) if reco_on else {}
+        if reco_on and topic_scores:
+            discover_queryset = self._order_discover_queryset(discover_queryset, topic_scores)
+        else:
+            discover_queryset = discover_queryset.order_by('media_sensitive_blur', '-created_at')
+
+        # Prefetch/annotations avant fetch_pins_for_slots — évite un second SELECT pk__in.
+        following_queryset = self._optimize_feed_queryset(following_queryset)
+        discover_queryset = self._optimize_feed_queryset(discover_queryset)
+
+        global_start = (page_number - 1) * page_size
+
+        following_count = following_queryset.count()
+        discover_count = discover_queryset.count()
+        total_count = home_feed_total_count(following_count, discover_count)
+
+        slots = compute_interleave_slots(
+            following_count,
+            discover_count,
+            global_start,
+            page_size,
+        )
+        page_items = fetch_pins_for_slots(following_queryset, discover_queryset, slots)
+
+        response = self._feed_response_with_ads_paginated(
+            request,
+            page_items,
+            total_count=total_count,
+            topic=topic,
+        )
+        if cacheable and cache_key and response.status_code == 200:
+            set_cached_payload(
+                cache_key,
+                response.data,
+                HOME_FEED_PAGE1_TTL,
+                cache_scope='home_feed_page1',
+                user_id=request.user.id,
+            )
+        return apply_cache_header(response, hit=False)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
+    def topics(self, request):
+        limit_raw = (request.query_params.get('limit') or '10').strip()
+        limit = int(limit_raw) if limit_raw.isdigit() else 10
+        limit = max(1, min(limit, 30))
+        search_query = (request.query_params.get('q') or '').strip()
+        search_query_lower = search_query.lower()
+
+        now = timezone.now()
+        schedule_public = Q(scheduled_publish_at__isnull=True) | Q(scheduled_publish_at__lte=now)
+        story_public = (
+            Q(is_story=False)
+            | Q(is_story=True, story_ephemeral=False)
+            | Q(is_story=True, story_ephemeral=True, story_expires_at__gt=now)
+        )
+
+        base_qs = (
+            Foto.objects.exclude(topic__isnull=True)
+            .exclude(visibility=Foto.VISIBILITY_PRIVATE)
+            .filter(schedule_public)
+            .filter(story_public)
+        )
+        topic_foto_filter = (
+            ~Q(fotos__visibility=Foto.VISIBILITY_PRIVATE)
+            & (
+                Q(pins__scheduled_publish_at__isnull=True)
+                | Q(pins__scheduled_publish_at__lte=now)
+            )
+            & (
+                Q(pins__is_story=False)
+                | Q(pins__is_story=True, pins__story_ephemeral=False)
+                | Q(
+                    pins__is_story=True,
+                    pins__story_ephemeral=True,
+                    pins__story_expires_at__gt=now,
+                )
+            )
+        )
+        if not viewer_is_verified_adult(request):
+            topic_foto_filter &= Q(pins__media_sensitive_blur=False)
+        topics_qs = (
+            Topic.objects.filter(is_active=True)
+            .annotate(
+                foto_count=Count(
+                    'fotos',
+                    filter=topic_foto_filter,
+                    distinct=True,
+                )
+            )
+            .filter(foto_count__gt=0)
+            .order_by('-foto_count', 'name')
+            .values('id', 'name', 'slug', 'icon', 'color', 'cover_image', 'foto_count')
+        )
+
+        # Suggestions personnalisées pour l'utilisateur connecté.
+        if request.user.is_authenticated:
+            suggested_topics = (
+                base_qs.filter(
+                    Q(likes__user=request.user)
+                    | Q(saves__user=request.user)
+                    | Q(comments__user=request.user)
+                )
+                .values('topic_id')
+                .annotate(interactions=Count('id'))
+                .order_by('-interactions', 'topic_id')
+            )
+            suggested_ids = [row['topic_id'] for row in suggested_topics[: (200 if search_query else limit)] if row['topic_id']]
+            pref_topic_ids = profile_interest_topic_ids(request.user)
+            if pref_topic_ids:
+                merged_pref: list[int] = []
+                for tid in pref_topic_ids:
+                    if tid not in merged_pref:
+                        merged_pref.append(tid)
+                for tid in suggested_ids:
+                    if tid not in merged_pref:
+                        merged_pref.append(tid)
+                suggested_ids = merged_pref
+            if suggested_ids:
+                # Garder les suggestions d'abord, puis compléter par les plus populaires.
+                popular_rows = list(topics_qs)
+                topic_map = {row['id']: row for row in popular_rows}
+                merged = [topic_map[topic_id] for topic_id in suggested_ids if topic_id in topic_map]
+                for row in popular_rows:
+                    if len(merged) >= (200 if search_query else limit):
+                        break
+                    if row['id'] not in suggested_ids:
+                        merged.append(row)
+                topics_qs = merged[: (200 if search_query else limit)]
+            elif pref_topic_ids:
+                popular_rows = list(topics_qs)
+                topic_map = {row['id']: row for row in popular_rows}
+                merged = [topic_map[tid] for tid in pref_topic_ids if tid in topic_map]
+                for row in popular_rows:
+                    if len(merged) >= (200 if search_query else limit):
+                        break
+                    if row['id'] not in pref_topic_ids:
+                        merged.append(row)
+                topics_qs = merged[: (200 if search_query else limit)]
+            else:
+                topics_qs = list(topics_qs[: (200 if search_query else limit)])
+        else:
+            topics_qs = list(topics_qs[: (200 if search_query else limit)])
+
+        target_lang = resolve_topic_language(request)
+        items = []
+        translator = Translator() if target_lang != 'fr' else None
+        for item in topics_qs:
+            topic_name = item['name']
+            display_name, translations = ensure_topic_translation(
+                topic_name,
+                target_lang,
+                translator=translator,
+            )
+            if search_query_lower:
+                if not (
+                    search_query_lower in topic_name.lower()
+                    or search_query_lower in display_name.lower()
+                    or any(search_query_lower in str(value).lower() for value in translations.values())
+                ):
+                    continue
+            cover_rel = item.get('cover_image') or ''
+            cover_image_url = None
+            if cover_rel:
+                try:
+                    base = request.build_absolute_uri(default_storage.url(cover_rel))
+                    cover_image_url = append_version_using_media_path(
+                        base, relative_under_media=cover_rel
+                    )
+                except Exception:
+                    cover_image_url = None
+            items.append({
+                'name': display_name,
+                'originalName': topic_name,
+                'slug': item['slug'],
+                'icon': item['icon'],
+                'color': item['color'],
+                'coverImage': cover_image_url,
+                'fotoCount': item['foto_count'],
+                'translations': translations,
+            })
+        if search_query_lower:
+            items = items[:limit]
+        return Response(items)
+
+    @action(detail=True, methods=['get', 'post', 'delete'], permission_classes=[permissions.IsAuthenticated], url_path='private-tags')
+    def private_tags(self, request, slug=None):
+        foto = self.get_object()
+        if foto.author != request.user:
+            return Response({'error': 'Only foto owner can manage private tags'}, status=status.HTTP_403_FORBIDDEN)
+        if request.method in ['POST', 'DELETE'] and not request.user.profile.can_use_private_tags:
+            return Response(
+                {'error': 'Private tags require Plus or Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if request.method == 'GET':
+            tags = list(
+                PrivatePinTag.objects.filter(user=request.user, foto=pin)
+                .values_list('tag', flat=True)
+                .order_by('tag')
+            )
+            return Response({'tags': tags})
+        if request.method == 'POST':
+            raw_tags = request.data.get('tags', [])
+            if isinstance(raw_tags, str):
+                raw_tags = [t.strip() for t in raw_tags.split(',')]
+            for tag in raw_tags:
+                cleaned = str(tag).strip()
+                if cleaned:
+                    PrivatePinTag.objects.get_or_create(user=request.user, foto=pin, tag=cleaned)
+            tags = list(
+                PrivatePinTag.objects.filter(user=request.user, foto=pin)
+                .values_list('tag', flat=True)
+                .order_by('tag')
+            )
+            return Response({'tags': tags}, status=status.HTTP_201_CREATED)
+        tag = (request.data.get('tag') or '').strip()
+        if not tag:
+            return Response({'error': 'tag is required'}, status=status.HTTP_400_BAD_REQUEST)
+        PrivatePinTag.objects.filter(user=request.user, foto=pin, tag=tag).delete()
+        tags = list(
+            PrivatePinTag.objects.filter(user=request.user, foto=pin)
+            .values_list('tag', flat=True)
+            .order_by('tag')
+        )
+        return Response({'tags': tags})
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='download')
+    def download(self, request, slug=None):
+        foto = self.get_object()
+        profile = request.user.profile
+        if not profile.can_download:
+            return Response(
+                {'error': 'Download requires Plus or Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        requested_quality = (request.query_params.get('quality') or 'standard').strip().lower()
+        allowed_qualities = {'standard'}
+        if profile.subscription_plan == profile.PLAN_PRO:
+            allowed_qualities.update({'hd', '4k'})
+        if requested_quality not in allowed_qualities:
+            return Response(
+                {'error': f'Quality "{requested_quality}" not allowed for your plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not foto.image:
+            return Response(
+                {'error': 'This foto has no image to download (video-only stories cannot be exported here).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            apply_wm = profile.subscription_plan in {profile.PLAN_PLUS, profile.PLAN_PRO}
+            download_url = _foto_download_absolute_url(
+                request, foto, requested_quality, apply_watermark=apply_wm
+            )
+        except Exception:
+            download_url = build_versioned_media_url(request, foto.image)
+        return Response({
+            'download_url': download_url,
+            'quality': requested_quality,
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-stats')
+    def creator_stats(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Advanced stats require Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user = request.user
+        totals_only = str(request.query_params.get('totals_only') or '').lower() in ('1', 'true', 'yes')
+        try:
+            top_page = int(request.query_params.get('top_page') or 1)
+        except ValueError:
+            top_page = 1
+        try:
+            top_page_size = int(request.query_params.get('top_page_size') or 10)
+        except ValueError:
+            top_page_size = 10
+        top_page = max(1, top_page)
+
+        skip_cache = skip_feed_cache(request)
+        cache_key = creator_stats_cache_key(
+            user.id,
+            totals_only=totals_only,
+            top_page=top_page,
+            top_page_size=top_page_size,
+        )
+        if not skip_cache:
+            cached, hit = get_cached_payload(
+                cache_key,
+                cache_scope='creator_stats',
+                user_id=user.id,
+            )
+            if hit:
+                return apply_cache_header(Response(cached), hit=True)
+
+        totals = creator_totals_for_user(user)
+        if totals_only:
+            payload = {
+                'totals': totals,
+                'top_pins': [],
+                'top_pins_pagination': {
+                    'page': 1,
+                    'page_size': top_page_size,
+                    'total_items': 0,
+                    'total_pages': 1,
+                    'has_next': False,
+                    'has_previous': False,
+                },
+            }
+            if not skip_cache:
+                set_cached_payload(
+                    cache_key,
+                    payload,
+                    CREATOR_STATS_TTL,
+                    cache_scope='creator_stats',
+                    user_id=user.id,
+                )
+            return apply_cache_header(Response(payload), hit=False)
+
+        top_pins_payload, top_total, t_page, t_psize, t_pages = paginated_creator_top_pins(
+            user, page=top_page, page_size=top_page_size
+        )
+        payload = {
+            'totals': totals,
+            'top_pins': top_pins_payload,
+            'top_pins_pagination': {
+                'page': t_page,
+                'page_size': t_psize,
+                'total_items': top_total,
+                'total_pages': t_pages,
+                'has_next': t_page < t_pages,
+                'has_previous': t_page > 1,
+            },
+        }
+        if not skip_cache:
+            set_cached_payload(
+                cache_key,
+                payload,
+                CREATOR_STATS_TTL,
+                cache_scope='creator_stats',
+                user_id=user.id,
+            )
+        return apply_cache_header(Response(payload), hit=False)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-weekly-stats')
+    def creator_weekly_stats(self, request):
+        """Vues des 7 derniers jours (FotoViewEvent) pour rétention digest & dashboard Pro."""
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Weekly creator stats require Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            days = int(request.query_params.get('days') or 7)
+        except ValueError:
+            days = 7
+        days = max(1, min(days, 31))
+        try:
+            wpage = int(request.query_params.get('page') or 1)
+        except ValueError:
+            wpage = 1
+        try:
+            wsize = int(request.query_params.get('page_size') or 10)
+        except ValueError:
+            wsize = 10
+        wpage = max(1, wpage)
+
+        skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
+        since = timezone.now() - timedelta(days=days)
+        wcache_key = f'fotoce:creator_weekly:v2:{request.user.id}:{days}:{wsize}:{wpage}'
+        if wpage == 1 and not skip_cache:
+            hit = cache.get(wcache_key)
+            if hit is not None:
+                return Response(hit)
+
+        wrows, total_pins_period, total_view_events, w_p, w_ps, w_pages = weekly_creator_pins_page(
+            request.user, days=days, page=wpage, page_size=wsize
+        )
+        period_engagement = creator_period_engagement_totals(request.user, since)
+        rows = []
+        for row in wrows:
+            foto = row['pin']
+            thumb = pin_thumbnail_absolute_url(pin, request)
+            rows.append({
+                'id': foto.id,
+                'slug': foto.slug,
+                'title': foto.title,
+                'views_week': row['views_week'],
+                'likes_week': row.get('likes_week', 0),
+                'saves_week': row.get('saves_week', 0),
+                'comments_week': row.get('comments_week', 0),
+                'thumbnail_url': thumb,
+            })
+        prev_start = since - timedelta(days=days)
+        body = {
+            'period_days': days,
+            'since': since.isoformat(),
+            'total_view_events_period': total_view_events,
+            'pins_with_views_period': total_pins_period,
+            'period_engagement': period_engagement,
+            'period_comparison': {
+                'previous_period_days': days,
+                'previous_period_engagement': creator_period_engagement_between(
+                    request.user, prev_start, since
+                ),
+                'previous_total_view_events_period': count_foto_view_events_between(
+                    request.user, prev_start, since
+                ),
+            },
+            'top_pins': rows,
+            'pagination': {
+                'page': w_p,
+                'page_size': w_ps,
+                'total_items': total_pins_period,
+                'total_pages': w_pages,
+                'has_next': w_p < w_pages,
+                'has_previous': w_p > 1,
+            },
+        }
+        if wpage == 1 and not skip_cache:
+            cache.set(wcache_key, body, 50)
+        return Response(body)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-engagement')
+    def creator_engagement(self, request):
+        """Acteurs les plus actifs par type d’interaction (likes, saves, comments, views) sur une période."""
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Creator engagement requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        action = str(request.query_params.get('action') or '').strip().lower()
+        if not action:
+            return Response({'error': 'action is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if action not in VALID_ACTIONS:
+            return Response(
+                {'error': 'invalid action', 'allowed': sorted(VALID_ACTIONS)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            days = int(request.query_params.get('days') or 30)
+        except ValueError:
+            days = 30
+        try:
+            limit = int(request.query_params.get('limit') or 25)
+        except ValueError:
+            limit = 25
+        skip_cache = str(request.query_params.get('no_cache') or '').lower() in ('1', 'true', 'yes')
+        e_key = f'fotoce:creator_engagement:v1:{request.user.id}:{action}:{days}:{limit}'
+        if not skip_cache:
+            hit = cache.get(e_key)
+            if hit is not None:
+                return Response(hit)
+        body = creator_engagement_breakdown(request, request.user, action=action, days=days, limit=limit)
+        if not skip_cache:
+            cache.set(e_key, body, 45)
+        return Response(body)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-recent-fotos')
+    def creator_recent_pins(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Recent fotos list requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            page = int(request.query_params.get('page') or 1)
+        except ValueError:
+            page = 1
+        try:
+            page_size = int(request.query_params.get('page_size') or 12)
+        except ValueError:
+            page_size = 12
+        rows, total, p, ps, pages = paginated_recent_pins(request, request.user, page, page_size)
+        return Response(
+            {
+                'fotos': rows,
+                'pagination': {
+                    'page': p,
+                    'page_size': ps,
+                    'total_items': total,
+                    'total_pages': pages,
+                    'has_next': p < pages,
+                    'has_previous': p > 1,
+                },
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-comment-inbox')
+    def creator_comment_inbox(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Comment inbox requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            limit = int(request.query_params.get('limit') or 20)
+        except ValueError:
+            limit = 20
+        try:
+            offset = int(request.query_params.get('offset') or 0)
+        except ValueError:
+            offset = 0
+        rows, total, off, lim = paginated_comment_inbox(request.user, limit, offset)
+        return Response(
+            {
+                'comments': rows,
+                'total': total,
+                'offset': off,
+                'limit': lim,
+                'has_more': off + len(rows) < total,
+            }
+        )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated], url_path='creator-stats-export')
+    def creator_stats_export(self, request):
+        profile = request.user.profile
+        if profile.subscription_plan != profile.PLAN_PRO:
+            return Response(
+                {'error': 'Export requires Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user = request.user
+        totals = creator_totals_for_user(user)
+        top_pins_payload, _top_total, _tp, _tps, _tpages = paginated_creator_top_pins(
+            user, page=1, page_size=200, pool=800
+        )
+        buf = StringIO()
+        w = csv.writer(buf)
+        w.writerow(['Fotoce creator export'])
+        w.writerow([])
+        w.writerow(['Totals'])
+        for key in sorted(totals.keys()):
+            w.writerow([key, totals[key]])
+        w.writerow([])
+        w.writerow(['slug', 'views', 'likes', 'saves'])
+        for row in top_pins_payload:
+            w.writerow([row['slug'], row['views'], row['likes'], row['saves']])
+        payload = '\ufeff' + buf.getvalue()
+        resp = HttpResponse(payload, content_type='text/csv; charset=utf-8')
+        resp['Content-Disposition'] = 'attachment; filename="fotoce-creator-stats.csv"'
+        return resp
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
+    def provenance(self, request, slug=None):
+        self.get_object()
+        return Response({'root_hash': '', 'events': []})
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='translate-description')
+    def translate_description(self, request, slug=None):
+        foto = self.get_object()
+        target_lang = self._resolve_target_lang(request)
+        original_language = detect_original_language(pin.description or '')
+        translator = Translator()
+        try:
+            translated = async_to_sync(translate_text_to)(translator, foto.description or '', target_lang)
+        except RuntimeError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({
+            'original': foto.description,
+            'original_language': original_language,
+            'translated': translated,
+            'target_lang': target_lang,
+            'translation_source': 'auto',
+        })
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='comments/(?P<comment_id>[^/.]+)/translate')
+    def translate_comment(self, request, comment_id=None):
+        target_lang = self._resolve_target_lang(request)
+        try:
+            comment = Comment.objects.select_related('pin', 'user').get(id=comment_id)
+        except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not viewer_sees_comment_content(comment, comment.pin, request):
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        original_language = comment.original_language or detect_original_language(comment.text)
+        if comment.original_language != original_language:
+            comment.original_language = original_language
+            comment.save(update_fields=['original_language'])
+        translator = Translator()
+        try:
+            translated = async_to_sync(translate_text_to)(translator, comment.text, target_lang)
+        except RuntimeError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({
+            'id': comment.id,
+            'original': comment.text,
+            'original_language': original_language,
+            'translated': translated,
+            'target_lang': target_lang,
+            'translation_source': 'auto',
+        })
+
+
+class BoardViewSet(viewsets.ModelViewSet):
+    serializer_class = BoardSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = BoardListPagination
+
+    def get_permissions(self):
+        if self.action in ('retrieve', 'platform_policy'):
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return BoardDetailSerializer
+        return BoardSerializer
+
+    def get_queryset(self):
+        base = (
+            Board.objects.annotate(pins_total=Count('fotos'))
+            .select_related('user', 'user__profile')
+            .order_by('-created_at')
+        )
+        user = self.request.user
+
+        if self.action == 'list':
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+
+        if self.action in ('update', 'partial_update', 'destroy'):
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+
+        if self.action in ('add_pin', 'remove_pin', 'collaborators', 'ordered_pins', 'reorder_pins'):
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+
+        if self.action == 'suggestions':
+            if not user.is_authenticated:
+                return Board.objects.none()
+            return base.filter(user=user)
+
+        if self.action == 'retrieve':
+            share_raw = (self.request.query_params.get('share') or '').strip()
+            q_share = Q(pk__in=[])
+            if share_raw:
+                try:
+                    uid = uuid.UUID(share_raw)
+                    q_share = Q(share_token=uid)
+                except ValueError:
+                    pass
+            q_public = Q(is_private=False)
+            if user.is_authenticated:
+                q_mine = Q(user=user) | Q(collaborators=user)
+                return base.filter(q_public | q_mine | q_share).distinct()
+            return base.filter(q_public | q_share).distinct()
+
+        if user.is_authenticated:
+            return base.filter(Q(user=user) | Q(collaborators=user)).distinct()
+        return Board.objects.none()
+
+    def _can_manage_board_content(self, user, board):
+        return board.user == user or board.collaborators.filter(id=user.id).exists()
+
+    def perform_create(self, serializer):
+        profile = self.request.user.profile
+        limits = profile.board_limits
+        is_private = bool(serializer.validated_data.get('is_private', False))
+        boards = Board.objects.filter(user=self.request.user)
+        private_count = boards.filter(is_private=True).count()
+        public_count = boards.filter(is_private=False).count()
+        if is_private and limits['private_max'] is not None and private_count >= limits['private_max']:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'is_private': f'Private boards limit reached ({limits["private_max"]}).'})
+        if not is_private and limits['public_max'] is not None and public_count >= limits['public_max']:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'is_private': f'Public boards limit reached ({limits["public_max"]}).'})
+        serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        board = serializer.instance
+        if not self._can_manage_board_content(self.request.user, board):
+            raise PermissionDenied('Not allowed to edit this board.')
+        vd = serializer.validated_data
+        if board.user_id != self.request.user.id and 'is_private' in vd:
+            vd.pop('is_private')
+        if (
+            board.user_id == self.request.user.id
+            and 'is_private' in vd
+            and bool(vd.get('is_private')) != bool(board.is_private)
+        ):
+            profile = self.request.user.profile
+            limits = profile.board_limits
+            other_boards = Board.objects.filter(user=self.request.user).exclude(pk=board.pk)
+            if vd.get('is_private'):
+                n_priv = other_boards.filter(is_private=True).count() + 1
+                if limits['private_max'] is not None and n_priv > limits['private_max']:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError({'is_private': f'Private boards limit reached ({limits["private_max"]}).'})
+            else:
+                n_pub = other_boards.filter(is_private=False).count() + 1
+                if limits['public_max'] is not None and n_pub > limits['public_max']:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError({'is_private': f'Public boards limit reached ({limits["public_max"]}).'})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.user_id != self.request.user.id:
+            raise PermissionDenied('Only the board owner can delete this board.')
+        instance.delete()
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='share-token')
+    def board_share_token(self, request, pk=None):
+        board = self.get_object()
+        if board.user_id != request.user.id:
+            return Response({'error': 'Only board owner can create share links'}, status=status.HTTP_403_FORBIDDEN)
+        regenerate = str(request.data.get('regenerate', '')).lower() in ('true', '1', 'yes')
+        if regenerate or board.share_token is None:
+            board.share_token = uuid.uuid4()
+            board.save(update_fields=['share_token'])
+        return Response({'share_token': str(board.share_token)})
+
+    @action(detail=True, methods=['post'], url_path='add-foto')
+    def add_pin(self, request, pk=None):
+        board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to edit this board'}, status=status.HTTP_403_FORBIDDEN)
+        foto_slug = request.data.get('foto_slug')
+        if not foto_slug:
+            return Response({'error': 'foto_slug is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            foto = Foto.objects.get(slug=foto_slug)
+        except Foto.DoesNotExist:
+            return Response({'error': 'Foto not found'}, status=status.HTTP_404_NOT_FOUND)
+        max_pos = FotoBoard.objects.filter(board=board).aggregate(m=Max('position'))['m']
+        next_pos = (max_pos if max_pos is not None else -1) + 1
+        _, created_pb = FotoBoard.objects.get_or_create(
+            foto=pin,
+            board=board,
+            defaults={'position': next_pos},
+        )
+        status_txt = 'added' if created_pb else 'already_present'
+        return Response({'status': status_txt, 'fotoCount': board.fotos.count()})
+
+    @action(detail=True, methods=['post'], url_path='remove-foto')
+    def remove_pin(self, request, pk=None):
+        board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to edit this board'}, status=status.HTTP_403_FORBIDDEN)
+        foto_slug = request.data.get('foto_slug')
+        if not foto_slug:
+            return Response({'error': 'foto_slug is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            foto = Foto.objects.get(slug=foto_slug)
+        except Foto.DoesNotExist:
+            return Response({'error': 'Foto not found'}, status=status.HTTP_404_NOT_FOUND)
+        FotoBoard.objects.filter(pin=pin, board=board).delete()
+        return Response({'status': 'removed', 'fotoCount': board.fotos.count()})
+
+    @action(detail=True, methods=['get', 'post', 'delete'], url_path='collaborators')
+    def collaborators(self, request, pk=None):
+        board = self.get_object()
+        owner_profile = board.user.profile
+        if request.method in ['POST', 'DELETE'] and board.user != request.user:
+            return Response({'error': 'Only board owner can manage collaborators'}, status=status.HTTP_403_FORBIDDEN)
+        if request.method == 'GET':
+            return Response({
+                'collaborators': [
+                    {
+                        'id': user.id,
+                        'username': user.username,
+                    }
+                    for user in board.collaborators.order_by('username')
+                ],
+            })
+
+        if owner_profile.subscription_plan == owner_profile.PLAN_FREE:
+            return Response(
+                {'error': 'Collaborative boards require Plus or Pro plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if request.method == 'POST':
+            username = (request.data.get('username') or '').strip()
+            target_user, collab_err, collab_candidates = resolve_user_for_invite_identifier(username)
+            if collab_err == 'required':
+                return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if collab_err == 'ambiguous_display_name':
+                return Response(
+                    {
+                        'code': 'ambiguous_display_name',
+                        'candidates': collab_candidates,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if target_user is None:
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            if target_user == board.user:
+                return Response({'error': 'Board owner cannot be collaborator'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if owner_profile.subscription_plan == owner_profile.PLAN_PLUS and board.collaborators.count() >= 10:
+                return Response(
+                    {'error': 'Collaborators limit reached (10) for Plus plan'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            if board.collaborators.filter(id=target_user.id).exists():
+                return Response({'error': 'User is already a collaborator'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if BoardCollaborationInvite.objects.filter(
+                board=board,
+                invitee=target_user,
+                status=BoardCollaborationInvite.STATUS_PENDING,
+            ).exists():
+                return Response({'error': 'An invitation is already pending for this user'}, status=status.HTTP_400_BAD_REQUEST)
+
+            invite, created = BoardCollaborationInvite.objects.get_or_create(
+                board=board,
+                invitee=target_user,
+                defaults={
+                    'invited_by': request.user,
+                    'status': BoardCollaborationInvite.STATUS_PENDING,
+                },
+            )
+            if not created:
+                invite.invited_by = request.user
+                invite.status = BoardCollaborationInvite.STATUS_PENDING
+                invite.responded_at = None
+                invite.save(update_fields=['invited_by', 'status', 'responded_at'])
+
+            create_localized_notification(
+                recipient=target_user,
+                sender=request.user,
+                notification_type='board_invite',
+                title_fr='Invitation tableau',
+                message_fr=f"{request.user.username} vous invite à collaborer sur « {board.name} ».",
+                action_url='/profile',
+                metadata={
+                'invite_id': invite.id,
+                'board_id': board.id,
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
+            },
+            )
+            return Response({'status': 'invited', 'invite_id': invite.id, 'collaborator_count': board.collaborators.count()})
+
+        username = (request.data.get('username') or '').strip()
+        target_user, collab_err, collab_candidates = resolve_user_for_invite_identifier(username)
+        if collab_err == 'required':
+            return Response({'error': 'username is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if collab_err == 'ambiguous_display_name':
+            return Response(
+                {
+                    'code': 'ambiguous_display_name',
+                    'candidates': collab_candidates,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if target_user is None:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not board.collaborators.filter(id=target_user.id).exists():
+            return Response({'error': 'Not a collaborator'}, status=status.HTTP_400_BAD_REQUEST)
+        board.collaborators.remove(target_user)
+        BoardCollaborationInvite.objects.filter(board=board, invitee=target_user).update(
+            status=BoardCollaborationInvite.STATUS_DECLINED,
+            responded_at=timezone.now(),
+        )
+        return Response({'status': 'removed', 'collaborator_count': board.collaborators.count()})
+
+    @action(detail=False, methods=['get'], url_path='suggestions')
+    def suggestions(self, request):
+        """Board names inferred from author's foto topics + existing boards that match."""
+        user = request.user
+        topic_rows = list(
+            Foto.objects.filter(author=user)
+            .exclude(topic__isnull=True)
+            .values('topic_id', 'topic__name', 'topic__slug')
+            .annotate(c=Count('id'))
+            .order_by('-c')[:14]
+        )
+        if not topic_rows:
+            pref_ids = profile_interest_topic_ids(user)
+            if pref_ids:
+                topic_rows = [
+                    {
+                        'topic_id': topic.id,
+                        'topic__name': topic.name,
+                        'topic__slug': topic.slug,
+                        'c': 0,
+                    }
+                    for topic in Topic.objects.filter(id__in=pref_ids, is_active=True).order_by('name')[:14]
+                ]
+        topic_ids = [row['topic_id'] for row in topic_rows if row['topic_id']]
+        existing_names = set(Board.objects.filter(user=user).values_list('name', flat=True))
+        new_board_hints = []
+        seen = set(existing_names)
+        for row in topic_rows:
+            name = (row['topic__name'] or '').strip()[:255]
+            if not name or name.lower() in {x.lower() for x in seen}:
+                continue
+            seen.add(name)
+            new_board_hints.append({
+                'name': name,
+                'topic_slug': row['topic__slug'],
+                'foto_count_hint': row['c'],
+            })
+        if topic_ids:
+            existing_boards_qs = (
+                Board.objects.filter(user=user)
+                .annotate(
+                    overlap_score=Count(
+                        'foto_board_memberships',
+                        filter=Q(foto_board_memberships__foto__topic_id__in=topic_ids),
+                    ),
+                    pin_total=Count('fotos'),
+                )
+                .filter(overlap_score__gt=0)
+                .order_by('-overlap_score')[:12]
+            )
+        else:
+            existing_boards_qs = Board.objects.none()
+        return Response({
+            'new_board_hints': new_board_hints[:10],
+            'existing_boards': [
+                {
+                    'id': b.id,
+                    'name': b.name,
+                    'overlap_score': getattr(b, 'overlap_score', 0),
+                    'foto_count': getattr(b, 'pin_total', b.fotos.count()),
+                }
+                for b in existing_boards_qs
+            ],
+        })
+
+    @action(detail=True, methods=['get'], url_path='ordered-fotos')
+    def ordered_pins(self, request, pk=None):
+        board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to view this board order'}, status=status.HTTP_403_FORBIDDEN)
+        links = FotoBoard.objects.filter(board=board).select_related('pin').order_by('position', 'id')
+        pins_payload = []
+        for link in links:
+            foto = link.pin
+            img_url = ''
+            if foto.image and getattr(pin.image, 'name', ''):
+                img_url = build_versioned_media_url(request, foto.image)
+            pins_payload.append({
+                'id': foto.id,
+                'slug': foto.slug,
+                'title': foto.title,
+                'image': img_url,
+                'position': link.position,
+                'scheduled_publish_at': foto.scheduled_publish_at.isoformat() if foto.scheduled_publish_at else None,
+            })
+        return Response({'fotos': pins_payload})
+
+    @action(detail=True, methods=['post'], url_path='reorder-fotos')
+    def reorder_pins(self, request, pk=None):
+        board = self.get_object()
+        if not self._can_manage_board_content(request.user, board):
+            return Response({'error': 'Not allowed to reorder this board'}, status=status.HTTP_403_FORBIDDEN)
+        raw_ids = request.data.get('foto_ids')
+        if not isinstance(raw_ids, list) or len(raw_ids) == 0:
+            return Response({'error': 'foto_ids must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            foto_ids = [int(x) for x in raw_ids]
+        except (TypeError, ValueError):
+            return Response({'error': 'foto_ids must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+        current_ids = list(
+            FotoBoard.objects.filter(board=board).values_list('foto_id', flat=True).order_by('position', 'id'),
+        )
+        if sorted(foto_ids) != sorted(current_ids):
+            return Response(
+                {'error': 'foto_ids must match fotos on this board exactly'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for idx, pid in enumerate(foto_ids):
+            FotoBoard.objects.filter(board=board, foto_id=pid).update(position=idx)
+        return Response({'status': 'ok'})
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny], url_path='platform-policy')
+    def platform_policy(self, request):
+        return Response({
+            'ads': {'third_party_tracking': False, 'model': 'freemium_subscription'},
+            'creator_credit': {'provenance_chain': False, 'tamper_resistant_hash': False},
+        })
+
+
+class BoardCollaborationInviteViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Invitations entrantes pour collaborer sur un board."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = BoardCollaborationInviteSerializer
+
+    def get_queryset(self):
+        return BoardCollaborationInvite.objects.filter(
+            invitee=self.request.user,
+            status=BoardCollaborationInvite.STATUS_PENDING,
+        ).select_related('board', 'board__user', 'invited_by')
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        invite = (
+            BoardCollaborationInvite.objects.select_related('board', 'board__user', 'board__user__profile')
+            .filter(
+                pk=pk,
+                invitee=request.user,
+                status=BoardCollaborationInvite.STATUS_PENDING,
+            )
+            .first()
+        )
+        if not invite:
+            return Response({'error': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+        owner_profile = invite.board.user.profile
+        if owner_profile.subscription_plan == owner_profile.PLAN_FREE:
+            return Response(
+                {'error': 'Board owner no longer has a collaborative plan'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if owner_profile.subscription_plan == owner_profile.PLAN_PLUS and invite.board.collaborators.count() >= 10:
+            return Response(
+                {'error': 'Collaborators limit reached on this board'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        invite.board.collaborators.add(request.user)
+        invite.status = BoardCollaborationInvite.STATUS_ACCEPTED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=['status', 'responded_at'])
+        Notification.objects.filter(
+            recipient=request.user,
+            notification_type='board_invite',
+        ).filter(metadata__invite_id=invite.id).update(is_read=True)
+        create_localized_notification(
+            recipient=invite.board.user,
+            sender=request.user,
+            notification_type='system',
+            title_fr='Invitation acceptée',
+            message_fr=(
+                f'{request.user.username} a accepté votre invitation sur '
+                f'« {invite.board.name} ».'
+            ),
+            action_url=f'/profile/{request.user.username}',
+            metadata={
+                'kind': 'board_invite_accepted',
+                'board_id': invite.board_id,
+                'invite_id': invite.id,
+                'delivery_mode': 'ws_and_push',
+                'in_app_toast': True,
+            },
+        )
+        return Response({'status': 'accepted', 'board_id': invite.board_id})
+
+    @action(detail=True, methods=['post'])
+    def decline(self, request, pk=None):
+        invite = BoardCollaborationInvite.objects.filter(
+            pk=pk,
+            invitee=request.user,
+            status=BoardCollaborationInvite.STATUS_PENDING,
+        ).first()
+        if not invite:
+            return Response({'error': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+        invite.status = BoardCollaborationInvite.STATUS_DECLINED
+        invite.responded_at = timezone.now()
+        invite.save(update_fields=['status', 'responded_at'])
+        Notification.objects.filter(
+            recipient=request.user,
+            notification_type='board_invite',
+        ).filter(metadata__invite_id=invite.id).update(is_read=True)
+        return Response({'status': 'declined'})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def legal_document_detail(request, slug):
+    if slug not in (LegalDocument.SLUG_PRIVACY, LegalDocument.SLUG_TERMS, LegalDocument.SLUG_CONTACT):
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    lang = request.query_params.get('lang') or 'fr'
+    return Response(build_legal_api_response(slug, lang))
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def faq_overview(request):
+    lang = request.query_params.get('lang') or 'fr'
+    return Response(build_faq_overview_response(lang))

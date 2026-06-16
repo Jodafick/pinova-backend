@@ -1,4 +1,4 @@
-# Checklist production FINALE — PINOVA Prompt 30/30
+# Checklist production FINALE — FOTOCE Prompt 30/30
 
 Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/evidence/` (captures, exports JSON, liens dashboards).
 
@@ -9,7 +9,7 @@ Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/
 - [ ] **Redis cache + channel layer** — `REDIS_URL` ou `PINNOVA_REDIS_URL` défini ; `/api/health/ready/` → Redis OK  
   _Preuve : curl health + `docs/OBSERVABILITY.md`_
 
-- [ ] **Celery worker + beat** — worker actif + beat schedule (`pinova_backend/celery.py`)  
+- [ ] **Celery worker + beat** — worker actif + beat schedule (`fotoce_backend/celery.py`)  
   _Preuve : `/api/health/celery/` 200 ; tâches purge/export/reactivation planifiées_
 
 - [ ] **PostgreSQL** — migrations appliquées (`python manage.py migrate`)  
@@ -23,7 +23,7 @@ Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/
   _Preuve : erreur test contrôlée visible dashboard ; voir `docs/SENTRY.md`_
 
 - [ ] **PostHog actif** — `POSTHOG_API_KEY` backend + clés web/mobile ; dashboard business créé  
-  _Preuve : event `revenue_recorded` webhook ; script `pinova-backend/scripts/setup_posthog_business_dashboard.py`_
+  _Preuve : event `revenue_recorded` webhook ; script `fotoce-backend/scripts/setup_posthog_business_dashboard.py`_
 
 ---
 
@@ -39,10 +39,10 @@ Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/
   _Preuve : `curl -I https://api...` → `Strict-Transport-Security`_
 
 - [ ] **CDN médias signed URLs** — bucket privé ; pas d’accès direct S3 ; `MEDIA_SIGNING_SECRET` unique  
-  _Preuve : pin privé → 403 sans sig ; pentest §1_
+  _Preuve : foto privé → 403 sans sig ; pentest §1_
 
 - [ ] **JWT HttpOnly refresh** — `JWT_AUTH_HTTPONLY=1` en prod  
-  _Preuve : DevTools → cookie `pinova-refresh-token` HttpOnly+Secure_
+  _Preuve : DevTools → cookie `fotoce-refresh-token` HttpOnly+Secure_
 
 ---
 
@@ -65,12 +65,12 @@ Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/
   - Analytics PostHog (17–19)  
   - UX onboarding/rétention (20–23)  
   - Design system + a11y (24–25)  
-  - `@pinova/shared` (26)  
+  - `@fotoce/shared` (26)  
   - Scalabilité search Typesense (27)  
   - Dashboard business (28)  
   - RGPD export/cookies/mineurs (29)  
 
-  _Preuve : tag git + `PINOVA-30-PROMPTS-10-10.pdf`_
+  _Preuve : tag git + `FOTOCE-30-PROMPTS-10-10.pdf`_
 
 ---
 
@@ -88,7 +88,7 @@ Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/
 - [x] **Suppression compte 30 j** — confirmation SUPPRIMER/DELETE → e-mail → export optionnel → purge planifiée  
   _Preuve : `AccountDeletionRequestView` ; e2e suppression dans `gdpr-account.spec.ts` ; `docs/evidence/rgpd/deletion-flow.md`_
 
-- [x] **Textes légaux à jour** — `pins/legal_defaults.py` (privacy + CGU 6 juin 2026) + section revue avocat (placeholder)  
+- [x] **Textes légaux à jour** — `fotos/legal_defaults.py` (privacy + CGU 6 juin 2026) + section revue avocat (placeholder)  
   _Preuve : `docs/evidence/rgpd/legal-defaults-dates.json`_
 
 - [x] **E2E Playwright sans mocks métier** — `e2e/gdpr-account.spec.ts` contre API locale `127.0.0.1:8000`  
@@ -100,9 +100,9 @@ Cocher chaque item **avant** mise en production. Preuves à archiver dans `docs/
 
 ```bash
 # Backend
-cd pinova-backend
+cd fotoce-backend
 python manage.py check --deploy
-python manage.py test pinova_backend.tests_pentest_internal -v 1
+python manage.py test fotoce_backend.tests_pentest_internal -v 1
 curl -s https://<API>/api/health/ready/ | jq .
 
 # Load test (staging)
@@ -111,8 +111,8 @@ k6 run -e BASE_URL=https://<API> -e AUTH_TOKEN=<jwt> \
   scripts/loadtest/home_feed.k6.js
 
 # Pentest automatisé complet
-python manage.py test pinova_backend.tests_pentest_internal \
-  pinova_backend.tests_media_access monetization.tests_fedapay_webhook \
+python manage.py test fotoce_backend.tests_pentest_internal \
+  fotoce_backend.tests_media_access monetization.tests_fedapay_webhook \
   accounts.tests_otp_security accounts.tests_gdpr -v 2
 ```
 

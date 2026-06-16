@@ -5,8 +5,8 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('monetization', '0004_pin_promo_campaigns'),
-        ('pins', '0004_machinetranslationcache'),
+        ('monetization', '0004_foto_promo_campaigns'),
+        ('fotos', '0004_machinetranslationcache'),
     ]
 
     operations = [
@@ -33,7 +33,7 @@ class Migration(migrations.Migration):
                 null=True,
                 on_delete=django.db.models.deletion.CASCADE,
                 related_name='promo_campaigns',
-                to='pins.pin',
+                to='fotos.pin',
             ),
         ),
     ]

@@ -6,7 +6,7 @@ from datetime import timedelta
 from django.db.models import Count
 from django.utils import timezone
 
-from .models import PinBoost
+from .models import FotoBoost
 
 
 def social_proof_variant_for_user(user) -> str:
@@ -19,7 +19,7 @@ def total_boosts_activated(days: int = 7) -> int:
     """Nombre total de boosts activés sur la période (social proof checkout)."""
     since = timezone.now() - timedelta(days=days)
     return (
-        PinBoost.objects.filter(created_at__gte=since)
+        FotoBoost.objects.filter(created_at__gte=since)
         .exclude(status='canceled')
         .count()
     )
@@ -28,7 +28,7 @@ def total_boosts_activated(days: int = 7) -> int:
 def recent_boost_counts_by_package(days: int = 7) -> dict[str, int]:
     since = timezone.now() - timedelta(days=days)
     rows = (
-        PinBoost.objects.filter(created_at__gte=since)
+        FotoBoost.objects.filter(created_at__gte=since)
         .exclude(status='canceled')
         .values('package__slug')
         .annotate(n=Count('id'))

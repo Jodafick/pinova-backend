@@ -3,8 +3,8 @@ from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from pinova_backend.media_serving.cache import build_versioned_media_url
-from .models import ContestResult, ContestSettings, CreatorContestScore, LeaderboardEvent, PinContestScore
+from fotoce_backend.media_serving.cache import build_versioned_media_url
+from .models import ContestResult, ContestSettings, CreatorContestScore, LeaderboardEvent, FotoContestScore
 from .services import get_active_contest_settings
 
 
@@ -29,15 +29,15 @@ class CurrentContestView(APIView):
         )
 
 
-def _serialize_pin_contest_row(request, row, rank_one_based):
+def _serialize_foto_contest_row(request, row, rank_one_based):
     likes = int(row.total_likes or 0)
     views = int(row.total_views or 0)
     shares = int(row.total_shares or 0)
     saves = int(row.total_saves or 0)
     comments = int(row.total_comments or 0)
     return {
-        'pin_id': row.pin_id,
-        'pin_slug': row.pin.slug,
+        'foto_id': row.foto_id,
+        'foto_slug': row.pin.slug,
         'pin_title': row.pin.title,
         'pin_image_url': build_versioned_media_url(request, row.pin.image),
         'creator_id': row.creator_id,
@@ -54,7 +54,7 @@ def _serialize_pin_contest_row(request, row, rank_one_based):
     }
 
 
-class LeaderboardPinsView(APIView):
+class LeaderboardFotosView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
@@ -72,9 +72,9 @@ class LeaderboardPinsView(APIView):
                 requested = contest_cap
             limit = min(max(requested, 1), contest_cap)
         ordered = list(
-            PinContestScore.objects.filter(contest=contest, pin__is_story=False)
+            FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
             .select_related('pin', 'creator')
-            .order_by('-adjusted_score', 'rank', 'pin_id')
+            .order_by('-adjusted_score', 'rank', 'foto_id')
         )
         best_by_creator = {}
         for row in ordered:
@@ -84,11 +84,11 @@ class LeaderboardPinsView(APIView):
 
         selected_full = sorted(
             best_by_creator.values(),
-            key=lambda r: (-float(r.adjusted_score), r.rank or 999_999, r.pin_id),
+            key=lambda r: (-float(r.adjusted_score), r.rank or 999_999, r.foto_id),
         )
 
         results = [
-            _serialize_pin_contest_row(request, row, idx + 1) for idx, row in enumerate(selected_full[:limit])
+            _serialize_foto_contest_row(request, row, idx + 1) for idx, row in enumerate(selected_full[:limit])
         ]
 
         viewer_payload = None
@@ -107,7 +107,7 @@ class LeaderboardPinsView(APIView):
                     'ranked': True,
                     'rank': viewer_rank,
                     'in_displayed_top': viewer_rank <= limit,
-                    'pin': _serialize_pin_contest_row(request, viewer_row, viewer_rank),
+                    'pin': _serialize_foto_contest_row(request, viewer_row, viewer_rank),
                 }
             else:
                 viewer_payload = {'ranked': False, 'rank': None, 'in_displayed_top': False, 'pin': None}

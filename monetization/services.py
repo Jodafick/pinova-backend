@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from accounts.models import Profile
 
-from .models import PartnerCampaign, PinBoost, PinPromoCampaign
+from .models import PartnerCampaign, FotoBoost, FotoPromoCampaign
 from .targeting import user_matches_targeting
 
 FEED_PARTNER_AD_EVERY_N = 8
@@ -48,7 +48,7 @@ def _campaign_matches_user(campaign: PartnerCampaign, user, topic: str) -> bool:
     )
 
 
-def _pin_promo_matches_user(campaign: PinPromoCampaign, user, topic: str) -> bool:
+def _foto_promo_matches_user(campaign: FotoPromoCampaign, user, topic: str) -> bool:
     if not campaign.is_live():
         return False
     if campaign.owner_id == getattr(user, 'id', None):
@@ -82,13 +82,13 @@ def pick_partner_campaigns(user, topic: str = '', limit: int = 2) -> list[Partne
     return candidates[:limit]
 
 
-def _pin_image_url(pin, request) -> str:
-    if not pin.image:
+def _foto_image_url(pin, request) -> str:
+    if not foto.image:
         return ''
     return request.build_absolute_uri(pin.image.url)
 
 
-def pick_pin_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[PinPromoCampaign]:
+def pick_foto_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[FotoPromoCampaign]:
     profile = user.profile if user and user.is_authenticated else None
     if not effective_ad_policy(profile)['partner']:
         return []
@@ -96,14 +96,14 @@ def pick_pin_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[PinP
     from django.db.models import Q
 
     qs = (
-        PinPromoCampaign.objects.filter(status=PinPromoCampaign.STATUS_ACTIVE)
+        FotoPromoCampaign.objects.filter(status=FotoPromoCampaign.STATUS_ACTIVE)
         .filter(Q(starts_at__isnull=True) | Q(starts_at__lte=now))
         .filter(Q(ends_at__isnull=True) | Q(ends_at__gte=now))
         .select_related('pin', 'owner', 'pin__author')
     )
-    candidates: list[PinPromoCampaign] = []
+    candidates: list[FotoPromoCampaign] = []
     for row in qs[:120]:
-        if _pin_promo_matches_user(row, user, topic):
+        if _foto_promo_matches_user(row, user, topic):
             candidates.append(row)
     if not candidates:
         return []
@@ -111,33 +111,33 @@ def pick_pin_promo_campaigns(user, topic: str = '', limit: int = 2) -> list[PinP
     return candidates[:limit]
 
 
-def _campaign_media(campaign: PinPromoCampaign, request) -> tuple[str, str]:
-    media_type = getattr(campaign, 'media_type', None) or PinPromoCampaign.MEDIA_IMAGE
+def _campaign_media(campaign: FotoPromoCampaign, request) -> tuple[str, str]:
+    media_type = getattr(campaign, 'media_type', None) or FotoPromoCampaign.MEDIA_IMAGE
     if campaign.media and request:
         return request.build_absolute_uri(campaign.media.url), media_type
     if campaign.image and request:
-        return request.build_absolute_uri(campaign.image.url), PinPromoCampaign.MEDIA_IMAGE
-    if campaign.pin_id:
-        return _pin_image_url(campaign.pin, request), PinPromoCampaign.MEDIA_IMAGE
-    return '', PinPromoCampaign.MEDIA_IMAGE
+        return request.build_absolute_uri(campaign.image.url), FotoPromoCampaign.MEDIA_IMAGE
+    if campaign.foto_id:
+        return _foto_image_url(campaign.pin, request), FotoPromoCampaign.MEDIA_IMAGE
+    return '', FotoPromoCampaign.MEDIA_IMAGE
 
 
-def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[str, Any]:
+def serialize_foto_promo_campaign(campaign: FotoPromoCampaign, request) -> dict[str, Any]:
     owner_username = campaign.owner.username if campaign.owner_id else ''
-    if campaign.pin_id:
-        pin = campaign.pin
-        title = (campaign.headline or pin.title or '').strip()
+    if campaign.foto_id:
+        foto = campaign.pin
+        title = (campaign.headline or foto.title or '').strip()
         body = (campaign.body or (pin.description or '')[:400]).strip()
-        username = pin.author.username if pin.author_id else owner_username
+        username = foto.author.username if foto.author_id else owner_username
         cta_url = (campaign.cta_url or '').strip()
-        cta_label = (campaign.cta_label or '').strip() or ('Voir le pin' if not cta_url else 'En savoir plus')
+        cta_label = (campaign.cta_label or '').strip() or ('Voir le foto' if not cta_url else 'En savoir plus')
         media_url, media_type = _campaign_media(campaign, request)
         return {
-            'feed_type': 'pin_promo',
-            'id': f'pin-promo-{campaign.id}',
+            'feed_type': 'foto_promo',
+            'id': f'foto-promo-{campaign.id}',
             'campaign_id': campaign.id,
-            'pin_slug': pin.slug,
-            'pin_id': pin.id,
+            'foto_slug': foto.slug,
+            'foto_id': foto.id,
             'title': title,
             'body': body,
             'sponsor_name': f'@{username}' if username else '',
@@ -155,11 +155,11 @@ def serialize_pin_promo_campaign(campaign: PinPromoCampaign, request) -> dict[st
     cta_label = (campaign.cta_label or '').strip() or 'En savoir plus'
     media_url, media_type = _campaign_media(campaign, request)
     return {
-        'feed_type': 'pin_promo',
-        'id': f'pin-promo-{campaign.id}',
+        'feed_type': 'foto_promo',
+        'id': f'foto-promo-{campaign.id}',
         'campaign_id': campaign.id,
-        'pin_slug': '',
-        'pin_id': 0,
+        'foto_slug': '',
+        'foto_id': 0,
         'title': title,
         'body': body,
         'sponsor_name': f'@{owner_username}' if owner_username else '',
@@ -211,7 +211,7 @@ def interleave_partner_ads(
         return pin_rows
 
     partners = pick_partner_campaigns(user, topic=topic, limit=ads_needed)
-    promos = pick_pin_promo_campaigns(user, topic=topic, limit=ads_needed)
+    promos = pick_foto_promo_campaigns(user, topic=topic, limit=ads_needed)
     ad_pool: list[tuple[str, Any]] = []
     for c in partners:
         ad_pool.append(('partner', c))
@@ -236,20 +236,20 @@ def interleave_partner_ads(
                 out.append(serialize_partner_campaign(item, request))
                 PartnerCampaign.objects.filter(pk=item.pk).update(impressions=F('impressions') + 1)
             else:
-                out.append(serialize_pin_promo_campaign(item, request))
-                PinPromoCampaign.objects.filter(pk=item.pk).update(impressions=F('impressions') + 1)
+                out.append(serialize_foto_promo_campaign(item, request))
+                FotoPromoCampaign.objects.filter(pk=item.pk).update(impressions=F('impressions') + 1)
             ad_idx += 1
     return out
 
 
 def pick_contextual_ad(request, *, placement: str = 'pin_detail', topic: str = '') -> dict[str, Any] | None:
-    """Une pub native pour détail pin ou story (alternance partenaire / promo pin)."""
+    """Une pub native pour détail foto ou story (alternance partenaire / promo foto)."""
     user = request.user if getattr(request, 'user', None) and request.user.is_authenticated else None
     profile = user.profile if user else None
     if not effective_ad_policy(profile)['partner']:
         return None
     partners = pick_partner_campaigns(user, topic=topic, limit=1)
-    promos = pick_pin_promo_campaigns(user, topic=topic, limit=1)
+    promos = pick_foto_promo_campaigns(user, topic=topic, limit=1)
     pool: list[tuple[str, Any]] = []
     if partners:
         pool.append(('partner', partners[0]))
@@ -264,25 +264,25 @@ def pick_contextual_ad(request, *, placement: str = 'pin_detail', topic: str = '
         row['placement'] = placement
         PartnerCampaign.objects.filter(pk=item.pk).update(impressions=F('impressions') + 1)
         return row
-    row = serialize_pin_promo_campaign(item, request)
+    row = serialize_foto_promo_campaign(item, request)
     row['placement'] = placement
-    PinPromoCampaign.objects.filter(pk=item.pk).update(impressions=F('impressions') + 1)
+    FotoPromoCampaign.objects.filter(pk=item.pk).update(impressions=F('impressions') + 1)
     return row
 
 
-def active_boosted_pin_ids() -> set[int]:
+def active_boosted_foto_ids() -> set[int]:
     now = timezone.now()
     return set(
-        PinBoost.objects.filter(
-            status=PinBoost.STATUS_ACTIVE,
+        FotoBoost.objects.filter(
+            status=FotoBoost.STATUS_ACTIVE,
             ends_at__gt=now,
-        ).values_list('pin_id', flat=True)
+        ).values_list('foto_id', flat=True)
     )
 
 
-def apply_boost_to_pin_queryset(qs):
-    """Priorise légèrement les pins avec boost actif (discover / reco)."""
-    boosted = active_boosted_pin_ids()
+def apply_boost_to_foto_queryset(qs):
+    """Priorise légèrement les fotos avec boost actif (discover / reco)."""
+    boosted = active_boosted_foto_ids()
     if not boosted:
         return qs
     from django.db.models import Case, When, Value, IntegerField
@@ -296,47 +296,47 @@ def apply_boost_to_pin_queryset(qs):
     ).order_by('-_boost_sort', 'media_sensitive_blur', '-created_at')
 
 
-def activate_pin_promo_campaign(campaign: PinPromoCampaign) -> None:
-    from notifications.campaign_notifications import notify_pin_promo_campaign_started
+def activate_foto_promo_campaign(campaign: FotoPromoCampaign) -> None:
+    from notifications.campaign_notifications import notify_foto_promo_campaign_started
 
-    campaign = PinPromoCampaign.objects.select_related('pin', 'owner', 'package').get(pk=campaign.pk)
+    campaign = FotoPromoCampaign.objects.select_related('pin', 'owner', 'package').get(pk=campaign.pk)
     now = timezone.now()
     duration = campaign.package.duration_hours
-    campaign.status = PinPromoCampaign.STATUS_ACTIVE
+    campaign.status = FotoPromoCampaign.STATUS_ACTIVE
     campaign.starts_at = now
     campaign.ends_at = now + timedelta(hours=duration)
     campaign.save(update_fields=['status', 'starts_at', 'ends_at', 'updated_at'])
-    notify_pin_promo_campaign_started(campaign)
-    if campaign.pin_id:
-        PinPromoCampaign.objects.filter(
-            pin=campaign.pin,
-            status=PinPromoCampaign.STATUS_ACTIVE,
-        ).exclude(pk=campaign.pk).update(status=PinPromoCampaign.STATUS_EXPIRED)
-        boost = PinBoost.objects.create(
-            pin=campaign.pin,
+    notify_foto_promo_campaign_started(campaign)
+    if campaign.foto_id:
+        FotoPromoCampaign.objects.filter(
+            foto=campaign.pin,
+            status=FotoPromoCampaign.STATUS_ACTIVE,
+        ).exclude(pk=campaign.pk).update(status=FotoPromoCampaign.STATUS_EXPIRED)
+        boost = FotoBoost.objects.create(
+            foto=campaign.pin,
             owner=campaign.owner,
             package=campaign.package,
-            status=PinBoost.STATUS_PENDING,
+            status=FotoBoost.STATUS_PENDING,
         )
-        activate_pin_boost(boost, skip_owner_notify=True)
+        activate_foto_boost(boost, skip_owner_notify=True)
 
 
-def activate_pin_boost(boost: PinBoost, *, skip_owner_notify: bool = False) -> None:
-    from notifications.campaign_notifications import notify_pin_boost_started
+def activate_foto_boost(boost: FotoBoost, *, skip_owner_notify: bool = False) -> None:
+    from notifications.campaign_notifications import notify_foto_boost_started
 
-    boost = PinBoost.objects.select_related('pin', 'owner', 'package').get(pk=boost.pk)
+    boost = FotoBoost.objects.select_related('pin', 'owner', 'package').get(pk=boost.pk)
     now = timezone.now()
     duration = boost.package.duration_hours
-    boost.status = PinBoost.STATUS_ACTIVE
+    boost.status = FotoBoost.STATUS_ACTIVE
     boost.starts_at = now
     boost.ends_at = now + timedelta(hours=duration)
     boost.save(update_fields=['status', 'starts_at', 'ends_at', 'updated_at'])
-    PinBoost.objects.filter(
-        pin=boost.pin,
-        status=PinBoost.STATUS_ACTIVE,
-    ).exclude(pk=boost.pk).update(status=PinBoost.STATUS_EXPIRED)
+    FotoBoost.objects.filter(
+        foto=boost.pin,
+        status=FotoBoost.STATUS_ACTIVE,
+    ).exclude(pk=boost.pk).update(status=FotoBoost.STATUS_EXPIRED)
     if not skip_owner_notify:
-        notify_pin_boost_started(boost)
+        notify_foto_boost_started(boost)
 
 
 def network_ad_config_payload(request) -> dict[str, Any]:

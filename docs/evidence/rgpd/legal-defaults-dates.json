@@ -4,5 +4,5 @@
   "terms_fr_updated": "6 juin 2026",
   "terms_en_updated": "6 June 2026",
   "attorney_review_section": "placeholder in PRIVACY_FR / PRIVACY_EN",
-  "file": "pinova-backend/pins/legal_defaults.py"
+  "file": "fotoce-backend/pins/legal_defaults.py"
 }

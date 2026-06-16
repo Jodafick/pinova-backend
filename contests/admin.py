@@ -8,7 +8,7 @@ from .models import (
     CreatorContestScore,
     LeaderboardEvent,
     LeaderboardSnapshot,
-    PinContestScore,
+    FotoContestScore,
 )
 
 
@@ -86,8 +86,8 @@ class ContestInteractionEventAdmin(admin.ModelAdmin):
     raw_id_fields = ('pin', 'actor')
 
 
-@admin.register(PinContestScore)
-class PinContestScoreAdmin(admin.ModelAdmin):
+@admin.register(FotoContestScore)
+class FotoContestScoreAdmin(admin.ModelAdmin):
     list_display = ('contest', 'pin', 'creator', 'adjusted_score', 'rank', 'previous_rank', 'updated_at')
     list_filter = ('contest',)
     search_fields = ('pin__title', 'pin__slug', 'creator__username', 'contest__contest_key')

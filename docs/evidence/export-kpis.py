@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Export KPIs business PINOVA via HogQL PostHog + validation locale.
+Export KPIs business FOTOCE via HogQL PostHog + validation locale.
 
 KPIs : activation 24h, guest conversion, ARPU, boost attach rate, referral conversion.
 
@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib import error, parse, request
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'pinova-backend' / 'scripts'))
+sys.path.insert(0, str(ROOT / 'fotoce-backend' / 'scripts'))
 
 DAYS_DEFAULT = 30
 
@@ -43,7 +43,7 @@ FROM (
 LEFT JOIN (
   SELECT distinct_id, min(timestamp) AS ts
   FROM events
-  WHERE event = 'first_pin_published'
+  WHERE event = 'first_foto_published'
   GROUP BY distinct_id
 ) fp ON reg.distinct_id = fp.distinct_id
 """,
@@ -173,11 +173,11 @@ def simulate_kpis() -> dict:
         },
         'seed_breakdown': {
             'register_completed': 35,
-            'first_pin_24h': 21,
+            'first_foto_24h': 21,
             'revenue_recorded_webhook': 12,
             'total_revenue_xof': 42000,
         },
-        'note': 'Valeurs du seed pinova-backend/scripts/seed_posthog_business_events.py',
+        'note': 'Valeurs du seed fotoce-backend/scripts/seed_posthog_business_events.py',
     }
 
 
@@ -200,7 +200,7 @@ def export_kpis(*, project_id: str, api_key: str, days: int) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Export KPIs business PINOVA')
+    parser = argparse.ArgumentParser(description='Export KPIs business FOTOCE')
     parser.add_argument('--days', type=int, default=DAYS_DEFAULT)
     parser.add_argument('--json', default='docs/evidence/kpi-export-latest.json')
     parser.add_argument('--simulate', action='store_true', help='Seed local sans PostHog API')

@@ -8,8 +8,8 @@ from django.test import TestCase, override_settings
 from rest_framework_simplejwt.tokens import AccessToken
 
 from notifications.realtime import notifications_group_name
-from pinova_backend.websocket.auth import BEARER_SUBPROTOCOL_PREFIX, extract_ws_bearer_token
-from pinova_backend.websocket.ratelimit import allow_ws_connection
+from fotoce_backend.websocket.auth import BEARER_SUBPROTOCOL_PREFIX, extract_ws_bearer_token
+from fotoce_backend.websocket.ratelimit import allow_ws_connection
 
 
 def _jwt_for(user: User) -> str:

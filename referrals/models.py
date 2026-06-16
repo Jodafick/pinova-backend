@@ -341,7 +341,7 @@ class ReferralContestSettings(models.Model):
     )
     min_engagement_actions = models.PositiveIntegerField(
         default=1,
-        help_text='Nombre minimum d’interactions concours pins valides du filleul.',
+        help_text='Nombre minimum d’interactions concours fotos valides du filleul.',
     )
     reward_delay_hours = models.PositiveIntegerField(
         default=1,
@@ -369,7 +369,7 @@ class ReferralContestSettings(models.Model):
     )
     min_pins_published = models.PositiveIntegerField(
         default=0,
-        help_text='Nombre minimum de pins publics publiés par le filleul (0 = désactivé).',
+        help_text='Nombre minimum de fotos publics publiés par le filleul (0 = désactivé).',
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

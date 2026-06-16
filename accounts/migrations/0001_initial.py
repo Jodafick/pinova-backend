@@ -17,15 +17,15 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='PinovaSubscriptionConfig',
+            name='FotoceSubscriptionConfig',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('annual_discount_percent', models.PositiveSmallIntegerField(default=10, help_text='Badge −X\u202f% « annuel » sur la page Premium et valeur API annual_discount_percent. Mettre 0 pour masquer le badge ; les paiements suivent encore les lignes SubscriptionPricing.', validators=[django.core.validators.MinValueValidator(0), django.core.validators.MaxValueValidator(99)])),
                 ('updated_at', models.DateTimeField(auto_now=True)),
             ],
             options={
-                'verbose_name': 'Configuration abonnement Pinova',
-                'verbose_name_plural': 'Configuration abonnement Pinova',
+                'verbose_name': 'Configuration abonnement Fotoce',
+                'verbose_name_plural': 'Configuration abonnement Fotoce',
             },
         ),
         migrations.CreateModel(

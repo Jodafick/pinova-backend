@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vérifie la présence des événements business PINOVA dans PostHog (prod/staging).
+Vérifie la présence des événements business FOTOCE dans PostHog (prod/staging).
 
 Usage:
   export POSTHOG_PERSONAL_API_KEY=phx_...
@@ -31,7 +31,7 @@ REQUIRED_EVENTS: list[str] = [
     'onboarding_step_completed',
     'onboarding_step_skipped',
     'onboarding_completed',
-    'first_pin_published',
+    'first_foto_published',
     'premium_viewed',
     'checkout_started',
     'checkout_returned',
@@ -132,7 +132,7 @@ def verify_events(*, project_id: str, api_key: str, hogql: bool = True) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Vérifie les événements business PostHog PINOVA')
+    parser = argparse.ArgumentParser(description='Vérifie les événements business PostHog FOTOCE')
     parser.add_argument('--json', help='Chemin export JSON evidence')
     parser.add_argument('--no-hogql', action='store_true', help='Skip comptage HogQL 90j')
     args = parser.parse_args()

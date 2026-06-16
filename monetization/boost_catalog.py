@@ -14,7 +14,7 @@ def normalize_package_kind(raw: str | None) -> str | None:
     value = (raw or '').strip().lower()
     if value in {PACKAGE_KIND_BOOST, PACKAGE_KIND_CAMPAIGN, PACKAGE_KIND_BOTH}:
         return value
-    if value in {'boost', 'boosts', 'pin_boost'}:
+    if value in {'boost', 'boosts', 'foto_boost'}:
         return PACKAGE_KIND_BOOST
     if value in {'campaign', 'campaigns', 'promo', 'ads', 'pub'}:
         return PACKAGE_KIND_CAMPAIGN

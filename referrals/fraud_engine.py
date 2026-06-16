@@ -38,7 +38,7 @@ def _client_ip(request) -> str:
 def _device_binding(request) -> str:
     if not request:
         return ''
-    return (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip()[:128]
+    return (request.META.get('HTTP_X_FOTOCE_DEVICE_BINDING') or '').strip()[:128]
 
 
 def _ua_snippet(request) -> str:
@@ -274,11 +274,11 @@ def evaluate_referral_reward_eligibility(attr: ReferralAttribution) -> tuple[boo
 
     min_pins = max(0, int(getattr(rs, 'min_pins_published', getattr(rs, 'referral_min_pins_published', 0)) or 0))
     if min_pins:
-        from pins.models import Pin
+        from fotos.models import Foto
 
-        n_pins = Pin.objects.filter(
+        n_pins = Foto.objects.filter(
             author_id=referee.id,
-            visibility=Pin.VISIBILITY_PUBLIC,
+            visibility=Foto.VISIBILITY_PUBLIC,
             is_story=False,
         ).count()
         if n_pins < min_pins:

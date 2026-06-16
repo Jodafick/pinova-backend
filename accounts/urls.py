@@ -29,12 +29,12 @@ from .views import (
     SubscriptionInvoiceReceiptView,
     SupportTicketView,
 )
-from .jwt_views import get_pinova_refresh_view
+from .jwt_views import get_fotoce_refresh_view
 from .jwt_logout_views import LogoutAllView
 from .auth_ratelimit_views import (
-    PinovaLoginView,
-    PinovaPasswordResetView,
-    PinovaPasswordResetConfirmView,
+    FotoceLoginView,
+    FotocePasswordResetView,
+    FotocePasswordResetConfirmView,
 )
 from .gdpr_views import AccountConsentView, AccountExportDataView, AccountExportDownloadView
 from .reference_views import ReferenceInterestsView
@@ -105,15 +105,15 @@ urlpatterns = [
     ),
     path('support/tickets/', SupportTicketView.as_view(), name='support-tickets'),
     
-    # Auth endpoints (refresh Pinova avant include dj-rest-auth pour priorité URL)
+    # Auth endpoints (refresh Fotoce avant include dj-rest-auth pour priorité URL)
     path('auth/password-rules/', PasswordRulesView.as_view(), name='password-rules'),
-    path('auth/logout-all/', LogoutAllView.as_view(), name='pinova_logout_all'),
-    path('auth/token/refresh/', get_pinova_refresh_view().as_view(), name='pinova_token_refresh'),
-    path('auth/login/', PinovaLoginView.as_view(), name='rest_login'),
-    path('auth/password/reset/', PinovaPasswordResetView.as_view(), name='rest_password_reset'),
+    path('auth/logout-all/', LogoutAllView.as_view(), name='fotoce_logout_all'),
+    path('auth/token/refresh/', get_fotoce_refresh_view().as_view(), name='fotoce_token_refresh'),
+    path('auth/login/', FotoceLoginView.as_view(), name='rest_login'),
+    path('auth/password/reset/', FotocePasswordResetView.as_view(), name='rest_password_reset'),
     path(
         'auth/password/reset/confirm/',
-        PinovaPasswordResetConfirmView.as_view(),
+        FotocePasswordResetConfirmView.as_view(),
         name='rest_password_reset_confirm',
     ),
     path('auth/', include('dj_rest_auth.urls')),

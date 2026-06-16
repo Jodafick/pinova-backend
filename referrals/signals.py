@@ -4,9 +4,9 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from pins.models import Pin
+from fotos.models import Foto
 
-from .services import ensure_user_referral_code, on_first_pin_created, on_referee_first_login
+from .services import ensure_user_referral_code, on_first_foto_created, on_referee_first_login
 
 
 @receiver(post_save, sender=User)
@@ -26,10 +26,10 @@ def referrals_first_login(sender, request, user, **kwargs):
     transaction.on_commit(_run)
 
 
-@receiver(post_save, sender=Pin)
+@receiver(post_save, sender=Foto)
 def referrals_first_pin(sender, instance, created, **kwargs):
     if not created or not instance.author_id:
         return
-    n = Pin.objects.filter(author_id=instance.author_id).count()
+    n = Foto.objects.filter(author_id=instance.author_id).count()
     if n == 1:
-        on_first_pin_created(instance.author)
+        on_first_foto_created(instance.author)

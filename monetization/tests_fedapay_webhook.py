@@ -23,7 +23,7 @@ class FedapayWebhookSecretTests(APITestCase):
                 get_fedapay_webhook_secret()
 
     def test_invalid_secret_rejected(self):
-        user = User.objects.create_user('subuser', 'sub@example.com', 'Pinova2026!')
+        user = User.objects.create_user('subuser', 'sub@example.com', 'Fotoce2026!')
         SubscriptionPayment.objects.create(
             user=user,
             plan=Profile.PLAN_PLUS,
@@ -55,7 +55,7 @@ class FedapayWebhookProcessingTests(APITestCase):
         user = User.objects.create_user(
             f'user_{tx_id}',
             f'{tx_id}@example.com',
-            'Pinova2026!',
+            'Fotoce2026!',
         )
         return SubscriptionPayment.objects.create(
             user=user,

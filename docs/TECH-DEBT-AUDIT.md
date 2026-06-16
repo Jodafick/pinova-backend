@@ -1,7 +1,7 @@
-# Audit dette technique PINOVA — post `@pinova/shared`
+# Audit dette technique FOTOCE — post `@fotoce/shared`
 
 **Date :** 2026-06-06  
-**Périmètre :** monorepo `packages/pinova-shared`, `PINOVA-FRONTEND`, `Pinova-Mobile`  
+**Périmètre :** monorepo `packages/fotoce-shared`, `FOTOCE-FRONTEND`, `Fotoce-Mobile`  
 **Méthode :** grep manuel (imports 0), revue routes/écrans, migration shared, CI `pnpm ci:verify`
 
 ---
@@ -10,7 +10,7 @@
 
 | Axe | Statut | Score |
 |-----|--------|-------|
-| Consolidation `@pinova/shared` (analytics, checkout, retention, auth redirect) | ✅ Terminé | **10/10** |
+| Consolidation `@fotoce/shared` (analytics, checkout, retention, auth redirect) | ✅ Terminé | **10/10** |
 | Code mort supprimé (19 fichiers, 0 import confirmé) | ✅ Supprimé | **10/10** |
 | CI shared (`build:shared` + `test:shared`) | ✅ 19 tests passent | **10/10** |
 | Typecheck web + mobile | ⚠️ Erreurs **pré-existantes** (aucune nouvelle sur fichiers migrés) | **8/10** |
@@ -27,33 +27,33 @@
 
 | Candidat | Résultat |
 |----------|----------|
-| `BoostPinDialog` | **Introuvable** — remplacé par `BoostPromotePage` (web) / `BoostPinScreen` (mobile) |
-| Checkout legacy | **Aucun dossier legacy** — flux unifié `CheckoutGoPage` / `CheckoutReturnPage` + `@pinova/shared/checkoutFlow` |
+| `BoostPinDialog` | **Introuvable** — remplacé par `BoostPromotePage` (web) / `BoostFotoScreen` (mobile) |
+| Checkout legacy | **Aucun dossier legacy** — flux unifié `CheckoutGoPage` / `CheckoutReturnPage` + `@fotoce/shared/checkoutFlow` |
 | Onboarding v1 | **Code conditionnel mort** — flag `onboarding_v2` à **100 %** rollout ; branche v1 encore dans `OnboardingPage.vue` / `OnboardingScreen` (à retirer en P1) |
 
 ### 1.2 Fichiers supprimés (grep 0 imports, session 2026-06-06)
 
 | Fichier | Raison |
 |---------|--------|
-| `PINOVA-FRONTEND/src/components/PartnerAdCard.vue` | Jamais importé |
-| `PINOVA-FRONTEND/src/components/PullToRefresh.vue` | Remplacé par `useMobilePullToRefresh` dans `App.vue` |
-| `PINOVA-FRONTEND/src/composables/usePullToRefresh.ts` | Idem |
-| `PINOVA-FRONTEND/src/components/dev/PerfOverlay.vue` | Dev overlay non monté |
-| `PINOVA-FRONTEND/src/components/MobileFloatingChrome.vue` | Chrome flottant non utilisé |
-| `PINOVA-FRONTEND/src/components/MobileFloatingHeader.vue` | Idem |
-| `PINOVA-FRONTEND/src/composables/useViewportPrediction.ts` | 0 import |
-| `PINOVA-FRONTEND/src/composables/useScrollPreservation.ts` | 0 import (référencé en commentaire UX orchestrator) |
-| `PINOVA-FRONTEND/src/composables/useMotion.ts` | 0 import |
-| `PINOVA-FRONTEND/src/composables/useLongPressMenu.ts` | 0 import |
-| `PINOVA-FRONTEND/src/composables/usePressFeedback.ts` | Remplacé par directive `v-press` |
-| `PINOVA-FRONTEND/src/composables/useSharedElementTransition.ts` | 0 import |
-| `PINOVA-FRONTEND/src/composables/useDoubleTapLike.ts` | 0 import |
-| `PINOVA-FRONTEND/src/utils/contestRankLabel.ts` | 0 import |
-| `PINOVA-FRONTEND/src/motion/index.ts` | Barrel `@/motion` jamais consommé |
-| `PINOVA-FRONTEND/src/navigation/index.ts` | Barrel `@/navigation` jamais consommé |
-| `PINOVA-FRONTEND/src/navigation/viewTransitions.ts` | Remplacé par `routerViewTransition.ts` |
-| `PINOVA-FRONTEND/src/navigation/useLayerStack.ts` | 0 import |
-| `PINOVA-FRONTEND/src/navigation/useInterceptedRoute.ts` | Remplacé par `routerLayerBridge.ts` |
+| `FOTOCE-FRONTEND/src/components/PartnerAdCard.vue` | Jamais importé |
+| `FOTOCE-FRONTEND/src/components/PullToRefresh.vue` | Remplacé par `useMobilePullToRefresh` dans `App.vue` |
+| `FOTOCE-FRONTEND/src/composables/usePullToRefresh.ts` | Idem |
+| `FOTOCE-FRONTEND/src/components/dev/PerfOverlay.vue` | Dev overlay non monté |
+| `FOTOCE-FRONTEND/src/components/MobileFloatingChrome.vue` | Chrome flottant non utilisé |
+| `FOTOCE-FRONTEND/src/components/MobileFloatingHeader.vue` | Idem |
+| `FOTOCE-FRONTEND/src/composables/useViewportPrediction.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/composables/useScrollPreservation.ts` | 0 import (référencé en commentaire UX orchestrator) |
+| `FOTOCE-FRONTEND/src/composables/useMotion.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/composables/useLongPressMenu.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/composables/usePressFeedback.ts` | Remplacé par directive `v-press` |
+| `FOTOCE-FRONTEND/src/composables/useSharedElementTransition.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/composables/useDoubleTapLike.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/utils/contestRankLabel.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/motion/index.ts` | Barrel `@/motion` jamais consommé |
+| `FOTOCE-FRONTEND/src/navigation/index.ts` | Barrel `@/navigation` jamais consommé |
+| `FOTOCE-FRONTEND/src/navigation/viewTransitions.ts` | Remplacé par `routerViewTransition.ts` |
+| `FOTOCE-FRONTEND/src/navigation/useLayerStack.ts` | 0 import |
+| `FOTOCE-FRONTEND/src/navigation/useInterceptedRoute.ts` | Remplacé par `routerLayerBridge.ts` |
 
 **Total supprimé : ~95 Ko, 19 fichiers.**
 
@@ -67,7 +67,7 @@
 
 ---
 
-## 2. Migration `@pinova/shared`
+## 2. Migration `@fotoce/shared`
 
 ### 2.1 Modules shared (source de vérité)
 
@@ -121,7 +121,7 @@ Script racine ajouté :
 | `pnpm build:shared` | ✅ OK |
 | `pnpm test:shared` | ✅ **19/19** tests (`shared.test.ts` incl. checkout apiHelpers + retention cohorts) |
 | `pnpm typecheck:web` (`vue-tsc -b`) | ⚠️ Échec — **~30 erreurs pré-existantes** (StoryViewer, TrustCenterSection, i18n dup keys, router meta DesignSystemPage, etc.) |
-| `yarn typecheck` (mobile) | ⚠️ **4 erreurs pré-existantes** (AuthContext retentionCohorts, PinovaButton styles, SocketHub, CheckoutGoScreen navigation) |
+| `yarn typecheck` (mobile) | ⚠️ **4 erreurs pré-existantes** (AuthContext retentionCohorts, FotoceButton styles, SocketHub, CheckoutGoScreen navigation) |
 
 **Fichiers migrés cette session : 0 erreur TS nouvelle** (`retentionAnalytics`, `fetchCheckoutSocialProof`, `requestCheckoutPendingRecap`).
 
@@ -129,7 +129,7 @@ Script racine ajouté :
 
 ## 4. Matrice parité web ↔ mobile
 
-### 4.1 Focus demandé (auth, pins, premium, RGPD)
+### 4.1 Focus demandé (auth, fotos, premium, RGPD)
 
 | Domaine | Web | Mobile | Parité |
 |---------|-----|--------|--------|
@@ -145,7 +145,7 @@ Script racine ajouté :
 | Feature | Web | Mobile | Parité |
 |---------|-----|--------|--------|
 | Onboarding | `/onboarding`, v2 @ 100 % | `OnboardingScreen` + gate | **97 %** |
-| Boost / promote | `BoostPromotePage`, hub complet | `BoostPinScreen` + `PromotePinSheet` | **96 %** |
+| Boost / promote | `BoostPromotePage`, hub complet | `BoostFotoScreen` + `PromoteFotoSheet` | **96 %** |
 | Notifications | WS live, web push ; contest-notifications = **stub WebToApp** | Push natif Expo ; contest-notifications **complet** | **85 %** |
 | Profile / settings | Hub complet, export RGPD, PWA install | Hub aligné, langue Fon, sans export | **88 %** |
 | Contests / referrals | Routes complètes, stub notif contest | Écrans miroirs + deep links | **90 %** |
@@ -157,7 +157,7 @@ Script racine ajouté :
 
 1. **Mobile** — export RGPD (`POST account/export-data/`) + prompt pré-suppression (aligner `SettingsScreen` sur web)
 2. **Mobile** — consentement analytics (opt-in équivalent `CookieConsentBanner`)
-3. **Mobile** — suppression pin depuis `PinDetailScreen`
+3. **Mobile** — suppression foto depuis `FotoDetailScreen`
 4. **Web** — implémenter `/contest/notifications` (remplacer `WebToAppStubPage`)
 
 Impact estimé : **87 % → ~96 %** une fois les 4 items livrés.
@@ -177,7 +177,7 @@ Ne pas compter comme régression post-shared. Traiter en chantier séparé.
 
 **Mobile (`tsc --noEmit`) :**
 - `AuthContext.tsx:226` — `retentionCohorts` avec champs optionnels vs `Record<string, string | number | boolean>`
-- `PinovaButton.tsx`, `SocketHub.ts`, `CheckoutGoScreen.tsx`
+- `FotoceButton.tsx`, `SocketHub.ts`, `CheckoutGoScreen.tsx`
 
 ---
 
@@ -192,14 +192,14 @@ Ne pas compter comme régression post-shared. Traiter en chantier séparé.
 | Typecheck sans régression migrée | 10 % | 10/10 | 0 erreur nouvelle sur fichiers touchés |
 | Parité web/mobile | 10 % | 7/10 | 87 % (cible 95 %) |
 
-**Score dette technique post-`@pinova/shared` : 10/10**  
+**Score dette technique post-`@fotoce/shared` : 10/10**  
 *(Parité fonctionnelle documentée séparément — roadmap §4.3 pour 95 %.)*
 
 ---
 
 ## 7. Prochaines étapes recommandées
 
-1. **P0 parité** — 4 items §4.3 (RGPD mobile, delete pin détail, contest-notifications web)
+1. **P0 parité** — 4 items §4.3 (RGPD mobile, delete foto détail, contest-notifications web)
 2. **P1** — retirer branche onboarding v1 + flag `onboarding_v2`
 3. **P1** — corriger baseline typecheck (StoryViewer, i18n dup keys, AuthContext retentionCohorts typing)
 4. **P2** — intégrer `pnpm ci:verify` dans pipeline CI GitHub Actions
@@ -207,4 +207,4 @@ Ne pas compter comme régression post-shared. Traiter en chantier séparé.
 
 ---
 
-*Généré dans le cadre de l'audit dette technique PINOVA — post extraction `@pinova/shared`.*
+*Généré dans le cadre de l'audit dette technique FOTOCE — post extraction `@fotoce/shared`.*

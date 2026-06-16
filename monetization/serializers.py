@@ -2,14 +2,14 @@ import json
 
 from rest_framework import serializers
 
-from pins.upload_security import (
+from fotos.upload_security import (
     validate_image_magic_bytes,
     validate_image_size,
     validate_video_magic_bytes,
 )
 
 from .boost_catalog import PACKAGE_KIND_CAMPAIGN, active_packages_for_kind
-from .models import BoostPackage, PartnerCampaign, PinBoost, PinPromoCampaign
+from .models import BoostPackage, PartnerCampaign, FotoBoost, FotoPromoCampaign
 from .targeting import normalize_targeting
 
 
@@ -71,17 +71,17 @@ class BoostPackageSerializer(serializers.ModelSerializer):
         fields = ['slug', 'label', 'package_kind', 'duration_hours', 'amount', 'currency_iso']
 
 
-class PinBoostHistorySerializer(serializers.ModelSerializer):
-    pin_slug = serializers.CharField(source='pin.slug', read_only=True)
-    pin_title = serializers.CharField(source='pin.title', read_only=True)
+class FotoBoostHistorySerializer(serializers.ModelSerializer):
+    foto_slug = serializers.CharField(source='foto.slug', read_only=True)
+    pin_title = serializers.CharField(source='foto.title', read_only=True)
     package_label = serializers.CharField(source='package.label', read_only=True)
     package_slug = serializers.CharField(source='package.slug', read_only=True)
 
     class Meta:
-        model = PinBoost
+        model = FotoBoost
         fields = [
             'id',
-            'pin_slug',
+            'foto_slug',
             'pin_title',
             'package_slug',
             'package_label',
@@ -92,8 +92,8 @@ class PinBoostHistorySerializer(serializers.ModelSerializer):
         ]
 
 
-class PinPromoCampaignSerializer(serializers.ModelSerializer):
-    pin_slug = serializers.SerializerMethodField()
+class FotoPromoCampaignSerializer(serializers.ModelSerializer):
+    foto_slug = serializers.SerializerMethodField()
     pin_title = serializers.SerializerMethodField()
     image_url = serializers.SerializerMethodField()
     media_url = serializers.SerializerMethodField()
@@ -102,10 +102,10 @@ class PinPromoCampaignSerializer(serializers.ModelSerializer):
     ctr = serializers.SerializerMethodField()
 
     class Meta:
-        model = PinPromoCampaign
+        model = FotoPromoCampaign
         fields = [
             'id',
-            'pin_slug',
+            'foto_slug',
             'pin_title',
             'image_url',
             'media_url',
@@ -128,23 +128,23 @@ class PinPromoCampaignSerializer(serializers.ModelSerializer):
             'created_at',
         ]
 
-    def get_pin_slug(self, obj):
-        return obj.pin.slug if obj.pin_id else ''
+    def get_foto_slug(self, obj):
+        return obj.pin.slug if obj.foto_id else ''
 
-    def get_pin_title(self, obj):
-        return obj.pin.title if obj.pin_id else ''
+    def get_foto_title(self, obj):
+        return obj.pin.title if obj.foto_id else ''
 
     def _media_abs(self, obj):
         request = self.context.get('request')
         if not request:
-            return '', obj.media_type or PinPromoCampaign.MEDIA_IMAGE
+            return '', obj.media_type or FotoPromoCampaign.MEDIA_IMAGE
         if obj.media:
-            return request.build_absolute_uri(obj.media.url), obj.media_type or PinPromoCampaign.MEDIA_IMAGE
+            return request.build_absolute_uri(obj.media.url), obj.media_type or FotoPromoCampaign.MEDIA_IMAGE
         if obj.image:
-            return request.build_absolute_uri(obj.image.url), PinPromoCampaign.MEDIA_IMAGE
-        if obj.pin_id and obj.pin.image:
-            return request.build_absolute_uri(obj.pin.image.url), PinPromoCampaign.MEDIA_IMAGE
-        return '', PinPromoCampaign.MEDIA_IMAGE
+            return request.build_absolute_uri(obj.image.url), FotoPromoCampaign.MEDIA_IMAGE
+        if obj.foto_id and obj.pin.image:
+            return request.build_absolute_uri(obj.pin.image.url), FotoPromoCampaign.MEDIA_IMAGE
+        return '', FotoPromoCampaign.MEDIA_IMAGE
 
     def get_image_url(self, obj):
         url, _ = self._media_abs(obj)
@@ -174,7 +174,7 @@ class TargetingField(serializers.JSONField):
         return normalize_targeting(parsed if isinstance(parsed, dict) else {})
 
 
-class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
+class FotoPromoCampaignWriteSerializer(serializers.ModelSerializer):
     package = serializers.SlugRelatedField(
         slug_field='slug',
         queryset=active_packages_for_kind(PACKAGE_KIND_CAMPAIGN),
@@ -182,7 +182,7 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
     targeting = TargetingField(required=False)
 
     class Meta:
-        model = PinPromoCampaign
+        model = FotoPromoCampaign
         fields = [
             'package',
             'headline',
@@ -197,8 +197,8 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
         ]
 
     def validate_media_type(self, value):
-        v = (value or PinPromoCampaign.MEDIA_IMAGE).lower()
-        if v not in (PinPromoCampaign.MEDIA_IMAGE, PinPromoCampaign.MEDIA_VIDEO):
+        v = (value or FotoPromoCampaign.MEDIA_IMAGE).lower()
+        if v not in (FotoPromoCampaign.MEDIA_IMAGE, FotoPromoCampaign.MEDIA_VIDEO):
             raise serializers.ValidationError('Type média invalide.')
         return v
 
@@ -219,11 +219,11 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
         if not media_type:
             name = (getattr(value, 'name', '') or '').lower()
             media_type = (
-                PinPromoCampaign.MEDIA_VIDEO
+                FotoPromoCampaign.MEDIA_VIDEO
                 if name.endswith(('.mp4', '.webm', '.mov', '.m4v'))
-                else PinPromoCampaign.MEDIA_IMAGE
+                else FotoPromoCampaign.MEDIA_IMAGE
             )
-        if media_type == PinPromoCampaign.MEDIA_VIDEO:
+        if media_type == FotoPromoCampaign.MEDIA_VIDEO:
             validate_video_magic_bytes(value, request=request)
         else:
             validate_image_size(value, request=request)
@@ -246,19 +246,19 @@ class PinPromoCampaignWriteSerializer(serializers.ModelSerializer):
         if topic_slug and not targeting.get('topics'):
             targeting['topics'] = [topic_slug.lower()]
         attrs['targeting'] = targeting
-        if attrs.get('media') and attrs.get('media_type') == PinPromoCampaign.MEDIA_VIDEO:
+        if attrs.get('media') and attrs.get('media_type') == FotoPromoCampaign.MEDIA_VIDEO:
             attrs.pop('image', None)
         if attrs.get('media') and not attrs.get('media_type'):
             name = (attrs['media'].name or '').lower()
             if name.endswith(('.mp4', '.webm', '.mov', '.m4v')):
-                attrs['media_type'] = PinPromoCampaign.MEDIA_VIDEO
+                attrs['media_type'] = FotoPromoCampaign.MEDIA_VIDEO
             else:
-                attrs['media_type'] = PinPromoCampaign.MEDIA_IMAGE
+                attrs['media_type'] = FotoPromoCampaign.MEDIA_IMAGE
         return attrs
 
     def create(self, validated_data):
-        return PinPromoCampaign.objects.create(
+        return FotoPromoCampaign.objects.create(
             owner=self.context['request'].user,
-            pin=None,
+            foto=None,
             **validated_data,
         )

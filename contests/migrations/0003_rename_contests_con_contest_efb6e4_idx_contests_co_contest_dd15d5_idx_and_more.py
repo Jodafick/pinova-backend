@@ -18,6 +18,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='contestsettings',
             name='referral_min_engagement_actions',
-            field=models.PositiveIntegerField(default=1, help_text="Nombre minimum d'interactions concours pins valides (filleul) pour débloquer la récompense."),
+            field=models.PositiveIntegerField(default=1, help_text="Nombre minimum d'interactions concours fotos valides (filleul) pour débloquer la récompense."),
         ),
     ]

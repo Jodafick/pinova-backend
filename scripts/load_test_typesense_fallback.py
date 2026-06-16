@@ -9,7 +9,7 @@ Pour chaos Typesense réel : couper TYPESENSE_HOST pendant le test k6 search.k6.
 et vérifier p95 < 500 ms + error rate < 0.1 % (fallback service.py).
 
 Usage :
-  python pinova-backend/scripts/load_test_typesense_fallback.py --rps 50 --duration 30
+  python fotoce-backend/scripts/load_test_typesense_fallback.py --rps 50 --duration 30
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def run_load(base_url: str, query: str, rps: int, duration: int, token: str, tim
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Load test search + fallback Postgres')
-    parser.add_argument('--url', default='http://127.0.0.1:8000/api/pins/header-search/')
+    parser.add_argument('--url', default='http://127.0.0.1:8000/api/fotos/header-search/')
     parser.add_argument('--q', default='tattoo')
     parser.add_argument('--rps', type=int, default=50)
     parser.add_argument('--duration', type=int, default=30)

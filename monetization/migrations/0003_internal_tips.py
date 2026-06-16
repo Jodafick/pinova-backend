@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('pins', '0004_machinetranslationcache'),
+        ('fotos', '0004_machinetranslationcache'),
         ('monetization', '0002_seed_boost_packages'),
     ]
 
@@ -16,7 +16,7 @@ class Migration(migrations.Migration):
             name='TipPlatformConfig',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('commission_percent', models.PositiveSmallIntegerField(default=10, help_text='Part prélevée par Pinova sur chaque pourboire (ex. 10 = 10 %).')),
+                ('commission_percent', models.PositiveSmallIntegerField(default=10, help_text='Part prélevée par Fotoce sur chaque pourboire (ex. 10 = 10 %).')),
                 ('min_tip_amount', models.PositiveIntegerField(default=500)),
                 ('max_tip_amount', models.PositiveIntegerField(default=500000)),
                 ('min_withdrawal_amount', models.PositiveIntegerField(default=5000)),
@@ -80,7 +80,7 @@ class Migration(migrations.Migration):
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('donor', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='tips_sent', to=settings.AUTH_USER_MODEL)),
-                ('pin', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tips', to='pins.pin')),
+                ('pin', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tips', to='fotos.pin')),
                 ('recipient', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='tips_received', to=settings.AUTH_USER_MODEL)),
             ],
             options={

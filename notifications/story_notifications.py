@@ -3,14 +3,14 @@ from __future__ import annotations
 from django.contrib.auth.models import User
 
 from notifications.notification_i18n import create_localized_notification
-from pins.models import Pin
+from fotos.models import Foto
 
 
-def notify_followers_new_story(*, author: User, pin: Pin, limit: int = 400) -> None:
+def notify_followers_new_story(*, author: User, foto: Foto, limit: int = 400) -> None:
     """
     Alerte les abonnés qu'une nouvelle story éphémère est disponible (best-effort, plafonné).
     """
-    if not pin.is_story or not author.pk:
+    if not foto.is_story or not author.pk:
         return
     try:
         author_profile = author.profile
@@ -28,8 +28,8 @@ def notify_followers_new_story(*, author: User, pin: Pin, limit: int = 400) -> N
             notification_type='system',
             title_fr='Nouvelle story',
             message_fr=f'{author_name} a publié une story.',
-            pin_id=pin.id,
-            pin_slug=pin.slug,
+            foto_id=pin.id,
+            foto_slug=pin.slug,
             metadata={
                 'kind': 'story_new_from_following',
                 'is_story': True,

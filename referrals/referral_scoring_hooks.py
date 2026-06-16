@@ -1,5 +1,5 @@
 """
-Pont concours pins → scoring referral (filleul actif sur le contenu).
+Pont concours fotos → scoring referral (filleul actif sur le contenu).
 Appelé depuis contests.services.track_contest_interaction après une interaction valide.
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 def on_contest_interaction_for_referral(
     *,
-    pin,
+    foto,
     actor,
     contest_settings,
     interaction_valid: bool,
@@ -19,7 +19,7 @@ def on_contest_interaction_for_referral(
         return
     if not getattr(actor, 'id', None):
         return
-    if actor.id == pin.author_id:
+    if actor.id == foto.author_id:
         return
     from referrals.services import award_engagement_from_referee_to_referrer
 
@@ -27,5 +27,5 @@ def on_contest_interaction_for_referral(
         referee=actor,
         contest=contest_settings,
         trust_score=float(trust_score or 1.0),
-        pin_id=getattr(pin, 'id', None),
+        foto_id=getattr(pin, 'id', None),
     )

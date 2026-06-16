@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from pinova_backend.middleware.unread_notifications import (
+from fotoce_backend.middleware.unread_notifications import (
     invalidate_unread_notifications_header_cache,
 )
 

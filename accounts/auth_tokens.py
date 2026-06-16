@@ -28,7 +28,7 @@ def _is_mobile_checkout_request(request) -> bool:
         return True
     hdr = ''
     try:
-        hdr = str(request.META.get('HTTP_X_PINOVA_CLIENT', '')).strip().lower()
+        hdr = str(request.META.get('HTTP_X_FOTOCE_CLIENT', '')).strip().lower()
     except Exception:
         pass
     return hdr in ('mobile', 'app', 'ios', 'android')
@@ -37,7 +37,7 @@ def _is_mobile_checkout_request(request) -> bool:
 def checkout_return_url(flow: str, *, request=None) -> str:
     """URL de retour FedaPay → page succès (web ou deep link mobile)."""
     if _is_mobile_checkout_request(request):
-        scheme = str(getattr(settings, 'MOBILE_APP_SCHEME', 'pinova')).strip().rstrip(':') or 'pinova'
+        scheme = str(getattr(settings, 'MOBILE_APP_SCHEME', 'fotoce')).strip().rstrip(':') or 'fotoce'
         return f'{scheme}://checkout/return?flow={flow}'
     base = str(settings.FRONTEND_URL).rstrip('/')
     return f'{base}/checkout/return?flow={flow}'

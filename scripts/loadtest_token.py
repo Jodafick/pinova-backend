@@ -6,7 +6,7 @@ import sys
 
 import django
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pinova_backend.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fotoce_backend.settings')
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 django.setup()
 

@@ -19,17 +19,17 @@ E2E_PASSWORD = PASSWORD_VALID_EXAMPLE
 
 E2E_USERS = (
     {
-        'email': 'gdpr.export@pinova.test',
+        'email': 'gdpr.export@fotoce.test',
         'username': 'gdpr_export',
         'birth_date': date(1995, 3, 15),
     },
     {
-        'email': 'gdpr.delete@pinova.test',
+        'email': 'gdpr.delete@fotoce.test',
         'username': 'gdpr_delete',
         'birth_date': date(1992, 7, 20),
     },
     {
-        'email': 'gdpr.teen@pinova.test',
+        'email': 'gdpr.teen@fotoce.test',
         'username': 'gdpr_teen',
         'birth_date': date.today().replace(year=date.today().year - 14),
     },
@@ -47,7 +47,7 @@ def _ensure_verified_email(user: User) -> None:
 
 
 class Command(BaseCommand):
-    help = 'Crée ou met à jour les comptes e2e RGPD (Playwright, mot de passe Pinova2026).'
+    help = 'Crée ou met à jour les comptes e2e RGPD (Playwright, mot de passe Fotoce2026).'
 
     def handle(self, *args, **options):
         now = timezone.now()

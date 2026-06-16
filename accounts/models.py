@@ -10,7 +10,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.validators import MaxValueValidator, MinValueValidator
 
-from pins.storage_media import unlink_named
+from fotos.storage_media import unlink_named
 
 
 class Profile(models.Model):
@@ -44,7 +44,7 @@ class Profile(models.Model):
     notifications_followers = models.BooleanField(default=True)
     notifications_saves = models.BooleanField(default=True)
     notifications_recommendations = models.BooleanField(default=False)
-    # Pro : digest hebdomadaire e-mail / push (« pins les plus vus »).
+    # Pro : digest hebdomadaire e-mail / push (« fotos les plus vus »).
     notifications_digest_creator_weekly = models.BooleanField(default=True)
     subscription_cancel_at_period_end = models.BooleanField(default=False)
     subscription_scheduled_plan = models.CharField(
@@ -71,7 +71,7 @@ class Profile(models.Model):
     )
     # Plus/Pro uniquement en pratique : si False, médias signalés « sensibles » non floutés par défaut pour le spectateur majeur connecté.
     sensitive_media_blur_by_default = models.BooleanField(default=True)
-    # Majeur vérifié : masque les pins d’autrui marquées sensibles (flux, tableau, détail renvoie 404).
+    # Majeur vérifié : masque les fotos d’autrui marquées sensibles (flux, tableau, détail renvoie 404).
     hide_sensitive_pins = models.BooleanField(default=False)
     ad_ads_enabled = models.BooleanField(default=True)
     partner_ads_enabled = models.BooleanField(default=True)
@@ -149,7 +149,7 @@ class Profile(models.Model):
 
     # --- Onboarding ---
     onboarding_completed_at = models.DateTimeField(null=True, blank=True)
-    # Tutoriel 1er pin, jalons créateur, célébrations vues (sync multi-appareils).
+    # Tutoriel 1er foto, jalons créateur, célébrations vues (sync multi-appareils).
     activation_funnel_json = models.JSONField(default=dict, blank=True)
 
     @property
@@ -286,7 +286,7 @@ class SubscriptionPricing(models.Model):
         return f"{self.plan}:{self.billing_cycle}:{self.seat_bundle}:{self.amount} {self.currency_iso}"
 
 
-class PinovaSubscriptionConfig(models.Model):
+class FotoceSubscriptionConfig(models.Model):
     """Singleton (pk fixe à 1) : paramètres d’affichage / marketing pour les abonnements."""
 
     annual_discount_percent = models.PositiveSmallIntegerField(
@@ -300,8 +300,8 @@ class PinovaSubscriptionConfig(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = 'Configuration abonnement Pinova'
-        verbose_name_plural = 'Configuration abonnement Pinova'
+        verbose_name = 'Configuration abonnement Fotoce'
+        verbose_name_plural = 'Configuration abonnement Fotoce'
 
     def save(self, *args, **kwargs):
         self.pk = 1
@@ -313,7 +313,7 @@ class PinovaSubscriptionConfig(models.Model):
         return obj
 
     def __str__(self):
-        return 'Configuration abonnement Pinova'
+        return 'Configuration abonnement Fotoce'
 
 
 class SubscriptionPayment(models.Model):

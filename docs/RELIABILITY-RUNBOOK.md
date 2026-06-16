@@ -1,7 +1,7 @@
-# Runbook fiabilité PINOVA
+# Runbook fiabilité FOTOCE
 
 **Date** : 6 juin 2026  
-**Tests** : `python manage.py test pinova_backend.tests_failure_modes -v 2`  
+**Tests** : `python manage.py test fotoce_backend.tests_failure_modes -v 2`  
 **Probes** : `/api/health/` (liveness), `/api/health/ready/` (readiness)
 
 ---
@@ -54,7 +54,7 @@ readinessProbe:
 | Composant | Panne Redis | Stratégie |
 |-----------|-------------|-----------|
 | Health `/ready/` | `ok=false` | Retirer trafic (503) |
-| Feed cache (`pins/feed_cache.py`) | Miss systématique | DB seule, latence ↑ |
+| Feed cache (`fotos/feed_cache.py`) | Miss systématique | DB seule, latence ↑ |
 | Throttle DRF / django-ratelimit | Compteurs locaux ou erreur | LocMem si pas de `REDIS_URL` au boot |
 | OTP lockout/resend (`accounts/otp_security.py`) | **Fail-open** | Pas de lockout ; cooldown ignoré |
 | WS conn limit (`websocket/ratelimit.py`) | **Fail-open** | Connexions autorisées |
@@ -79,7 +79,7 @@ readinessProbe:
 | Boost / tip / promo checkout | Message dans `error` | **502** |
 | Health `checks.fedapay` | `detail=circuit_open` | Non bloquant readiness |
 
-**Logs** : `pinova.resilience` (JSON structuré, champ `outcome`).
+**Logs** : `fotoce.resilience` (JSON structuré, champ `outcome`).
 
 **Action** : attendre recovery ou `FEDAPAY_CIRCUIT.record_success()` après correction ; vérifier statut sandbox/live cohérent avec `FEDAPAY_ENV`.
 
@@ -104,15 +104,15 @@ Variables : `RESEND_API_KEY`, `EMAIL_HOST*`, `DEFAULT_FROM_EMAIL`.
 Lancer en prod :
 
 ```bash
-celery -A pinova_backend worker -l info --concurrency=4
-celery -A pinova_backend beat -l info
+celery -A fotoce_backend worker -l info --concurrency=4
+celery -A fotoce_backend beat -l info
 ```
 
 | Clé beat | Tâche | Schedule (UTC) | Fallback manage.py |
 |----------|-------|----------------|-------------------|
-| `pins-send-weekly-pro-digest` | `pins.send_weekly_pro_digest` | Lun 09:00 | — |
-| `pins-purge-ephemeral-stories` | `pins.purge_expired_ephemeral_stories` | `:15` chaque heure | `purge_expired_ephemeral_stories` |
-| `pins-publish-scheduled` | `pins.publish_scheduled_pins` | `*/5 min` | `publish_scheduled_pins` |
+| `fotos-send-weekly-pro-digest` | `fotos.send_weekly_pro_digest` | Lun 09:00 | — |
+| `fotos-purge-ephemeral-stories` | `fotos.purge_expired_ephemeral_stories` | `:15` chaque heure | `purge_expired_ephemeral_stories` |
+| `fotos-publish-scheduled` | `fotos.publish_scheduled_fotos` | `*/5 min` | `publish_scheduled_fotos` |
 | `accounts-enforce-subscriptions` | `accounts.enforce_subscriptions_due` | `*/10 min` | — |
 | `accounts-purge-deletions` | `accounts.purge_scheduled_account_deletions` | 03:00 daily | — |
 | `referrals-reward-scan` | `referrals.referral_reward_scan` | `*/15 min` | — |
@@ -120,11 +120,11 @@ celery -A pinova_backend beat -l info
 | `accounts-discovery-streak-reminder` | `accounts.discovery_streak_reminder` | 18:00 daily | — |
 | `accounts-reactivation-j7-email` | `accounts.reactivation_j7_email` | 10:00 daily | `send_reactivation_j7_emails` |
 | `accounts-reactivation-j30-email` | `accounts.reactivation_j30_email` | 10:30 daily | `send_reactivation_j30_emails` |
-| `pins-reindex-typesense-nightly` | `pins.reindex_typesense` | 02:30 daily | — |
+| `fotos-reindex-typesense-nightly` | `fotos.reindex_typesense` | 02:30 daily | — |
 
 **Tâche async critique (hors beat)** : `accounts.export_user_data` — export RGPD.
 
-**Retry policy** (`PinovaTask`) : 3 tentatives, backoff exponentiel, dead-letter log `celery dead letter`.
+**Retry policy** (`FotoceTask`) : 3 tentatives, backoff exponentiel, dead-letter log `celery dead letter`.
 
 **Vérification** : `GET /api/health/celery/` → champ `beat_schedule` (11 clés).
 
@@ -174,7 +174,7 @@ Configurer dans Sentry → Alerts (prod, env `production`).
 - [ ] Probes `/api/health/` + `/api/health/ready/` configurées
 - [ ] `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` prod (pas de wildcard credentials)
 - [ ] Beat + worker déployés (pas seulement web)
-- [ ] Tests panne CI : `pinova_backend.tests_failure_modes`
+- [ ] Tests panne CI : `fotoce_backend.tests_failure_modes`
 - [ ] Runbook partagé on-call (lien vers ce fichier)
 - [ ] Post-mortem template : dépendance, blast radius, MTTR, action préventive
 
@@ -188,10 +188,10 @@ curl -sS https://api.example.com/api/health/ | jq '.status, .checks.redis, .chec
 curl -sS https://api.example.com/api/health/ready/ | jq '.status'
 
 # Celery inspect
-celery -A pinova_backend inspect ping
-celery -A pinova_backend inspect active_queues
+celery -A fotoce_backend inspect ping
+celery -A fotoce_backend inspect active_queues
 
 # Tests panne locaux
-cd pinova-backend
-python manage.py test pinova_backend.tests_failure_modes pinova_backend.tests.tests_health -v 2
+cd fotoce-backend
+python manage.py test fotoce_backend.tests_failure_modes fotoce_backend.tests.tests_health -v 2
 ```

@@ -66,7 +66,7 @@ class ExportApiTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-    @patch('accounts.gdpr_views.send_pinova_mail')
+    @patch('accounts.gdpr_views.send_fotoce_mail')
     def test_export_data_creates_job_and_zip(self, mock_mail):
         res = self.client.post('/api/account/export-data/', {}, format='json')
         self.assertEqual(res.status_code, 202)
@@ -77,12 +77,12 @@ class ExportApiTests(TestCase):
 
         bundle = build_user_export_bundle(self.user)
         self.assertIn('profile', bundle)
-        self.assertIn('pins', bundle)
+        self.assertIn('fotos', bundle)
 
         dl = self.client.get(f'/api/account/export-download/{job.download_token}/')
         self.assertEqual(dl.status_code, 200)
         zf = ZipFile(BytesIO(b''.join(dl.streaming_content)))
-        self.assertIn('pinova-export.json', zf.namelist())
+        self.assertIn('fotoce-export.json', zf.namelist())
 
 
 class AccountDeletionGdprTests(TestCase):
@@ -91,7 +91,7 @@ class AccountDeletionGdprTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-    @patch('accounts.gdpr_views.send_pinova_mail')
+    @patch('accounts.gdpr_views.send_fotoce_mail')
     @patch('accounts.gdpr_views._queue_export')
     def test_deletion_sends_email_and_optional_export(self, mock_queue, mock_mail):
         mock_queue.return_value = DataExportJob.objects.create(
@@ -110,7 +110,7 @@ class AccountDeletionGdprTests(TestCase):
         mock_queue.assert_called_once()
         self.assertGreaterEqual(mock_mail.call_count, 1)
 
-    @patch('accounts.gdpr_views.send_pinova_mail')
+    @patch('accounts.gdpr_views.send_fotoce_mail')
     def test_me_deletion_alias(self, mock_mail):
         res = self.client.post('/api/me/account-deletion/request/', {'confirm': 'SUPPRIMER'}, format='json')
         self.assertEqual(res.status_code, 200)
@@ -126,7 +126,7 @@ class TeenPublishRestrictionTests(TestCase):
         client = APIClient()
         client.force_authenticate(user=user)
         res = client.post(
-            '/api/pins/',
+            '/api/fotos/',
             {
                 'title': 'Test',
                 'description': '',

@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from pins.weekly_stats import count_pin_view_events_between
+from fotos.weekly_stats import count_foto_view_events_between
 
 from .models import Profile
 
@@ -28,7 +28,7 @@ def should_enable_digest(profile) -> bool:
         return False
     now = timezone.now()
     since = now - timedelta(days=7)
-    views = count_pin_view_events_between(profile.user, since, now)
+    views = count_foto_view_events_between(profile.user, since, now)
     return views > 0
 
 

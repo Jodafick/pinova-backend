@@ -11,5 +11,5 @@ class ReferenceInterestsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        lang = (request.query_params.get('lang') or request.headers.get('X-Pinova-Lang') or 'fr').strip()
+        lang = (request.query_params.get('lang') or request.headers.get('X-Fotoce-Lang') or 'fr').strip()
         return Response({'results': interest_catalog_for_lang(lang)})

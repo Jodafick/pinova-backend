@@ -15,7 +15,7 @@ from django.utils import timezone
 from .contest_rank_notification_copy import build_contest_display_rank_notification_fr
 from .contest_rank_notify_throttle import allow_contest_rank_notification
 from .leaderboard_display_rank import display_rank_and_row_for_creator
-from .contest_payouts import build_pin_contest_payout_payload
+from .contest_payouts import build_foto_contest_payout_payload
 from .models import (
     ContestInteractionEvent,
     ContestResult,
@@ -23,7 +23,7 @@ from .models import (
     ContestWinnerPayout,
     CreatorContestScore,
     LeaderboardEvent,
-    PinContestScore,
+    FotoContestScore,
 )
 
 
@@ -133,7 +133,7 @@ def _decay_multiplier(settings: ContestSettings, pin_created_at: datetime, now: 
 
 
 def _rank_for_pin(contest: ContestSettings, score: float) -> int:
-    higher = PinContestScore.objects.filter(contest=contest, adjusted_score__gt=score, pin__is_story=False).count()
+    higher = FotoContestScore.objects.filter(contest=contest, adjusted_score__gt=score, pin__is_story=False).count()
     return higher + 1
 
 
@@ -176,14 +176,14 @@ def _maybe_send_contest_display_rank_notifications(
     recipient,
     prev_display_rank: int | None,
     new_display_rank: int | None,
-    representative_row: PinContestScore | None,
+    representative_row: FotoContestScore | None,
     likes_delta: int = 0,
     views_delta: int = 0,
     comments_delta: int = 0,
     views_total: int | None = None,
 ) -> None:
     """
-    In-app Notification (+ push Web/Expo via signal). Rang = leaderboard affiché (meilleur pin / créateur).
+    In-app Notification (+ push Web/Expo via signal). Rang = leaderboard affiché (meilleur foto / créateur).
     Anti-spam : cache + priorités plus courtes au podium / top 10.
     """
     if not getattr(settings, 'notify_leaderboard_rank_changes', True):
@@ -220,8 +220,8 @@ def _maybe_send_contest_display_rank_notifications(
 
     md = {
         'contest_key': settings.contest_key,
-        'pin_id': representative_row.pin_id,
-        'pin_slug': representative_row.pin.slug,
+        'foto_id': representative_row.foto_id,
+        'foto_slug': representative_row.pin.slug,
         'display_rank': new_display_rank,
         'previous_display_rank': prev_display_rank,
         'creator_id': recipient.id,
@@ -239,31 +239,31 @@ def _maybe_send_contest_display_rank_notifications(
         title_fr=tit_fr,
         message_fr=msg_fr,
         action_url='/contest/live',
-        pin_id=representative_row.pin_id,
-        pin_slug=representative_row.pin.slug,
+        foto_id=representative_row.foto_id,
+        foto_slug=representative_row.pin.slug,
         metadata=md,
     )
 
 
-def get_pin_contest_display_counts(pin) -> dict[str, int]:
+def get_foto_contest_display_counts(foto) -> dict[str, int]:
     """Compteurs classement concours alignés sur les tables métier (pas de valeurs inventées)."""
     return {
-        ContestInteractionEvent.TYPE_LIKE: pin.likes.count(),
-        ContestInteractionEvent.TYPE_VIEW: pin.view_events.count(),
-        ContestInteractionEvent.TYPE_SAVE: pin.saves.count(),
-        ContestInteractionEvent.TYPE_COMMENT: pin.comments.count(),
+        ContestInteractionEvent.TYPE_LIKE: foto.likes.count(),
+        ContestInteractionEvent.TYPE_VIEW: foto.view_events.count(),
+        ContestInteractionEvent.TYPE_SAVE: foto.saves.count(),
+        ContestInteractionEvent.TYPE_COMMENT: foto.comments.count(),
         ContestInteractionEvent.TYPE_SHARE: ContestInteractionEvent.objects.filter(
-            pin_id=pin.id,
+            foto_id=pin.id,
             interaction_type=ContestInteractionEvent.TYPE_SHARE,
             is_valid=True,
         ).count(),
     }
 
 
-def estimate_contest_adjusted_score_from_counts(settings: ContestSettings, pin, counts: dict[str, int]) -> float:
+def estimate_contest_adjusted_score_from_counts(settings: ContestSettings, foto, counts: dict[str, int]) -> float:
     """Score agrégé théorique (même pondération que les deltas live), pour seed / backfills."""
     now = timezone.now()
-    decay = _decay_multiplier(settings, pin.created_at, now)
+    decay = _decay_multiplier(settings, foto.created_at, now)
     trust = 1.0
     mult = settings.virality_multiplier
     total = 0.0
@@ -287,7 +287,7 @@ def estimate_contest_adjusted_score_from_counts(settings: ContestSettings, pin, 
 
 def track_contest_interaction(
     *,
-    pin,
+    foto,
     actor,
     interaction_type: str,
     dwell_seconds: int = 0,
@@ -299,7 +299,7 @@ def track_contest_interaction(
         return
     if getattr(pin, 'is_story', False):
         return
-    if pin.created_at < settings.start_at or pin.created_at >= settings.end_at:
+    if foto.created_at < settings.start_at or foto.created_at >= settings.end_at:
         return
 
     now = timezone.now()
@@ -313,12 +313,12 @@ def track_contest_interaction(
     base = _base_weight(settings, interaction_type)
     delta = 0.0
     if validation.is_valid and base > 0:
-        delta = base * _decay_multiplier(settings, pin.created_at, now) * validation.trust_score * settings.virality_multiplier
+        delta = base * _decay_multiplier(settings, foto.created_at, now) * validation.trust_score * settings.virality_multiplier
 
     with transaction.atomic():
         event = ContestInteractionEvent.objects.create(
             contest=settings,
-            pin=pin,
+            foto=pin,
             actor=actor,
             interaction_type=interaction_type,
             dwell_seconds=max(0, int(dwell_seconds or 0)),
@@ -338,12 +338,12 @@ def track_contest_interaction(
             )
             return
 
-        prev_display_rank, _ = display_rank_and_row_for_creator(settings, pin.author_id)
+        prev_display_rank, _ = display_rank_and_row_for_creator(settings, foto.author_id)
 
-        pin_score, _ = PinContestScore.objects.select_for_update().get_or_create(
+        pin_score, _ = FotoContestScore.objects.select_for_update().get_or_create(
             contest=settings,
-            pin=pin,
-            defaults={'creator': pin.author},
+            foto=pin,
+            defaults={'creator': foto.author},
         )
         old_likes = int(pin_score.total_likes or 0)
         old_views = int(pin_score.total_views or 0)
@@ -386,7 +386,7 @@ def track_contest_interaction(
         views_delta = views - old_views
         comments_delta = comments - old_comments
 
-        new_display_rank, representative_row = display_rank_and_row_for_creator(settings, pin.author_id)
+        new_display_rank, representative_row = display_rank_and_row_for_creator(settings, foto.author_id)
 
         _emit_leaderboard_event(
             contest=settings,
@@ -394,11 +394,11 @@ def track_contest_interaction(
             entity_type='pin',
             entity_id=pin.id,
             payload={
-                'pin_id': pin.id,
-                'pin_slug': pin.slug,
-                'pin_title': pin.title,
-                'creator_id': pin.author_id,
-                'creator_username': pin.author.username,
+                'foto_id': foto.id,
+                'foto_slug': foto.slug,
+                'pin_title': foto.title,
+                'creator_id': foto.author_id,
+                'creator_username': foto.author.username,
                 'contest_key': settings.contest_key,
                 'score': round(pin_score.adjusted_score, 4),
                 'rank': pin_score.rank,
@@ -420,7 +420,7 @@ def track_contest_interaction(
             entity_type='creator',
             entity_id=pin.author_id,
             payload={
-                'creator_id': pin.author_id,
+                'creator_id': foto.author_id,
                 'contest_key': settings.contest_key,
                 'score': round(creator_score.adjusted_score, 4),
                 'rank': creator_score.rank,
@@ -444,7 +444,7 @@ def track_contest_interaction(
             from referrals.referral_scoring_hooks import on_contest_interaction_for_referral
 
             on_contest_interaction_for_referral(
-                pin=pin,
+                foto=pin,
                 actor=actor,
                 contest_settings=settings,
                 interaction_valid=validation.is_valid,
@@ -459,9 +459,9 @@ def finalize_contest(contest: ContestSettings) -> None:
     if contest.end_at > timezone.now():
         return
     ordered = list(
-        PinContestScore.objects.filter(contest=contest, pin__is_story=False)
+        FotoContestScore.objects.filter(contest=contest, pin__is_story=False)
         .select_related('pin', 'creator')
-        .order_by('-adjusted_score', 'rank', 'pin_id')
+        .order_by('-adjusted_score', 'rank', 'foto_id')
     )
     winners = []
     seen_creators = set()
@@ -470,11 +470,11 @@ def finalize_contest(contest: ContestSettings) -> None:
             continue
         seen_creators.add(row.creator_id)
         winners.append(
-            {'rank': len(winners) + 1, 'pin_id': row.pin_id, 'creator_id': row.creator_id, 'score': row.adjusted_score}
+            {'rank': len(winners) + 1, 'foto_id': row.foto_id, 'creator_id': row.creator_id, 'score': row.adjusted_score}
         )
         if len(winners) >= contest.max_winners:
             break
-    payout_json, payout_rows = build_pin_contest_payout_payload(contest, winners)
+    payout_json, payout_rows = build_foto_contest_payout_payload(contest, winners)
     with transaction.atomic():
         ContestResult.objects.update_or_create(
             contest=contest,
@@ -486,6 +486,6 @@ def finalize_contest(contest: ContestSettings) -> None:
         ContestWinnerPayout.objects.filter(contest=contest, source=ContestWinnerPayout.SOURCE_PINS).delete()
         if payout_rows:
             ContestWinnerPayout.objects.bulk_create(payout_rows)
-    from contests.contest_notifications import notify_pin_contest_month_closed
+    from contests.contest_notifications import notify_foto_contest_month_closed
 
-    notify_pin_contest_month_closed(contest, winners)
+    notify_foto_contest_month_closed(contest, winners)

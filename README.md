@@ -1,6 +1,6 @@
-# pinova-backend
+# fotoce-backend
 
-Pinova Backend Project.
+Fotoce Backend Project.
 
 ## Setup
 

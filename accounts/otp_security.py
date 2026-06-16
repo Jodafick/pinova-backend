@@ -18,15 +18,15 @@ OTP_GENERIC_RESEND_OK_FR = (
     'Si un compte existe avec cet e-mail et nécessite une validation, un code a été envoyé.'
 )
 
-CODE_OTP_INVALID = 'pinova_otp_invalid'
-CODE_OTP_LOCKED = 'pinova_otp_locked'
-CODE_OTP_RESEND_COOLDOWN = 'pinova_otp_resend_cooldown'
-CODE_OTP_RESEND_LIMIT = 'pinova_otp_resend_limit'
+CODE_OTP_INVALID = 'fotoce_otp_invalid'
+CODE_OTP_LOCKED = 'fotoce_otp_locked'
+CODE_OTP_RESEND_COOLDOWN = 'fotoce_otp_resend_cooldown'
+CODE_OTP_RESEND_LIMIT = 'fotoce_otp_resend_limit'
 
-_VERIFY_ATTEMPTS_PREFIX = 'pinova:otp:verify:'
-_LOCKOUT_PREFIX = 'pinova:otp:lockout:'
-_RESEND_COOLDOWN_PREFIX = 'pinova:otp:resend_cd:'
-_RESEND_HOUR_PREFIX = 'pinova:otp:resend_h:'
+_VERIFY_ATTEMPTS_PREFIX = 'fotoce:otp:verify:'
+_LOCKOUT_PREFIX = 'fotoce:otp:lockout:'
+_RESEND_COOLDOWN_PREFIX = 'fotoce:otp:resend_cd:'
+_RESEND_HOUR_PREFIX = 'fotoce:otp:resend_h:'
 
 
 def normalize_otp_email(email: str | None) -> str:

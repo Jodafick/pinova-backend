@@ -1,4 +1,4 @@
-# Performance web frontend Pinova (PROMPT 12)
+# Performance web frontend Fotoce (PROMPT 12)
 
 Audit bundle + LCP pour la PWA Vue/Vite. Mesures après optimisations du **2026-06-06**.
 
@@ -8,9 +8,9 @@ Audit bundle + LCP pour la PWA Vue/Vite. Mesures après optimisations du **2026-
 |----------|-------------------|---------------------|
 | **JS initial (`index` + `vendor-vue`)** | ~650–750 KB gzip estimé (FA CSS + glin-profanity dans le graphe initial) | **227 KB gzip** (`index` 177 + `vendor-vue` 50) |
 | **Font Awesome** | Chargé globalement dans `main.ts` | Chunk lazy `vendor-icons` (~26 KB gzip CSS) — routes creator/contest uniquement |
-| **nsfwjs + TensorFlow.js** | Importé via `useModeration` (chaîne feed) | Chunk lazy `vendor-tfjs` (~39 MB brut) — `/create`, `/story/create`, `/pin/:slug/edit` |
+| **nsfwjs + TensorFlow.js** | Importé via `useModeration` (chaîne feed) | Chunk lazy `vendor-tfjs` (~39 MB brut) — `/create`, `/story/create`, `/foto/:slug/edit` |
 | **glin-profanity** | Top-level dans `useModeration` | Dynamic import dans `textModeration.ts` (routes création / commentaires) |
-| **Preconnect API** | Fonts Google uniquement | + `pinova-backend-8mlq.onrender.com` (API + `/media/`) |
+| **Preconnect API** | Fonts Google uniquement | + `fotoce-backend-8mlq.onrender.com` (API + `/media/`) |
 
 ## Chunks après build (`pnpm vite build`)
 
@@ -43,7 +43,7 @@ dist/assets/moderationPolicy-*.js 1.7 KB │ gzip 0.8 KB ← feed / affichage (s
 
 | Module | Rôle | Chargé sur |
 |--------|------|------------|
-| `moderationPolicy.ts` | Règles pures (blur, adulte, scores) | Feed, détail pin, settings |
+| `moderationPolicy.ts` | Règles pures (blur, adulte, scores) | Feed, détail foto, settings |
 | `nsfwScanner.ts` | nsfwjs image/vidéo | Création + double-vérification |
 | `textModeration.ts` | glin-profanity (dynamic) | Création, commentaires |
 | `useModeration.ts` | Façade avec delegates async | Pages création |
@@ -51,22 +51,22 @@ dist/assets/moderationPolicy-*.js 1.7 KB │ gzip 0.8 KB ← feed / affichage (s
 ### 4. Preconnect (`index.html`)
 
 ```html
-<link rel="preconnect" href="https://pinova-backend-8mlq.onrender.com" crossorigin />
-<link rel="dns-prefetch" href="https://pinova-backend-8mlq.onrender.com" />
+<link rel="preconnect" href="https://fotoce-backend-8mlq.onrender.com" crossorigin />
+<link rel="dns-prefetch" href="https://fotoce-backend-8mlq.onrender.com" />
 ```
 
 Médias servis depuis la même origine API (`/media/`) — un seul preconnect suffit.
 
 ### 5. Router
 
-- `preloadNsfwScanner: true` → `create`, `create-standalone-story`, `edit-pin`
+- `preloadNsfwScanner: true` → `create`, `create-standalone-story`, `edit-foto`
 - `loadFontAwesome: true` → `creator`, `contest-live`, `referral-contest-live`, `referral-invite`
 
 ## Cibles Lighthouse PWA (mobile)
 
-| Core Web Vital | Cible | Actions Pinova |
+| Core Web Vital | Cible | Actions Fotoce |
 |----------------|-------|----------------|
-| **LCP** | < 2.5 s | Bundle initial −~200 KB gzip ; preconnect API ; images lazy (`PinVirtualGrid`) ; pas de TF.js au 1er paint |
+| **LCP** | < 2.5 s | Bundle initial −~200 KB gzip ; preconnect API ; images lazy (`FotoVirtualGrid`) ; pas de TF.js au 1er paint |
 | **CLS** | < 0.1 | Dimensions explicites médias ; splash HTML anti-flash |
 | **INP** | < 200 ms | Feed sans scan ML ; chunks vendor-vue isolés |
 
@@ -80,7 +80,7 @@ Médias servis depuis la même origine API (`/media/`) — un seul preconnect su
 ## Commandes
 
 ```bash
-cd PINOVA-FRONTEND
+cd FOTOCE-FRONTEND
 pnpm install
 pnpm vite build          # bundle (sans vue-tsc si erreurs TS préexistantes)
 pnpm test

@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('pins', '0004_machinetranslationcache'),
+        ('fotos', '0004_machinetranslationcache'),
     ]
 
     operations = [
@@ -64,9 +64,9 @@ class Migration(migrations.Migration):
                 ('fedapay_transaction_id', models.CharField(blank=True, db_index=True, default='', max_length=64)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('owner', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='pin_boosts', to=settings.AUTH_USER_MODEL)),
+                ('owner', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='foto_boosts', to=settings.AUTH_USER_MODEL)),
                 ('package', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='boosts', to='monetization.boostpackage')),
-                ('pin', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='boosts', to='pins.pin')),
+                ('pin', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='boosts', to='fotos.pin')),
             ],
             options={
                 'ordering': ['-created_at'],

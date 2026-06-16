@@ -1,4 +1,4 @@
-"""Vues JWT Pinova — refresh et révocation globale."""
+"""Vues JWT Fotoce — refresh et révocation globale."""
 
 from rest_framework import permissions, status
 from rest_framework.response import Response

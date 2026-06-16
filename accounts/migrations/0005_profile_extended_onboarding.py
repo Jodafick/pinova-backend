@@ -1,4 +1,4 @@
-# Generated manually for Pinova profile & onboarding extension
+# Generated manually for Fotoce profile & onboarding extension
 
 from django.db import migrations, models
 from django.utils import timezone

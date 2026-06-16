@@ -13,16 +13,16 @@ from .mail_delivery import (
     EMAIL_DELIVERY_ERROR_CODE,
     EMAIL_DELIVERY_USER_MESSAGE,
     EmailDeliveryUnavailable,
-    send_pinova_mail,
+    send_fotoce_mail,
 )
 from django.utils import timezone
 from datetime import timedelta
 from .currency_utils import normalize_currency
 from notifications.notification_i18n import create_localized_notification
-from pinova_backend.media_serving.cache import build_versioned_media_url
-from pins.moderation import validate_clean_text_fields
-from pins.api_locale import api_locale_from_request
-from accounts.password_policy import format_password_validation_errors, validate_pinova_password
+from fotoce_backend.media_serving.cache import build_versioned_media_url
+from fotos.moderation import validate_clean_text_fields
+from fotos.api_locale import api_locale_from_request
+from accounts.password_policy import format_password_validation_errors, validate_fotoce_password
 from dj_rest_auth.serializers import PasswordResetConfirmSerializer as DjPasswordResetConfirmSerializer
 
 ALLOWED_ACCENT_COLORS = frozenset({
@@ -237,7 +237,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             return value
         request = self.context.get('request')
         user_id = request.user.id if request and request.user.is_authenticated else None
-        from pins.upload_security import secure_image_upload
+        from fotos.upload_security import secure_image_upload
 
         return secure_image_upload(value, kind='avatar', request=request, user_id=user_id)
 
@@ -246,7 +246,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             return value
         request = self.context.get('request')
         user_id = request.user.id if request and request.user.is_authenticated else None
-        from pins.upload_security import secure_image_upload
+        from fotos.upload_security import secure_image_upload
 
         return secure_image_upload(value, kind='cover', request=request, user_id=user_id)
 
@@ -303,9 +303,9 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 from django.db.models import Prefetch
 
-from pins.models import Save
-from pins.models import Board, PinBoard, Pin, ContentReport
-from pins.visibility import pin_is_visible_for_request, count_pins_visible_on_profile
+from fotos.models import Save
+from fotos.models import Board, FotoBoard, Foto, ContentReport
+from fotos.visibility import foto_is_visible_for_request, count_pins_visible_on_profile
 
 
 class UserBlockSerializer(serializers.ModelSerializer):
@@ -392,7 +392,7 @@ class UserSerializer(serializers.ModelSerializer):
         viewer = getattr(request, 'user', None) if request else None
         if not (viewer and viewer.is_authenticated and viewer.id == obj.id):
             return []
-        return list(Save.objects.filter(user=obj).values_list('pin_id', flat=True))
+        return list(Save.objects.filter(user=obj).values_list('foto_id', flat=True))
 
     def get_boards(self, obj):
         request = self.context.get('request')
@@ -404,24 +404,24 @@ class UserSerializer(serializers.ModelSerializer):
             boards = boards.filter(is_private=False)
         boards = boards.prefetch_related(
             Prefetch(
-                'pins',
-                queryset=Pin.objects.select_related('author', 'author__profile'),
+                'fotos',
+                queryset=Foto.objects.select_related('author', 'author__profile'),
             )
         ).order_by('-created_at')
 
-        def visible_pin_count(board_obj):
+        def visible_foto_count(board_obj):
             return sum(
-                1 for p in board_obj.pins.all() if pin_is_visible_for_request(p, request)
+                1 for p in board_obj.fotos.all() if foto_is_visible_for_request(p, request)
             )
 
         def preview_for(board_obj):
             urls = []
             for row in (
-                PinBoard.objects.filter(board=board_obj)
+                FotoBoard.objects.filter(board=board_obj)
                 .select_related('pin', 'pin__author', 'pin__author__profile')
                 .order_by('position', 'id')
             ):
-                if not pin_is_visible_for_request(row.pin, request):
+                if not foto_is_visible_for_request(row.pin, request):
                     continue
                 img = getattr(row.pin, 'image', None)
                 if not img or not getattr(img, 'name', None):
@@ -436,7 +436,7 @@ class UserSerializer(serializers.ModelSerializer):
             row = {
                 'id': board.id,
                 'name': board.name,
-                'pinCount': visible_pin_count(board),
+                'fotoCount': visible_foto_count(board),
                 'isPrivate': board.is_private,
                 'previewImages': preview_for(board),
                 'collaboratorCount': board.collaborators.count(),
@@ -500,7 +500,7 @@ class UserSerializer(serializers.ModelSerializer):
         return sub
 
 
-def _validate_pinova_password_for_request(
+def _validate_fotoce_password_for_request(
     password,
     *,
     request,
@@ -511,7 +511,7 @@ def _validate_pinova_password_for_request(
 ):
     lang = api_locale_from_request(request) if request else 'fr'
     try:
-        validate_pinova_password(password, user=user, email=email, username=username, lang=lang)
+        validate_fotoce_password(password, user=user, email=email, username=username, lang=lang)
     except DjangoValidationError as exc:
         raise serializers.ValidationError({field: format_password_validation_errors(exc, lang)})
 
@@ -526,7 +526,7 @@ class SetInitialPasswordSerializer(serializers.Serializer):
         if attrs['new_password1'] != attrs['new_password2']:
             raise serializers.ValidationError({'new_password2': _('Les mots de passe ne correspondent pas.')})
         user = self.context['request'].user
-        _validate_pinova_password_for_request(
+        _validate_fotoce_password_for_request(
             attrs['new_password1'],
             request=self.context.get('request'),
             user=user,
@@ -563,7 +563,7 @@ class RegisterSerializer(BaseRegisterSerializer):
         username = self.initial_data.get('username')
         if not username and email:
             username = str(email).split('@')[0]
-        _validate_pinova_password_for_request(
+        _validate_fotoce_password_for_request(
             password,
             request=self.context.get('request'),
             email=email,
@@ -605,15 +605,15 @@ class RegisterSerializer(BaseRegisterSerializer):
             create_localized_notification(
                 recipient=user,
                 notification_type='welcome',
-                title_fr='Bienvenue sur PINOVA',
+                title_fr='Bienvenue sur FOTOCE',
                 message_fr="Votre compte a été créé avec succès. Veuillez entrer le code OTP envoyé par email pour le valider.",
                 action_url='/verify-otp',
                 metadata={'stage': 'account_created_pending_verification'},
             )
 
             try:
-                send_pinova_mail(
-                    'Code de validation PINOVA',
+                send_fotoce_mail(
+                    'Code de validation FOTOCE',
                     f'Votre code de validation est : {otp.otp_code}. Il expire dans 10 minutes.',
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
@@ -628,7 +628,7 @@ class RegisterSerializer(BaseRegisterSerializer):
 
             from referrals.services import consume_referral_for_new_user
 
-            device = (request.META.get('HTTP_X_PINOVA_DEVICE_BINDING') or '').strip() if request else ''
+            device = (request.META.get('HTTP_X_FOTOCE_DEVICE_BINDING') or '').strip() if request else ''
             attr = consume_referral_for_new_user(
                 user,
                 explicit_code=self.validated_data.get('referral_code'),
@@ -636,7 +636,7 @@ class RegisterSerializer(BaseRegisterSerializer):
                 device_binding_header=device or None,
             )
             if attr:
-                from pinova_backend.observability.analytics import capture_register_with_ref_code
+                from fotoce_backend.observability.analytics import capture_register_with_ref_code
 
                 ref_code = (self.validated_data.get('referral_code') or '').strip().upper()
                 if ref_code:
@@ -648,7 +648,7 @@ class RegisterSerializer(BaseRegisterSerializer):
         return user
 
 
-class PinovaLoginSerializer(serializers.Serializer):
+class FotoceLoginSerializer(serializers.Serializer):
     """
     Connexion JWT : distingue « e-mail inconnu » vs « mot de passe incorrect » pour l'UX.
     (Énumération d'e-mails : assumée côté produit.)
@@ -658,10 +658,10 @@ class PinovaLoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
     password = serializers.CharField(style={'input_type': 'password'}, write_only=True)
 
-    CODE_UNKNOWN_EMAIL = 'pinova_login_unknown_email'
-    CODE_WRONG_PASSWORD = 'pinova_login_wrong_password'
-    CODE_INACTIVE = 'pinova_login_inactive'
-    CODE_EMAIL_UNVERIFIED = 'pinova_login_email_unverified'
+    CODE_UNKNOWN_EMAIL = 'fotoce_login_unknown_email'
+    CODE_WRONG_PASSWORD = 'fotoce_login_wrong_password'
+    CODE_INACTIVE = 'fotoce_login_inactive'
+    CODE_EMAIL_UNVERIFIED = 'fotoce_login_email_unverified'
 
     def validate(self, attrs):
         from dj_rest_auth.serializers import LoginSerializer as _dj_login_serializer
@@ -698,7 +698,7 @@ class PinovaLoginSerializer(serializers.Serializer):
         return attrs
 
 
-def pinova_password_reset_url_generator(request, user, temp_key):
+def fotoce_password_reset_url_generator(request, user, temp_key):
     """
     Lien de reset aligné sur le routeur web (`/password-reset-confirm/:uid/:token`).
     Évite `NoReverseMatch` sur `password_reset_confirm` (non défini avec dj-rest-auth seul).
@@ -713,19 +713,19 @@ def pinova_password_reset_url_generator(request, user, temp_key):
     return f'{base}/{quote(uid, safe="")}/{quote(temp_key, safe="")}'
 
 
-class PinovaPasswordResetSerializer(DjPasswordResetSerializer):
+class FotocePasswordResetSerializer(DjPasswordResetSerializer):
     """Passe un `url_generator` qui pointe vers le SPA au lieu de `reverse('password_reset_confirm')`."""
 
     def get_email_options(self):
         opts = super().get_email_options()
-        opts['url_generator'] = pinova_password_reset_url_generator
+        opts['url_generator'] = fotoce_password_reset_url_generator
         return opts
 
 
-class PinovaPasswordResetConfirmSerializer(DjPasswordResetConfirmSerializer):
+class FotocePasswordResetConfirmSerializer(DjPasswordResetConfirmSerializer):
     """
     Confirmation reset : accepte `new_password` (SPA/mobile) ou `new_password1`/`new_password2`.
-    Messages d'erreur alignés sur la politique Pinova (FR/EN).
+    Messages d'erreur alignés sur la politique Fotoce (FR/EN).
     """
 
     new_password = serializers.CharField(required=False, write_only=True, max_length=128)
@@ -746,7 +746,7 @@ class PinovaPasswordResetConfirmSerializer(DjPasswordResetConfirmSerializer):
         lang = api_locale_from_request(request) if request else 'fr'
         password = attrs.get('new_password1') or attrs.get('new_password') or ''
         try:
-            validate_pinova_password(password, user=self.user, lang=lang)
+            validate_fotoce_password(password, user=self.user, lang=lang)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(
                 {'new_password1': format_password_validation_errors(exc, lang)}

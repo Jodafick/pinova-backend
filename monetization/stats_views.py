@@ -49,7 +49,7 @@ class CheckoutPendingRecapView(APIView):
         platform = str(request.data.get('platform') or 'web').strip().lower()
 
         base = str(getattr(settings, 'FRONTEND_URL', '') or '').rstrip('/') or 'http://localhost:5174'
-        scheme = str(getattr(settings, 'MOBILE_APP_SCHEME', 'pinova')).strip().rstrip(':') or 'pinova'
+        scheme = str(getattr(settings, 'MOBILE_APP_SCHEME', 'fotoce')).strip().rstrip(':') or 'fotoce'
 
         if platform in ('mobile', 'app', 'ios', 'android'):
             if transaction_id:
@@ -72,15 +72,15 @@ class CheckoutPendingRecapView(APIView):
         if not email:
             return Response({'detail': 'Email manquant.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        subject = 'Pinova — finalisez votre paiement'
+        subject = 'Fotoce — finalisez votre paiement'
         body = (
             f'Bonjour,\n\n'
-            f'Votre paiement Pinova ({flow}) est en cours de validation.\n'
+            f'Votre paiement Fotoce ({flow}) est en cours de validation.\n'
             f'Cliquez pour reprendre en un clic :\n{retry_url}\n\n'
             f'Si le paiement a déjà abouti, ignorez ce message.\n\n'
-            f'— L’équipe Pinova'
+            f'— L’équipe Fotoce'
         )
-        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'noreply@pinova.app'
+        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or 'noreply@fotoce.app'
         try:
             send_mail(subject, body, from_email, [email], fail_silently=False)
         except Exception:

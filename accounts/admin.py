@@ -4,7 +4,7 @@ from django.contrib.auth.admin import UserAdmin as AuthUserAdmin
 from django import forms
 from .models import (
     Profile,
-    PinovaSubscriptionConfig,
+    FotoceSubscriptionConfig,
     SubscriptionPricing,
     SubscriptionPayment,
     SupportTicket,
@@ -55,13 +55,13 @@ class SubscriptionPricingAdmin(admin.ModelAdmin):
     search_fields = ('plan', 'billing_cycle', 'currency_iso')
 
 
-@admin.register(PinovaSubscriptionConfig)
-class PinovaSubscriptionConfigAdmin(admin.ModelAdmin):
+@admin.register(FotoceSubscriptionConfig)
+class FotoceSubscriptionConfigAdmin(admin.ModelAdmin):
     fields = ('annual_discount_percent', 'updated_at')
     readonly_fields = ('updated_at',)
 
     def has_add_permission(self, request):
-        return not PinovaSubscriptionConfig.objects.exists()
+        return not FotoceSubscriptionConfig.objects.exists()
 
     def has_delete_permission(self, request, obj=None):
         return False

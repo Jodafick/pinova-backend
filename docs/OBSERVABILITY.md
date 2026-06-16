@@ -1,8 +1,8 @@
-# Observabilité PINOVA — logs, health, corrélation, tracing
+# Observabilité FOTOCE — logs, health, corrélation, tracing
 
 ## Logs structurés (production)
 
-En `DEBUG=False`, chaque requête API produit une ligne JSON via le logger `pinova.access` :
+En `DEBUG=False`, chaque requête API produit une ligne JSON via le logger `fotoce.access` :
 
 ```json
 {
@@ -11,7 +11,7 @@ En `DEBUG=False`, chaque requête API produit une ligne JSON via le logger `pino
   "event": "http_request",
   "request_id": "…",
   "user_id": 42,
-  "path": "/api/pins/",
+  "path": "/api/fotos/",
   "method": "GET",
   "latency_ms": 12.34,
   "status": 200
@@ -52,7 +52,7 @@ readinessProbe:
 
 ## Corrélation `X-Request-ID`
 
-1. **Front web** (`PINOVA-FRONTEND/src/api.ts`) et **mobile** (`Pinova-Mobile/src/api/client.ts`) envoient un UUID v4 dans `X-Request-ID`.
+1. **Front web** (`FOTOCE-FRONTEND/src/api.ts`) et **mobile** (`Fotoce-Mobile/src/api/client.ts`) envoient un UUID v4 dans `X-Request-ID`.
 2. **Backend** (`RequestIdMiddleware`) reprend ou génère l’ID, le propage dans les logs JSON et renvoie le header en réponse.
 3. **Sentry** reçoit le tag `request_id` côté backend (middleware + captures FedaPay / API lentes) et côté clients (`setSentryRequestId`).
 
@@ -64,7 +64,7 @@ Activé uniquement si `OTEL_EXPORTER_OTLP_ENDPOINT` est défini (ex. Jaeger, Gra
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com/v1/traces
-OTEL_SERVICE_NAME=pinova-backend
+OTEL_SERVICE_NAME=fotoce-backend
 ```
 
 Packages requis (section optionnelle de `requirements.txt`) :
@@ -75,7 +75,7 @@ pip install opentelemetry-api opentelemetry-sdk \
   opentelemetry-instrumentation-django
 ```
 
-Initialisation : `pinova_backend/otel.py` au démarrage Django (`AppConfig.ready`).
+Initialisation : `fotoce_backend/otel.py` au démarrage Django (`AppConfig.ready`).
 
 ## Dev logs
 
@@ -84,4 +84,4 @@ Initialisation : `pinova_backend/otel.py` au démarrage Django (`AppConfig.ready
 
 ## Variables d’environnement
 
-Voir `pinova-backend/.env.example` (OTEL, health URLs en commentaire) et `docs/SENTRY.md` pour l’alerting.
+Voir `fotoce-backend/.env.example` (OTEL, health URLs en commentaire) et `docs/SENTRY.md` pour l’alerting.

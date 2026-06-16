@@ -1,4 +1,4 @@
-# Livraison des notifications Pinova
+# Livraison des notifications Fotoce
 
 ## Canaux
 
@@ -45,7 +45,7 @@ Types `like`, `save`, `comment`, `follow` : 1 push / 120 s / groupe (ex. `like:p
 | Campagnes / boost créateur | OK |
 | Stories abonnés | OK + push |
 | Streak découverte | OK + push |
-| Concours pins (rang, jalons, clôture) | OK (jalons + finalize ajoutés) |
+| Concours fotos (rang, jalons, clôture) | OK (jalons + finalize ajoutés) |
 | Concours parrainage | OK + push explicite |
 | Bienvenue / OTP | in-app, push si hors ligne |
 | Digest hebdo PRO | email + notif `ws_only` |

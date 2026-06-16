@@ -1,11 +1,11 @@
-"""JWT SimpleJWT — comportements Pinova."""
+"""JWT SimpleJWT — comportements Fotoce."""
 
 from django.contrib.auth import get_user_model
 from dj_rest_auth.jwt_auth import CookieTokenRefreshSerializer
 from rest_framework.exceptions import AuthenticationFailed
 
 
-class PinovaCookieTokenRefreshSerializer(CookieTokenRefreshSerializer):
+class FotoceCookieTokenRefreshSerializer(CookieTokenRefreshSerializer):
     """
     Refresh (dj-rest-auth) : user supprimé / BDD réinitialisée → 401, pas DoesNotExist (500).
     """

@@ -1,7 +1,7 @@
-# KPIs business PINOVA — live & mesurables
+# KPIs business FOTOCE — live & mesurables
 
 **Date :** 2026-06-06  
-**Dashboard :** `PINOVA — Business` (PostHog EU)  
+**Dashboard :** `FOTOCE — Business` (PostHog EU)  
 **Evidence :** `docs/evidence/kpi-export-latest.json`, `docs/evidence/kpi-seed-validation.json`
 
 **Score business intelligence : 10/10** — KPIs définis, formules HogQL, garde ARPU webhook-only, seed 100 events, alertes documentées.
@@ -46,7 +46,7 @@ WHERE event = 'revenue_recorded'
 
 | Zone | Fichier | Vérification |
 |------|---------|--------------|
-| Backend revenue | `pinova_backend/observability/analytics.py` | `capture_revenue_recorded()` seul point d'émission `$revenue` |
+| Backend revenue | `fotoce_backend/observability/analytics.py` | `capture_revenue_recorded()` seul point d'émission `$revenue` |
 | Webhook | `monetization/webhook_processing.py` | `capture_checkout_success()` après FedaPay approved |
 | Client web | `CheckoutReturnPage.vue` | `buildCheckoutSuccessClientProps()` |
 | Client mobile | `CheckoutReturnScreen.tsx` | idem |
@@ -60,12 +60,12 @@ WHERE event = 'revenue_recorded'
 
 | Champ | Valeur |
 |-------|--------|
-| **Définition** | % d'inscrits publiant un premier pin ≤ 24 h après `register_completed` |
+| **Définition** | % d'inscrits publiant un premier foto ≤ 24 h après `register_completed` |
 | **Formule** | `count(first_pin ≤ 24h après register) / count(register_completed) × 100` |
-| **Seuil alerte** | < **25 %** sur 7 j glissants → revue onboarding/create pin |
+| **Seuil alerte** | < **25 %** sur 7 j glissants → revue onboarding/create foto |
 | **Owner** | Product Lead |
 | **Revue** | Hebdomadaire (lundi standup metrics) |
-| **Dashboard** | Insight `KPI — Activation first pin < 24 h` |
+| **Dashboard** | Insight `KPI — Activation first foto < 24 h` |
 
 **HogQL :**
 
@@ -80,7 +80,7 @@ FROM (
 ) reg
 LEFT JOIN (
   SELECT distinct_id, min(timestamp) AS ts FROM events
-  WHERE event = 'first_pin_published' GROUP BY distinct_id
+  WHERE event = 'first_foto_published' GROUP BY distinct_id
 ) fp ON reg.distinct_id = fp.distinct_id
 ```
 
@@ -198,7 +198,7 @@ LEFT JOIN (
 ### Export KPIs (HogQL live ou simulation)
 
 ```powershell
-cd pinova-backend
+cd fotoce-backend
 $env:POSTHOG_PERSONAL_API_KEY = "phx_..."
 $env:POSTHOG_PROJECT_ID = "12345"
 python ../docs/evidence/export-kpis.py --days 30
@@ -254,7 +254,7 @@ WHERE event = 'revenue_recorded'
 |-----------|--------|
 | **Condition** | `revenue_events_24h = 0` |
 | **Fenêtre** | 24 h glissantes |
-| **Canal** | Slack `#pinova-alerts` + email Product/Finance |
+| **Canal** | Slack `#fotoce-alerts` + email Product/Finance |
 | **Owner réponse** | On-call backend + Monetization |
 | **Runbook** | `docs/RELIABILITY-RUNBOOK.md` § FedaPay webhook |
 
@@ -265,7 +265,7 @@ WHERE event = 'revenue_recorded'
 Créer une **Cron Monitor** ou alerte metric custom si un job quotidien exécute :
 
 ```python
-# pinova-backend/scripts/check_revenue_analytics.py (à brancher CI/cron)
+# fotoce-backend/scripts/check_revenue_analytics.py (à brancher CI/cron)
 # Exit code 1 si count(revenue_recorded 24h) == 0 ET trafic checkout_started > 0
 ```
 
@@ -310,10 +310,10 @@ Webhook Sentry → même canal Slack. Ne pas dupliquer PostHog si alerte HogQL a
 | `docs/BUSINESS-METRICS.md` | Référence funnels & pièges |
 | `docs/ANALYTICS-LIVE-VALIDATION.md` | Déploiement dashboard |
 | `docs/evidence/export-kpis.py` | Export HogQL KPIs |
-| `pinova-backend/scripts/seed_posthog_business_events.py` | Seed 100 events |
-| `pinova-backend/scripts/setup_posthog_business_dashboard.py` | Deploy dashboard |
-| `packages/pinova-shared/src/analytics/businessMetrics.ts` | Props client ARPU-safe |
+| `fotoce-backend/scripts/seed_posthog_business_events.py` | Seed 100 events |
+| `fotoce-backend/scripts/setup_posthog_business_dashboard.py` | Deploy dashboard |
+| `packages/fotoce-shared/src/analytics/businessMetrics.ts` | Props client ARPU-safe |
 
 ---
 
-*Intelligence business PINOVA — KPIs mesurables, ARPU sans double comptage, revue hebdomadaire.*
+*Intelligence business FOTOCE — KPIs mesurables, ARPU sans double comptage, revue hebdomadaire.*

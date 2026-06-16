@@ -1,6 +1,6 @@
-# Pinova Design System — Primitives unifiées (Web + Mobile)
+# Fotoce Design System — Primitives unifiées (Web + Mobile)
 
-Objectif : **cohérence 10/10** entre `PINOVA-FRONTEND` (Vue) et `Pinova-Mobile` (React Native) via tokens partagés et composants miroirs.
+Objectif : **cohérence 10/10** entre `FOTOCE-FRONTEND` (Vue) et `Fotoce-Mobile` (React Native) via tokens partagés et composants miroirs.
 
 ---
 
@@ -8,26 +8,26 @@ Objectif : **cohérence 10/10** entre `PINOVA-FRONTEND` (Vue) et `Pinova-Mobile`
 
 | Couche | Web | Mobile |
 |--------|-----|--------|
-| Palette | `src/theme/tokens.css` (`--pn-*`) | `src/theme/tokens.ts` (`PinovaTheme`) |
+| Palette | `src/theme/tokens.css` (`--pn-*`) | `src/theme/tokens.ts` (`FotoceTheme`) |
 | Platform | `src/theme/platformTokens.ts` | `ThemeProvider` + `useAppTheme()` |
-| Boutons CSS | `src/style.css` → `.pds-btn` | `PinovaButton.tsx` (StyleSheet) |
+| Boutons CSS | `src/style.css` → `.pds-btn` | `FotoceButton.tsx` (StyleSheet) |
 
-Couleurs clés : `pinkStrong` `#db2777`, `pink700` `#be185d`, surfaces `bgPage` / `bgSurface`, texte `ink` / `inkMuted`.
+Couleurs clés : `fotokStrong` `#db2777`, `fotok700` `#be185d`, surfaces `bgPage` / `bgSurface`, texte `ink` / `inkMuted`.
 
 ---
 
-## Primitives Web (`PINOVA-FRONTEND/src/components/ui/`)
+## Primitives Web (`FOTOCE-FRONTEND/src/components/ui/`)
 
-### PinovaButton.vue
+### FotoceButton.vue
 
 Variants : `primary` | `secondary` | `ghost` | `floating` | `danger`  
 Sizes : `sm` | `md` | `lg` | `icon`  
 Props : `loading`, `block`, `disabled`, `to`, `href`, `density`, `platform`
 
 ```vue
-<PinovaButton variant="primary" size="lg" block :loading="busy" @click="save">
+<FotoceButton variant="primary" size="lg" block :loading="busy" @click="save">
   Enregistrer
-</PinovaButton>
+</FotoceButton>
 ```
 
 **Aperçu (primary)**
@@ -36,52 +36,52 @@ Props : `loading`, `block`, `disabled`, `to`, `href`, `density`, `platform`
 ┌─────────────────────────────────────┐
 │         Enregistrer                 │  ← fond rose #db2777, texte blanc
 └─────────────────────────────────────┘
-     border-radius: var(--pinova-radius-md)
+     border-radius: var(--fotoce-radius-md)
 ```
 
-### PinovaInput.vue
+### FotoceInput.vue
 
 Label, hint, error, icône Material (`icon="mail"`), slots `prefix` / `suffix`, dark mode natif.
 
 ```vue
-<PinovaInput v-model="email" label="Email" icon="mail" :error="errors.email" />
+<FotoceInput v-model="email" label="Email" icon="mail" :error="errors.email" />
 ```
 
-### PinovaEmptyState.vue
+### FotoceEmptyState.vue
 
 ```vue
-<PinovaEmptyState icon="notifications" :title="t('notifications.empty')" :description="hint">
+<FotoceEmptyState icon="notifications" :title="t('notifications.empty')" :description="hint">
   <template #action>
-    <PinovaButton variant="primary" block>Explorer</PinovaButton>
+    <FotoceButton variant="primary" block>Explorer</FotoceButton>
   </template>
-</PinovaEmptyState>
+</FotoceEmptyState>
 ```
 
-### PinovaErrorState.vue
+### FotoceErrorState.vue
 
 État erreur plein écran ou section avec slot `#action` (retry).
 
 ---
 
-## Primitives Mobile (`Pinova-Mobile/src/components/ui/`)
+## Primitives Mobile (`Fotoce-Mobile/src/components/ui/`)
 
-### PinovaButton.tsx
+### FotoceButton.tsx
 
-API alignée web : mêmes variants / sizes, `usePinovaStyles` + `PinovaTheme`.
-
-```tsx
-<PinovaButton variant="primary" block loading={busy} onPress={save}>
-  <PinovaButtonText variant="primary">Enregistrer</PinovaButtonText>
-</PinovaButton>
-```
-
-### PinovaInput.tsx
+API alignée web : mêmes variants / sizes, `useFotoceStyles` + `FotoceTheme`.
 
 ```tsx
-<PinovaInput label="Email" value={email} onChangeText={setEmail} error={err} hint="Format valide" />
+<FotoceButton variant="primary" block loading={busy} onPress={save}>
+  <FotoceButtonText variant="primary">Enregistrer</FotoceButtonText>
+</FotoceButton>
 ```
 
-### PinovaEmptyState.tsx / PinovaErrorState.tsx
+### FotoceInput.tsx
+
+```tsx
+<FotoceInput label="Email" value={email} onChangeText={setEmail} error={err} hint="Format valide" />
+```
+
+### FotoceEmptyState.tsx / FotoceErrorState.tsx
 
 Miroirs web — icônes Material, tokens thème.
 
@@ -92,7 +92,7 @@ Remplace `Alert.alert` pour feedback **non-bloquant** :
 ```ts
 import { appToast, appToastSuccess, appToastError } from '../lib/appToast'
 
-appToastSuccess('Boost activé', 'Votre pin sera promu sous peu.')
+appToastSuccess('Boost activé', 'Votre foto sera promu sous peu.')
 appToastError('Une erreur est survenue.')
 ```
 
@@ -108,13 +108,13 @@ appToastError('Une erreur est survenue.')
 
 | Statut | Périmètre |
 |--------|-----------|
-| ✅ 100 % | Classes legacy `app-btn` → `PinovaButton` |
+| ✅ 100 % | Classes legacy `app-btn` → `FotoceButton` |
 | ✅ | Auth : Login, Register, Forgot, Reset, VerifyOTP |
 | ✅ | Settings, Profile, Board, Billing, modales (`AppAlertModal`, `ReportContentModal`) |
 | ✅ | Checkout, GuestAuth, Onboarding, Notifications (empty + retry) |
 | ⏳ | Boutons icône / éditeurs story (hors scope DS standard) |
 
-Règle : **tout CTA primaire/secondaire** → `PinovaButton`. Les boutons icône toolbar restent `<button>` natifs.
+Règle : **tout CTA primaire/secondaire** → `FotoceButton`. Les boutons icône toolbar restent `<button>` natifs.
 
 ---
 
@@ -136,10 +136,10 @@ Commande rapide web (dev) : ouvrir `/login`, `/settings`, `/notifications` en li
 
 ## Checklist contributeur
 
-1. Nouveau bouton action → `PinovaButton` / `PinovaButton.tsx`
-2. Nouveau champ formulaire → `PinovaInput`
-3. Liste vide → `PinovaEmptyState`
-4. Erreur chargement → `PinovaErrorState` + retry
+1. Nouveau bouton action → `FotoceButton` / `FotoceButton.tsx`
+2. Nouveau champ formulaire → `FotoceInput`
+3. Liste vide → `FotoceEmptyState`
+4. Erreur chargement → `FotoceErrorState` + retry
 5. Feedback mobile non-bloquant → `appToast*` (pas `Alert.alert`)
 6. Pas de nouvelles classes `app-btn`
 
@@ -148,13 +148,13 @@ Commande rapide web (dev) : ouvrir `/login`, `/settings`, `/notifications` en li
 ## Fichiers de référence
 
 ```
-PINOVA-FRONTEND/src/components/ui/PinovaButton.vue
-PINOVA-FRONTEND/src/components/ui/PinovaInput.vue
-PINOVA-FRONTEND/src/components/ui/PinovaEmptyState.vue
-PINOVA-FRONTEND/src/components/ui/PinovaErrorState.vue
-PINOVA-FRONTEND/src/style.css                    # .pds-btn
-Pinova-Mobile/src/components/ui/PinovaButton.tsx
-Pinova-Mobile/src/components/ui/PinovaInput.tsx
-Pinova-Mobile/src/components/AppToastHost.tsx
-Pinova-Mobile/src/lib/useAppToast.ts
+FOTOCE-FRONTEND/src/components/ui/FotoceButton.vue
+FOTOCE-FRONTEND/src/components/ui/FotoceInput.vue
+FOTOCE-FRONTEND/src/components/ui/FotoceEmptyState.vue
+FOTOCE-FRONTEND/src/components/ui/FotoceErrorState.vue
+FOTOCE-FRONTEND/src/style.css                    # .pds-btn
+Fotoce-Mobile/src/components/ui/FotoceButton.tsx
+Fotoce-Mobile/src/components/ui/FotoceInput.tsx
+Fotoce-Mobile/src/components/AppToastHost.tsx
+Fotoce-Mobile/src/lib/useAppToast.ts
 ```

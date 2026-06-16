@@ -64,7 +64,7 @@ class NotificationDeliveryPolicyTests(TestCase):
         self.assertTrue(md['in_app_toast'])
 
     def test_push_group_key_pin(self):
-        n = self._notif(notification_type='comment', pin_id=99)
+        n = self._notif(notification_type='comment', foto_id=99)
         self.assertEqual(push_group_key(n), 'comment:pin:99')
 
     def test_contest_rank_change_milestone_top10(self):

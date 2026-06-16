@@ -4,7 +4,7 @@ from django.utils import timezone
 
 
 class PartnerCampaign(models.Model):
-    """Publicité partenaire affichée dans les fils (carte native type pin)."""
+    """Publicité partenaire affichée dans les fils (carte native type foto)."""
 
     title = models.CharField(max_length=120)
     body = models.CharField(max_length=400, blank=True, default='')
@@ -54,13 +54,13 @@ class PartnerCampaign(models.Model):
 
 
 class BoostPackage(models.Model):
-    """Catalogue tarifaire boost pin et campagnes pub (paramétrable via admin Django)."""
+    """Catalogue tarifaire boost foto et campagnes pub (paramétrable via admin Django)."""
 
     KIND_BOOST = 'boost'
     KIND_CAMPAIGN = 'campaign'
     KIND_BOTH = 'both'
     KIND_CHOICES = [
-        (KIND_BOOST, 'Boost pin'),
+        (KIND_BOOST, 'Boost foto'),
         (KIND_CAMPAIGN, 'Campagne pub'),
         (KIND_BOTH, 'Boost et campagne'),
     ]
@@ -93,7 +93,7 @@ class BoostPackage(models.Model):
         return self.package_kind in {self.KIND_CAMPAIGN, self.KIND_BOTH}
 
 
-class PinBoost(models.Model):
+class FotoBoost(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_ACTIVE = 'active'
     STATUS_EXPIRED = 'expired'
@@ -105,8 +105,8 @@ class PinBoost(models.Model):
         (STATUS_CANCELED, 'Canceled'),
     ]
 
-    pin = models.ForeignKey('pins.Pin', on_delete=models.CASCADE, related_name='boosts')
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_boosts')
+    foto = models.ForeignKey('fotos.Foto', on_delete=models.CASCADE, related_name='boosts')
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='foto_boosts')
     package = models.ForeignKey(BoostPackage, on_delete=models.PROTECT, related_name='boosts')
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
     starts_at = models.DateTimeField(null=True, blank=True)
@@ -119,7 +119,7 @@ class PinBoost(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'boost:{self.pin_id}:{self.status}'
+        return f'boost:{self.foto_id}:{self.status}'
 
     @property
     def is_live(self) -> bool:
@@ -130,8 +130,8 @@ class PinBoost(models.Model):
         return True
 
 
-class PinPromoCampaign(models.Model):
-    """Campagne publicitaire créée par un utilisateur (contenu autonome, sans pin obligatoire)."""
+class FotoPromoCampaign(models.Model):
+    """Campagne publicitaire créée par un utilisateur (contenu autonome, sans foto obligatoire)."""
 
     STATUS_PENDING = 'pending'
     STATUS_ACTIVE = 'active'
@@ -146,15 +146,15 @@ class PinPromoCampaign(models.Model):
         (STATUS_CANCELED, 'Canceled'),
     ]
 
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pin_promo_campaigns')
-    pin = models.ForeignKey(
-        'pins.Pin',
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='foto_promo_campaigns')
+    foto = models.ForeignKey(
+        'fotos.Foto',
         on_delete=models.CASCADE,
         related_name='promo_campaigns',
         null=True,
         blank=True,
     )
-    package = models.ForeignKey(BoostPackage, on_delete=models.PROTECT, related_name='pin_promo_campaigns')
+    package = models.ForeignKey(BoostPackage, on_delete=models.PROTECT, related_name='foto_promo_campaigns')
     headline = models.CharField(max_length=120, blank=True, default='')
     body = models.CharField(max_length=400, blank=True, default='')
     image = models.ImageField(upload_to='creator_ads/', blank=True, null=True)
@@ -189,7 +189,7 @@ class PinPromoCampaign(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        label = self.headline or (f'pin:{self.pin_id}' if self.pin_id else 'standalone')
+        label = self.headline or (f'pin:{self.foto_id}' if self.foto_id else 'standalone')
         return f'promo:{label}:{self.status}'
 
     def is_live(self) -> bool:
@@ -208,7 +208,7 @@ class TipPlatformConfig(models.Model):
 
     commission_percent = models.PositiveSmallIntegerField(
         default=10,
-        help_text='Part prélevée par Pinova sur chaque pourboire (ex. 10 = 10 %).',
+        help_text='Part prélevée par Fotoce sur chaque pourboire (ex. 10 = 10 %).',
     )
     min_tip_amount = models.PositiveIntegerField(default=500)
     max_tip_amount = models.PositiveIntegerField(default=500_000)
@@ -261,7 +261,7 @@ class TipTransaction(models.Model):
 
     donor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tips_sent')
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tips_received')
-    pin = models.ForeignKey('pins.Pin', null=True, blank=True, on_delete=models.SET_NULL, related_name='tips')
+    foto = models.ForeignKey('fotos.Foto', null=True, blank=True, on_delete=models.SET_NULL, related_name='tips')
     amount_gross = models.PositiveIntegerField()
     commission_amount = models.PositiveIntegerField()
     amount_net = models.PositiveIntegerField()

@@ -3,12 +3,12 @@
   "base_url": "http://127.0.0.1:4173",
   "api_url": "http://127.0.0.1:8765",
   "guest": {
-    "path": "C:\\Users\\David Anato\\Documents\\Work offline\\PRESTIGE\\PINOVA\\docs\\evidence\\lighthouse-home.json",
+    "path": "C:\\Users\\David Anato\\Documents\\Work offline\\PRESTIGE\\FOTOCE\\docs\\evidence\\lighthouse-home.json",
     "exit_code": 0,
     "performance_score": null
   },
   "settings": {
-    "path": "C:\\Users\\David Anato\\Documents\\Work offline\\PRESTIGE\\PINOVA\\docs\\evidence\\lighthouse-settings.json",
+    "path": "C:\\Users\\David Anato\\Documents\\Work offline\\PRESTIGE\\FOTOCE\\docs\\evidence\\lighthouse-settings.json",
     "exit_code": 0,
     "auth_mock": false,
     "performance_score": null

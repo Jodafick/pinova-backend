@@ -14,7 +14,7 @@ from rest_framework.response import Response
 
 from .models import WebhookEventProcessed
 
-logger = logging.getLogger('pinova.fedapay.webhook')
+logger = logging.getLogger('fotoce.fedapay.webhook')
 
 APPROVED_STATUSES = frozenset({'approved', 'success', 'successful', 'completed'})
 FAILED_STATUSES = frozenset({'failed', 'declined', 'rejected'})
@@ -159,7 +159,7 @@ def log_webhook_event(
     failure_statuses = FAILED_STATUSES | CANCELED_STATUSES | frozenset({'rejected', 'amount_mismatch', 'error'})
     if status in failure_statuses or (extra or {}).get('reason') in ('invalid_secret', 'amount_mismatch'):
         try:
-            from pinova_backend.observability.sentry import capture_fedapay_webhook_failure
+            from fotoce_backend.observability.sentry import capture_fedapay_webhook_failure
 
             capture_fedapay_webhook_failure(
                 flow=flow,

@@ -1,6 +1,6 @@
 """
 Textes canoniques français pour les notifications, puis traduction (googletrans)
-vers la langue préférée du destinataire — même stratégie que pins.topic_i18n.
+vers la langue préférée du destinataire — même stratégie que fotos.topic_i18n.
 
 À l’écriture : `create_localized_notification` enregistre dans `metadata['i18n']` les chaînes
 FR + `display_lang` (langue utilisée pour `title` / `message` en base).
@@ -15,8 +15,8 @@ from django.contrib.auth.models import User
 from googletrans import Translator
 from asgiref.sync import async_to_sync
 
-from pins.translation import translate_text_to
-from pins.topic_i18n import SUPPORTED_TOPIC_LANGS
+from fotos.translation import translate_text_to
+from fotos.topic_i18n import SUPPORTED_TOPIC_LANGS
 
 
 NOTIFICATION_TITLE_MAX = 120
