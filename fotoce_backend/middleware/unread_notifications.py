@@ -8,6 +8,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from notifications.models import Notification
 
 UNREAD_NOTIFICATION_HEADER = 'X-Fotoce-Unread-Notifications'
+LEGACY_UNREAD_NOTIFICATION_HEADER = 'X-Pinova-Unread-Notifications'
 UNREAD_HDR_CACHE_PREFIX = 'fotoce:unread_ns_hdr:'
 UNREAD_HDR_CACHE_SECONDS = 12
 
@@ -63,4 +64,5 @@ class UnreadNotificationsHeaderMiddleware(MiddlewareMixin):
             cache.set(ck, n, UNREAD_HDR_CACHE_SECONDS)
 
         response[UNREAD_NOTIFICATION_HEADER] = str(int(n))
+        response[LEGACY_UNREAD_NOTIFICATION_HEADER] = str(int(n))
         return response

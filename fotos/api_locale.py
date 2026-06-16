@@ -50,7 +50,7 @@ def api_locale_from_request(request) -> str:
 
     if request:
 
-        raw_x = request.META.get('HTTP_X_FOTOCE_LANG', '')
+        raw_x = request.META.get('HTTP_X_FOTOCE_LANG') or request.META.get('HTTP_X_PINOVA_LANG') or ''
 
         raw_x = raw_x.strip().split(';')[0].strip()
 
